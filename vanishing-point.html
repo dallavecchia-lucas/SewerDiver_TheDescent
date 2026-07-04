@@ -1,0 +1,2046 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>VANISHING POINT — a perspective dive</title>
+<style>
+  :root{
+    --ink:#0a0710; --peach:#ffcaa0; --amber:#ffd24a; --cyan:#6fd3e8; --green:#8cf07a;
+    --strip:#0d0b16;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{height:100%;background:#050409;overflow:hidden;}
+  body{
+    display:flex;align-items:center;justify-content:center;min-height:100vh;
+    font-family:"Trebuchet MS","Segoe UI",system-ui,sans-serif;
+    color:#fff;-webkit-user-select:none;user-select:none;touch-action:none;
+    background:
+      radial-gradient(120% 90% at 50% -10%, #1a1430 0%, #0a0712 55%, #050409 100%);
+  }
+  /* Film-strip framed stage, 16:9, scales to viewport */
+  #stage{
+    position:relative;
+    width:min(96vw, calc(96vh * 16 / 9));
+    aspect-ratio:16/9;
+    padding:0 clamp(10px,2.4vw,26px);
+    background:var(--strip);
+    border-radius:6px;
+    box-shadow:0 30px 80px -20px #000, 0 0 0 1px #1c1830 inset;
+  }
+  /* sprocket holes */
+  #stage::before,#stage::after{
+    content:"";position:absolute;top:0;bottom:0;width:clamp(10px,2.4vw,26px);
+    background-image:radial-gradient(#050409 38%, transparent 42%);
+    background-size:100% clamp(16px,3.2vh,30px);
+    background-position:center;opacity:.9;
+  }
+  #stage::before{left:0;} #stage::after{right:0;}
+  #screen{
+    position:relative;width:100%;height:100%;overflow:hidden;border-radius:2px;
+    background:#0a0a16;box-shadow:0 0 0 2px #000;
+  }
+  canvas{
+    position:absolute;inset:0;width:100%;height:100%;display:block;
+    image-rendering:pixelated;image-rendering:crisp-edges;
+  }
+
+  /* ---- HUD (crisp DOM overlay above pixel canvas) ---- */
+  #hud{position:absolute;inset:0;pointer-events:none;font-weight:700;letter-spacing:.06em;
+       text-shadow:0 2px 0 #000, 0 0 10px rgba(0,0,0,.5);}
+  .corner{position:absolute;padding:clamp(6px,1.6vw,14px) clamp(8px,2vw,18px);}
+  .lbl{font-size:clamp(7px,1.15vw,11px);opacity:.7;letter-spacing:.22em;text-transform:uppercase;}
+  .val{font-size:clamp(15px,3.2vw,30px);line-height:1;font-variant-numeric:tabular-nums;}
+  #tl{top:0;left:0;} #tr{top:0;right:0;text-align:right;}
+  #dist .val{color:var(--peach);}
+  #score .val{color:#fff;}
+  #combo{margin-top:2px;font-size:clamp(9px,1.9vw,16px);color:var(--amber);opacity:0;transition:opacity .2s;}
+  #combo.on{opacity:1;}
+  /* mode chip + speed bar, top-center */
+  #mode{position:absolute;top:clamp(6px,1.6vw,14px);left:50%;transform:translateX(-50%);
+        text-align:center;}
+  #chip{display:inline-block;padding:3px clamp(8px,1.8vw,16px);border-radius:999px;
+        font-size:clamp(8px,1.5vw,13px);letter-spacing:.24em;
+        border:1.5px solid var(--amber);color:var(--amber);
+        background:rgba(0,0,0,.28);text-transform:uppercase;transition:.15s;}
+  #spd{width:clamp(90px,20vw,190px);height:5px;margin:6px auto 0;border-radius:99px;
+       background:rgba(255,255,255,.14);overflow:hidden;}
+  #spdfill{height:100%;width:33%;border-radius:99px;
+           background:linear-gradient(90deg,var(--amber),var(--peach));transition:width .12s, background .2s;}
+
+  /* speaker */
+  #snd{position:absolute;bottom:clamp(6px,1.6vw,12px);right:clamp(8px,2vw,16px);
+       pointer-events:auto;cursor:pointer;font-size:clamp(12px,2.4vw,18px);opacity:.55;
+       background:none;border:none;color:#fff;text-shadow:0 1px 2px #000;transition:opacity .15s;}
+  #snd:hover{opacity:1;}
+
+  /* touch controls */
+  #touch{position:absolute;inset:0;display:none;pointer-events:none;}
+  .tbtn{position:absolute;pointer-events:auto;display:flex;align-items:center;justify-content:center;
+        border-radius:16px;font-weight:800;color:#fff;background:rgba(10,8,20,.34);
+        border:1.5px solid rgba(255,255,255,.18);backdrop-filter:blur(2px);
+        font-size:clamp(16px,4vw,26px);letter-spacing:.05em;user-select:none;}
+  .tbtn:active{background:rgba(255,255,255,.22);transform:scale(.96);}
+  #bL{left:2%;bottom:6%;width:20%;height:26%;}
+  #bR{left:23%;bottom:6%;width:20%;height:26%;}
+  #bG{right:2%;bottom:6%;width:22%;height:26%;font-size:clamp(10px,2.4vw,15px);
+      border-color:rgba(111,211,232,.5);color:var(--cyan);}
+  #bB{right:25%;bottom:6%;width:22%;height:26%;font-size:clamp(10px,2.4vw,15px);
+      border-color:rgba(140,240,122,.5);color:var(--green);}
+  body.touch #touch{display:block;}
+
+  /* hub / intersection countdown */
+  #ixtimer{position:absolute;top:clamp(40px,10vw,70px);left:50%;transform:translateX(-50%);
+    font-size:clamp(20px,5vw,40px);font-weight:800;color:#fff;opacity:0;transition:opacity .2s;
+    text-shadow:0 0 16px rgba(196,140,255,.85), 0 2px 0 #000;}
+  #ixtimer.on{opacity:1;}
+  #ixhint{position:absolute;top:clamp(72px,16vw,116px);left:50%;transform:translateX(-50%);
+    font-size:clamp(6.5px,1.25vw,10.5px);letter-spacing:.16em;opacity:0;color:#cbb8ff;
+    text-transform:uppercase;transition:opacity .2s;white-space:nowrap;text-align:center;}
+  #ixhint.on{opacity:.85;}
+  #gameover .title{font-size:clamp(22px,6.4vw,52px);}
+
+  /* overlays */
+  .overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+           justify-content:center;text-align:center;padding:6%;pointer-events:auto;
+           background:radial-gradient(120% 100% at 50% 40%, rgba(10,7,16,.35), rgba(6,4,10,.86));
+           backdrop-filter:blur(1.5px);transition:opacity .35s;}
+  .overlay.hidden{opacity:0;pointer-events:none;}
+  .title{font-size:clamp(26px,7.5vw,74px);line-height:.92;font-weight:800;letter-spacing:.02em;
+          background:linear-gradient(180deg,#fff 30%,var(--amber) 70%,var(--peach));
+          -webkit-background-clip:text;background-clip:text;color:transparent;
+          text-shadow:0 4px 30px rgba(255,180,80,.25);}
+  .title .b{display:block;font-size:.42em;letter-spacing:.5em;color:var(--cyan);
+            -webkit-text-fill-color:var(--cyan);margin-top:.6em;text-shadow:0 0 18px rgba(111,211,232,.5);}
+  .sub{margin-top:clamp(14px,3vw,26px);font-size:clamp(11px,1.9vw,15px);opacity:.82;max-width:46ch;line-height:1.5;}
+  .keys{margin-top:clamp(14px,3vw,24px);display:flex;gap:clamp(8px,2vw,18px);flex-wrap:wrap;justify-content:center;
+        font-size:clamp(9px,1.5vw,12px);opacity:.8;}
+  .keys span{display:inline-flex;align-items:center;gap:6px;}
+  kbd{font-family:inherit;font-weight:700;font-size:.92em;padding:3px 7px;border-radius:6px;
+      background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.22);box-shadow:0 2px 0 rgba(0,0,0,.4);}
+  .start{margin-top:clamp(18px,4vw,34px);font-size:clamp(12px,2.4vw,17px);font-weight:800;
+         letter-spacing:.28em;color:#fff;animation:pulse 1.4s ease-in-out infinite;text-transform:uppercase;}
+  @keyframes pulse{0%,100%{opacity:.55;transform:translateY(0);}50%{opacity:1;transform:translateY(-2px);}}
+  #pause .title{font-size:clamp(20px,5vw,44px);}
+  @media (prefers-reduced-motion: reduce){ .start{animation:none;opacity:.9;} }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="screen">
+    <canvas id="game"></canvas>
+
+    <div id="hud">
+      <div id="mode"><span id="chip">BASE</span><div id="spd"><div id="spdfill"></div></div></div>
+      <div class="corner" id="tl"><div id="dist"><div class="lbl">Distance</div><div class="val" id="distv">0<span style="font-size:.5em;opacity:.6"> m</span></div></div></div>
+      <div class="corner" id="tr"><div id="score"><div class="lbl">Score</div><div class="val" id="scorev">0</div><div id="combo">×1.0 · COMBO 0</div></div></div>
+      <div id="ixtimer">5</div>
+      <div id="ixhint">Rotate to aim · Space to grapple</div>
+      <button id="snd" title="Sound (M)">♪</button>
+    </div>
+
+    <div id="touch">
+      <div class="tbtn" id="bL">◀</div>
+      <div class="tbtn" id="bR">▶</div>
+      <div class="tbtn" id="bG">GLIDE</div>
+      <div class="tbtn" id="bB">BOOST</div>
+    </div>
+
+    <div class="overlay" id="start">
+      <h1 class="title">VANISHING<br>POINT<span class="b">A PERSPECTIVE DIVE</span></h1>
+      <p class="sub">Run the endless tunnel. Objects bloom out of the vanishing point — tiny and dim at the center, then swelling into full detail as they rush past you. Ride the yellow grid, catch the light, thread the rings. Ahead, a crossing opens in the grey — fly into it, rotate to aim down an exit, then grapple through before the count runs out.</p>
+      <div class="keys">
+        <span><kbd>◀</kbd><kbd>▶</kbd> steer</span>
+        <span><kbd>SPACE</kbd> grapple boost</span>
+        <span><kbd>SHIFT</kbd> solar glide</span>
+        <span><kbd>DRAG</kbd> aim at a crossing</span>
+        <span><kbd>P</kbd> pause · <kbd>M</kbd> mute</span>
+      </div>
+      <div class="start">Press Space to dive</div>
+    </div>
+
+    <div class="overlay hidden" id="pause">
+      <h1 class="title">PAUSED</h1>
+      <div class="start">Press P to resume</div>
+    </div>
+
+    <div class="overlay hidden" id="gameover">
+      <h1 class="title">RUN<br>OVER<span class="b">no exit chosen in time</span></h1>
+      <p class="sub">Distance <b id="finalDist">0 m</b> &nbsp;·&nbsp; Score <b id="finalScore">0</b> &nbsp;·&nbsp; Crossings <b id="finalCross">0</b></p>
+      <div class="start">Press Space to dive again</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+"use strict";
+// ============================================================================
+//  VANISHING POINT — a single-file perspective dive.
+//  Core trick: pinhole projection with scale = FOV / z. The vanishing point is
+//  screen-center; the camera sits just below the bottom edge. Objects spawn at
+//  large z (small, dim, foggy) and shrink z each frame, blooming into detail as
+//  scale grows. Everything else is juice built on top of that one idea.
+// ============================================================================
+
+// ---- resolution: low-res backbuffer, upscaled with nearest-neighbour --------
+const VW = 480, VH = 270;
+const cv = document.getElementById("game");
+const ctx = cv.getContext("2d", { alpha:false });
+cv.width = VW; cv.height = VH;
+ctx.imageSmoothingEnabled = false;
+
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// ---- projection constants ---------------------------------------------------
+const CX = VW / 2;                 // vanishing point X (screen center)
+const HORIZON = VH * 0.44;         // vanishing point Y
+const FOV_BASE = 235;              // focal length in px
+const CAM_Y = 1.0;                 // camera height above the floor (world units)
+const LANE_W = 0.58;               // lane spacing (world units)
+const LANES = [-1, 0, 1];
+const Z_FAR = 58, Z_NEAR = 0.72, Z_HIT = 2.0, Z_CHAR = 1.9;
+const BASE_SPEED = 9.2;            // world units / second
+
+// ---- tunnel (the corridor the player runs down) ------------------------------
+const TUN_HW   = 2.35*LANE_W;      // tunnel half-width (matches the old grid edge)
+const TUN_CEIL = 1.15;             // ceiling height above the camera axis (floor is -CAM_Y)
+const TUN_GREY = [98, 101, 110];   // neutral grey (chamber fixtures, lamp housings)
+const TUN_DARK = [13, 13, 17];     // neutral dark (chamber fog)
+
+// ---- the 4 tunnel variants ---------------------------------------------------
+// One parameter set drives BOTH renderers: the world corridor (drawTunnel/
+// drawGrid/drawPillar) and the trompe-l'œil exit tubes seen from inside an
+// intersection (drawHubTube / drawChamber). That sharing is what makes the
+// tubes honest previews of the tunnel you'll actually run — keep any new
+// visual param in the variant, never hardcoded in one renderer.
+//   wall   – base surface color         dark  – what depth fog fades into
+//   bright – per-surface shading mults  grid  – lane grid color
+//   strip  – ceiling light strip        sig   – signature/glow color (≈grid)
+//   lamps  – wall lamp palette          name  – shown under exit labels
+const VARIANTS = [
+  { name:"SERVICE",
+    wall:[98,101,110],  dark:[13,13,17],  bright:{floor:0.58,wall:0.44,ceil:0.30},
+    grid:[255,208,74],  sig:[255,208,74],  strip:[255,244,220],
+    lamps:[[255,214,150],[255,244,230]] },
+  { name:"FURNACE",
+    wall:[128,86,58],   dark:[22,10,7],   bright:{floor:0.60,wall:0.46,ceil:0.30},
+    grid:[255,126,54],  sig:[255,140,66],  strip:[255,178,96],
+    lamps:[[255,150,80],[255,208,130]] },
+  { name:"CRYO",
+    wall:[86,106,128],  dark:[7,13,22],   bright:{floor:0.66,wall:0.52,ceil:0.36},
+    grid:[110,220,255], sig:[120,225,255], strip:[214,246,255],
+    lamps:[[150,220,255],[224,250,255]] },
+  { name:"OVERGROWN",
+    wall:[74,98,70],    dark:[7,13,8],    bright:{floor:0.54,wall:0.42,ceil:0.27},
+    grid:[150,255,110], sig:[150,255,120], strip:[204,255,178],
+    lamps:[[170,255,150],[240,255,200]] },
+];
+// every intersection offers all 4 variants across its 5 exits (one repeats)
+function rollExitVariants(){
+  const a = [0,1,2,3, rint(0,3)];
+  for (let i=a.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [a[i],a[j]]=[a[j],a[i]]; }
+  return a;
+}
+
+// ---- intersection ("hub") constants -----------------------------------------
+const GATE_APPROACH_Z = 11;        // tunnel starts opening into the chamber
+const GATE_TRIGGER_Z  = 2.4;       // crossing the threshold starts the glide into the hub
+const GATE_CHAMBER_R  = 2.15;      // half-extent of the cube you're suspended inside
+const HUB_EYE_DRIFT   = 0.32;      // how far the eye drifts toward the current look direction
+const HUB_TIMER   = 15.0;          // seconds to pick an exit
+const HUB_ENTRY_DUR = 0.75;        // seconds the camera glides from the tunnel mouth to the cube center
+const COMMIT_DUR  = 0.58;          // grapple-launch tween duration
+const IX_FOV = 165, IX_CY = VH*0.47;
+const COMMIT_FADE_START = 0.30;    // fraction of the commit tween where the tunnel starts crossfading in
+
+// ---- palettes (as [r,g,b]) --------------------------------------------------
+const FOG   = [26, 27, 32];        // cold tunnel murk that far objects melt into
+const GRID_BOOST = [176, 238, 255];   // boost tint blended over the variant grid color
+
+// character palette
+const P = {
+  out:[26,18,30], skin:[233,183,138], skinsh:[201,142,99],
+  hair:[110,74,43], hairhi:[145,101,58],
+  gogf:[38,52,66], lens:[124,214,232], lenshi:[203,244,252],
+  scarf:[224,140,74], scarfsh:[188,102,46],
+  top:[184,196,196], topsh:[132,150,150],
+  pants:[58,110,116], pantssh:[40,80,86],
+  boot:[54,44,58],
+  cell:[43,108,255], cellgrid:[24,54,120], cellhi:[150,190,255], frame:[190,200,200],
+  grap:[210,250,214]
+};
+
+// ---- small utils ------------------------------------------------------------
+const clamp = (v,a,b)=> v<a?a:(v>b?b:v);
+const lerp  = (a,b,t)=> a+(b-a)*t;
+const rand  = (a,b)=> a+Math.random()*(b-a);
+const rint  = (a,b)=> (a+Math.random()*(b-a+1))|0;
+const pick  = arr => arr[(Math.random()*arr.length)|0];
+const lerpC = (a,b,t)=>[a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t];
+const rgb   = (c,a=1)=> a>=1 ? `rgb(${c[0]|0},${c[1]|0},${c[2]|0})` : `rgba(${c[0]|0},${c[1]|0},${c[2]|0},${a})`;
+
+// ---- state ------------------------------------------------------------------
+const S = {
+  started:false, paused:false, muted:false, time:0,
+  cameraX:0, playerX:0, laneTarget:0, moveCd:0,
+  speed:BASE_SPEED, fov:FOV_BASE, fovKick:0,
+  distance:0, score:0, combo:0, comboTimer:0, mult:1,
+  boostT:0, boostCd:0, wing:0, grapple:0,
+  leanTarget:0, lean:0, runPhase:0, bob:0, floatY:0,
+  shake:0, flash:[0,0,0,0], gridBoost:0,
+  input:{ boost:false, glide:false, rotL:false, rotR:false, rotU:false, rotD:false },
+  objects:[], rungs:[], dust:[], parts:[],
+  spawnAcc:0, pillarAcc:0,
+  variant:0,                        // index into VARIANTS — the tunnel you're running NOW
+
+  // ---- intersection phase machine ----
+  // "dive" -> "approach" -> "hub" -> "commit" -> "dive"   (or "hub" -> "crash" -> "gameover")
+  phase:"dive",
+  gate:null, nextGateDist: rand(150,190), intersectionsCleared:0,
+  ix:{
+    yaw:0, pitch:0, locked:-1, lockT:0, timer:HUB_TIMER, enterT:0,
+    entryK:1, entryZ0:0, fovAtEnter:FOV_BASE, charX0:VW/2, commitBack:0,
+    tubeVariants:[0,1,2,3,0],       // per-exit variant, copied from S.gate.exits at enterHub
+    entryVariant:0,                 // variant of the tunnel you came in through
+    chosenExit:-1, commitT:0, startYaw:0, startPitch:0, targetYaw:0, targetPitch:0,
+    crashT:0
+  }
+};
+
+// projection helpers (read live state)
+const projX = (x,z)=> CX + (x - S.cameraX) * S.fov / z;
+const projY = (y,z)=> HORIZON - y * S.fov / z;
+const scaleAt = z => S.fov / z;
+const fogF = z => clamp((z - 5) / (Z_FAR - 5), 0, 1);   // 0 near → 1 far
+
+// ============================================================================
+//  AUDIO — tiny Web Audio synth, gated behind the first user gesture.
+// ============================================================================
+const A = { ctx:null, master:null };
+function initAudio(){
+  if (A.ctx) return;
+  try{
+    A.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    A.master = A.ctx.createGain();
+    A.master.gain.value = 0.5;
+    A.master.connect(A.ctx.destination);
+  }catch(e){ A.ctx = null; }
+}
+function blip(freq, dur=0.07, type="triangle", vol=0.18){
+  if(!A.ctx || S.muted) return;
+  const t=A.ctx.currentTime, o=A.ctx.createOscillator(), g=A.ctx.createGain();
+  o.type=type; o.frequency.value=freq;
+  g.gain.setValueAtTime(0.0001,t);
+  g.gain.linearRampToValueAtTime(vol,t+0.006);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+  o.connect(g).connect(A.master); o.start(t); o.stop(t+dur+0.03);
+}
+function whoosh(){
+  if(!A.ctx || S.muted) return;
+  const t=A.ctx.currentTime, sr=A.ctx.sampleRate;
+  const buf=A.ctx.createBuffer(1, (sr*0.42)|0, sr), d=buf.getChannelData(0);
+  for(let i=0;i<d.length;i++){ const k=1-i/d.length; d[i]=(Math.random()*2-1)*k*k; }
+  const src=A.ctx.createBufferSource(); src.buffer=buf;
+  const f=A.ctx.createBiquadFilter(); f.type="bandpass"; f.Q.value=0.7;
+  f.frequency.setValueAtTime(280,t); f.frequency.exponentialRampToValueAtTime(2600,t+0.26);
+  const g=A.ctx.createGain();
+  g.gain.setValueAtTime(0.0001,t); g.gain.linearRampToValueAtTime(0.26,t+0.03);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+0.42);
+  src.connect(f).connect(g).connect(A.master); src.start(t); src.stop(t+0.44);
+}
+const sfxCollect = combo => blip(523.25 * Math.pow(2, Math.min(combo,15)/12), 0.09, "triangle", 0.2);
+const sfxRing    = () => { blip(1318.5,0.11,"triangle",0.18); setTimeout(()=>blip(1760,0.12,"sine",0.14),70); };
+const sfxHit     = () => { blip(120,0.17,"square",0.24); blip(74,0.2,"sawtooth",0.12); };
+const sfxGlide   = () => { blip(784,0.28,"sine",0.11); blip(1175,0.28,"sine",0.07); };
+
+// ============================================================================
+//  WORLD SETUP
+// ============================================================================
+let vignette=null;
+
+function buildStatics(){
+  vignette = ctx.createRadialGradient(CX,VH*0.52,VH*0.35, CX,VH*0.52,VH*0.82);
+  vignette.addColorStop(0,"rgba(0,0,0,0)");
+  vignette.addColorStop(1,"rgba(0,0,0,0.5)");
+}
+
+function resetWorld(){
+  S.objects.length=0; S.rungs.length=0; S.dust.length=0; S.parts.length=0;
+  // grid rungs across the depth range
+  for(let z=Z_NEAR; z<Z_FAR; z+=1.15) S.rungs.push(z);
+  // warp dust
+  for(let i=0;i<90;i++) S.dust.push(newDust(rand(Z_NEAR,Z_FAR)));
+  // pre-seed scenery so the tunnel reads with depth from frame one
+  for(let i=0;i<9;i++){ spawnPillar(); S.objects[S.objects.length-1].z = rand(4,Z_FAR); }
+  for(let i=0;i<7;i++){
+    const lane=pick(LANES);
+    S.objects.push({ type:"shard", lane, x:lane*LANE_W, z:rand(6,Z_FAR),
+                     size:0.26, h:0.55, hue:rand(28,60), spin:rand(0,6.28), resolved:false });
+  }
+  S.spawnAcc=0; S.pillarAcc=0;
+}
+function newDust(z){
+  return { x: rand(-TUN_HW*0.95, TUN_HW*0.95), y: rand(-CAM_Y+0.05, TUN_CEIL-0.05), z };
+}
+
+// spawn a "row" of gameplay objects (shards / obstacle / ring), plus scenery pillars
+function spawnRow(){
+  if (S.gate && S.gate.z < 16) return;   // keep lanes clear as a crossing nears
+  const r = Math.random();
+  if (r < 0.14){
+    // ring spanning a lane — pass through the center for a bonus
+    const lane = pick(LANES);
+    S.objects.push({ type:"ring", lane, x:lane*LANE_W, z:Z_FAR,
+                     rw:0.5, rh:0.62, h:0.85, hue:rand(180,300), resolved:false });
+  } else {
+    // 1–2 shard lanes and maybe an obstacle, never all three blocked
+    const lanes = LANES.slice();
+    // shuffle
+    for(let i=lanes.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [lanes[i],lanes[j]]=[lanes[j],lanes[i]]; }
+    const nShard = rint(1,2);
+    for(let i=0;i<nShard;i++){
+      const lane = lanes[i];
+      S.objects.push({ type:"shard", lane, x:lane*LANE_W, z:Z_FAR+rand(0,0.6),
+                       size:0.26, h:0.55, hue:rand(28,60), spin:rand(0,6.28), resolved:false });
+    }
+    if (Math.random()<0.5 && nShard<3){
+      const lane = lanes[2];
+      S.objects.push({ type:"block", lane, x:lane*LANE_W, z:Z_FAR+rand(0.2,1.2),
+                       w:0.42, h:0.5, resolved:false, blink:0 });
+    }
+  }
+}
+// wall-mounted light fixtures — the tunnel's scenery. A housing strip laid
+// lengthwise along a wall with a glowing core; parallax + light pools give the
+// grey walls their sense of speed and place.
+function spawnPillar(){
+  if (S.gate && S.gate.z < 16) return;
+  const side = Math.random()<0.5 ? -1 : 1;
+  S.objects.push({ type:"pillar", x: side*TUN_HW, side, z:Z_FAR+rand(0,3),
+                   y: rand(-0.25, 0.8), len: rand(0.5,1.15),
+                   col: pick(VARIANTS[S.variant].lamps),
+                   phase: rand(0,6.28) });
+}
+
+// ============================================================================
+//  INTERSECTION / HUB — the 5 cube exits, and the tiny free-look 3D math
+//  needed to aim at them. Directions are world-space unit vectors; yaw/pitch
+//  describe where the player is currently looking, spherical-coords style.
+// ============================================================================
+const EXITS = [
+  { key:"fwd",   dir:[0,0,1],  yaw:0,           pitch:0,          label:"STRAIGHT", col:[255,208,74]  },
+  { key:"up",    dir:[0,1,0],  yaw:null,        pitch: Math.PI/2, label:"UP",       col:[111,211,232] },
+  { key:"down",  dir:[0,-1,0], yaw:null,        pitch:-Math.PI/2, label:"DOWN",     col:[196,120,255] },
+  { key:"left",  dir:[-1,0,0], yaw:-Math.PI/2,  pitch:0,          label:"LEFT",     col:[140,240,122] },
+  { key:"right", dir:[1,0,0],  yaw: Math.PI/2,  pitch:0,          label:"RIGHT",    col:[255,150,110] },
+];
+const CUBE_CORNERS = (()=>{ const c=[]; for(const sx of[-1,1]) for(const sy of[-1,1]) for(const sz of[-1,1]) c.push([sx,sy,sz]); return c; })();
+const CUBE_EDGE_IDX = (()=>{
+  const e=[];
+  for(let i=0;i<CUBE_CORNERS.length;i++) for(let j=i+1;j<CUBE_CORNERS.length;j++){
+    let diff=0; for(let k=0;k<3;k++) if(CUBE_CORNERS[i][k]!==CUBE_CORNERS[j][k]) diff++;
+    if (diff===1) e.push([i,j]);
+  }
+  return e;
+})();
+
+const wrapAngle = a => { a = (a+Math.PI) % (2*Math.PI); if (a<0) a+=2*Math.PI; return a-Math.PI; };
+const lerpAngle = (a,b,t) => { let d=b-a; d -= Math.round(d/(2*Math.PI))*2*Math.PI; return a+d*t; };
+const lookVec = (yaw,pitch) => [Math.sin(yaw)*Math.cos(pitch), Math.sin(pitch), Math.cos(yaw)*Math.cos(pitch)];
+// any unit vector not parallel to d — used to build a tangent for portal rings
+function perp(d){
+  const up = Math.abs(d[1])<0.9 ? [0,1,0] : [1,0,0];
+  const x=d[1]*up[2]-d[2]*up[1], y=d[2]*up[0]-d[0]*up[2], z=d[0]*up[1]-d[1]*up[0];
+  const len=Math.hypot(x,y,z)||1;
+  return [x/len,y/len,z/len];
+}
+// world vector -> camera space, given current look yaw/pitch (inverse rotation).
+// The eye also drifts a little toward wherever you're currently looking. This
+// matters more than it sounds: with the eye fixed exactly at the room's
+// center, every tube's axis passes straight through it, so pure rotation can
+// never produce parallax — a tube's vanishing point is mathematically always
+// the centroid of its own mouth, no matter which way you look. Drifting the
+// eye off that center point is what lets *other* tubes skew into genuine
+// off-axis perspective as you turn toward one of them.
+// During the commit tween the camera also physically pushes toward the
+// chosen exit, rushing past it as everything else slides out of frame.
+// hub camera position in hub-world space (cube center = origin). During the
+// entry glide the camera starts back inside the tunnel mouth (S.gate.z is
+// eased toward -R by updateHub, so back = gate.z + R shrinks to 0) and slides
+// to the center; drift/push behave as before.
+function hubCamPos(){
+  const L = lookVec(S.ix.yaw, S.ix.pitch);
+  if (S.phase==="hub"){
+    const back = S.gate ? Math.max(0, S.gate.z + GATE_CHAMBER_R) : 0;
+    const dr = HUB_EYE_DRIFT * S.ix.entryK;   // drift ramps in with the glide, so
+    return [L[0]*dr, L[1]*dr, L[2]*dr - back]; // frame 1 matches the tunnel camera exactly
+  }
+  if (S.phase==="commit"){
+    const te = 1-Math.pow(1-clamp(S.ix.commitT/COMMIT_DUR,0,1),3);
+    // the eye-drift (and any leftover entry-back) hands off to the exit-push
+    // early in the tween, rather than stacking with it — avoids the offsets
+    // adding up and clipping through the tube walls mid-launch
+    const fade = Math.max(0, 1-te*2.5);
+    const ex = EXITS[S.ix.chosenExit];
+    const off = te * (GATE_CHAMBER_R + 1.8);   // pushes THROUGH the mouth, down the tube
+    return [ L[0]*HUB_EYE_DRIFT*fade + ex.dir[0]*off,
+             L[1]*HUB_EYE_DRIFT*fade + ex.dir[1]*off,
+             L[2]*HUB_EYE_DRIFT*fade + ex.dir[2]*off - S.ix.commitBack*fade ];
+  }
+  return [0,0,0];
+}
+function toCam(v){
+  const c = hubCamPos();
+  const x = v[0]-c[0], y = v[1]-c[1], z = v[2]-c[2];
+  const cy=Math.cos(S.ix.yaw), sy=Math.sin(S.ix.yaw);
+  const x1 = x*cy - z*sy, z1 = x*sy + z*cy, y1 = y;
+  const cp=Math.cos(S.ix.pitch), sp=Math.sin(S.ix.pitch);
+  return [x1, y1*cp - z1*sp, y1*sp + z1*cp];
+}
+// hub projection params ease between the tunnel's camera and the hub's own:
+// during the entry glide FOV/screen-center lerp from the tunnel values to
+// IX_FOV/IX_CY (the "coming to rest" zoom), and during commit they punch back
+// out toward the tunnel values so the crossfade lands on matching lenses.
+let HFOV = IX_FOV, HCY = IX_CY;
+function updateHubProj(){
+  if (S.phase==="hub"){
+    const k = S.ix.entryK;
+    HFOV = lerp(S.ix.fovAtEnter, IX_FOV, k);
+    HCY  = lerp(HORIZON, IX_CY, k);
+  } else if (S.phase==="commit"){
+    const te = 1-Math.pow(1-clamp(S.ix.commitT/COMMIT_DUR,0,1),3);
+    HFOV = lerp(IX_FOV, S.fov, te);   // land exactly on the tunnel's live lens
+    HCY  = lerp(IX_CY, HORIZON, te);
+  } else { HFOV = IX_FOV; HCY = IX_CY; }
+}
+function projHub(v){
+  const c = toCam(v);
+  if (c[2] < 0.05) return null;
+  const s = HFOV / c[2];
+  return { x: CX + c[0]*s, y: HCY - c[1]*s, s };
+}
+
+// ============================================================================
+//  INPUT
+// ============================================================================
+const flying = ()=> S.phase==="dive" || S.phase==="approach";
+function moveLane(dir){
+  if (!S.started || S.paused || S.moveCd>0 || !flying()) return;
+  const n = clamp(S.laneTarget + dir, -1, 1);
+  if (n !== S.laneTarget){ S.laneTarget = n; S.leanTarget = dir; S.moveCd = 0.11; blip(660,0.04,"square",0.06); }
+}
+function doBoost(){
+  if (!S.started || S.paused || S.boostCd>0 || S.boostT>0 || !flying()) return;
+  S.boostT = 1.1; S.boostCd = 1.7; S.fovKick = 62; S.shake = Math.min(S.shake+4,7);
+  S.gridBoost = 1; S.flash = [176,238,255,0.28]; whoosh();
+}
+function setGlide(on){
+  if (on && !flying()) return;
+  if (on && !S.input.glide && S.started && !S.paused) sfxGlide();
+  S.input.glide = on;
+}
+
+// ---- the grapple-commit: fire toward whichever exit is currently locked ----
+function tryCommit(){
+  if (S.phase!=="hub") return;
+  if (S.ix.locked<0){ blip(190,0.09,"square",0.1); return; }
+  S.phase = "commit";
+  S.ix.chosenExit = S.ix.locked;
+  S.ix.commitT = 0;
+  S.ix.startYaw = S.ix.yaw; S.ix.startPitch = S.ix.pitch;
+  const ex = EXITS[S.ix.chosenExit];
+  S.ix.targetPitch = ex.pitch;
+  S.ix.targetYaw = (ex.yaw===null) ? S.ix.yaw : ex.yaw;
+
+  // if the player fires mid-entry-glide, carry the remaining back-offset into
+  // the commit branch (where it fades out) instead of letting it snap to zero
+  S.ix.commitBack = S.gate ? Math.max(0, S.gate.z + GATE_CHAMBER_R) : 0;
+
+  // the world BECOMES the chosen exit's tunnel right now, before priming, so
+  // everything spawned/rendered under the tween is already the new variant —
+  // the tube you fly down and the tunnel that fades in are the same place
+  S.variant = S.ix.tubeVariants[S.ix.chosenExit];
+
+  // prime the tunnel now — it runs underneath the whole tween (see updateCommit)
+  // so it's already moving by the time it crossfades into view, no pop on cut
+  S.gate = null;
+  S.playerX=0; S.cameraX=0; S.laneTarget=0; S.leanTarget=0;
+  S.spawnAcc=0; S.pillarAcc=0; S.speed=0; S.fovKick=0;
+  for (let i=0;i<5;i++){ spawnPillar(); S.objects[S.objects.length-1].z = rand(10,Z_FAR); }
+
+  whoosh();
+}
+
+function startGame(){
+  if (S.started) return;
+  initAudio();
+  if (A.ctx && A.ctx.state==="suspended") A.ctx.resume();
+  document.getElementById("start").classList.add("hidden");
+  S.started = true;
+}
+
+addEventListener("keydown", e=>{
+  const k=e.key.toLowerCase();
+  if (!S.started){ if(k===" "||k==="enter"){ e.preventDefault(); startGame(); } return; }
+  if (k==="p"){ togglePause(); return; }
+  if (k==="m"){ toggleMute(); return; }
+  if (S.paused) return;
+  if (S.phase==="gameover"){ if(k===" "||k==="enter"){ e.preventDefault(); restartRun(); } return; }
+  if (S.phase==="hub"){
+    if (k==="arrowleft"||k==="a"){ e.preventDefault(); S.input.rotL=true; }
+    else if (k==="arrowright"||k==="d"){ e.preventDefault(); S.input.rotR=true; }
+    else if (k==="arrowup"||k==="w"){ e.preventDefault(); S.input.rotU=true; }
+    else if (k==="arrowdown"||k==="s"){ e.preventDefault(); S.input.rotD=true; }
+    else if (k===" "){ e.preventDefault(); tryCommit(); }
+    return;
+  }
+  if (k===" "||k==="arrowup"||k==="w"){ e.preventDefault(); doBoost(); }
+  else if (k==="arrowleft"||k==="a") { e.preventDefault(); moveLane(-1); }
+  else if (k==="arrowright"||k==="d"){ e.preventDefault(); moveLane(1); }
+  else if (k==="shift"||k==="arrowdown"||k==="s"){ e.preventDefault(); setGlide(true); }
+});
+addEventListener("keyup", e=>{
+  const k=e.key.toLowerCase();
+  if (S.phase==="hub"){
+    if (k==="arrowleft"||k==="a") S.input.rotL=false;
+    else if (k==="arrowright"||k==="d") S.input.rotR=false;
+    else if (k==="arrowup"||k==="w") S.input.rotU=false;
+    else if (k==="arrowdown"||k==="s") S.input.rotD=false;
+    return;
+  }
+  if (k==="shift"||k==="arrowdown"||k==="s") setGlide(false);
+});
+
+// pointer / touch
+if ("ontouchstart" in window || navigator.maxTouchPoints>0) document.body.classList.add("touch");
+const bind = (id, dn, up) => {
+  const el=document.getElementById(id);
+  el.addEventListener("pointerdown", e=>{ e.preventDefault(); dn&&dn(); });
+  if(up) el.addEventListener("pointerup", e=>{ e.preventDefault(); up(); });
+  if(up) el.addEventListener("pointercancel", e=>{ e.preventDefault(); up(); });
+  if(up) el.addEventListener("pointerleave", e=>{ if(e.buttons) up(); });
+};
+bind("bL", ()=>{ if(S.phase==="hub") S.input.rotL=true; else moveLane(-1); }, ()=>S.input.rotL=false);
+bind("bR", ()=>{ if(S.phase==="hub") S.input.rotR=true; else moveLane(1); },  ()=>S.input.rotR=false);
+bind("bB", ()=>{
+  if(!S.started){ startGame(); return; }
+  if(S.phase==="gameover"){ restartRun(); return; }
+  if(S.phase==="hub"){ tryCommit(); return; }
+  doBoost();
+});
+bind("bG", ()=>{ if(S.phase==="hub") S.input.rotU=true; else setGlide(true); },
+           ()=>{ S.input.rotU=false; setGlide(false); });
+
+document.getElementById("start").addEventListener("pointerdown", startGame);
+document.getElementById("gameover").addEventListener("pointerdown", ()=>{ if(S.phase==="gameover") restartRun(); });
+
+// drag-to-look, active only while suspended in a hub
+let dragging=false, lastPX=0, lastPY=0;
+const canvasEl = document.getElementById("game");
+canvasEl.addEventListener("pointerdown", e=>{
+  if (!S.started){ startGame(); return; }
+  if (S.phase==="hub"){ dragging=true; lastPX=e.clientX; lastPY=e.clientY; try{canvasEl.setPointerCapture(e.pointerId);}catch(err){} }
+});
+canvasEl.addEventListener("pointermove", e=>{
+  if (!dragging || S.phase!=="hub") return;
+  const dx=e.clientX-lastPX, dy=e.clientY-lastPY;
+  lastPX=e.clientX; lastPY=e.clientY;
+  const k = 0.006 * S.ix.entryK;   // look dampened while still gliding in
+  S.ix.yaw = wrapAngle(S.ix.yaw + dx*k);
+  S.ix.pitch = wrapAngle(S.ix.pitch - dy*k);
+});
+addEventListener("pointerup", ()=>dragging=false);
+addEventListener("pointercancel", ()=>dragging=false);
+
+function toggleMute(){ S.muted=!S.muted; document.getElementById("snd").textContent = S.muted?"♪̸":"♪";
+  document.getElementById("snd").style.opacity = S.muted?0.35:0.55; }
+document.getElementById("snd").addEventListener("click", toggleMute);
+function togglePause(){ S.paused=!S.paused; document.getElementById("pause").classList.toggle("hidden", !S.paused); }
+addEventListener("blur", ()=>{ if(S.started && !S.paused) togglePause(); });
+
+// ============================================================================
+//  UPDATE
+// ============================================================================
+function update(dt){
+  S.time += dt;
+
+  if (S.phase==="hub")    { updateHub(dt);    updateHUD("HUB");     return; }
+  if (S.phase==="commit") { updateCommit(dt); updateHUD("GRAPPLE"); return; }
+  if (S.phase==="crash")  { updateCrash(dt);  updateHUD("CRASH");   return; }
+  if (S.phase==="gameover"){ S.shake *= Math.pow(0.02,dt); updateHUD("OVER"); return; }
+
+  // --- timers & mode -------------------------------------------------------
+  if (S.moveCd>0) S.moveCd-=dt;
+  if (S.boostCd>0) S.boostCd-=dt;
+  if (S.boostT>0){ S.boostT-=dt; if(S.boostT<0)S.boostT=0; }
+  const boosting = S.boostT>0;
+  const gliding  = S.input.glide && !boosting;
+  const mode = boosting ? "BOOST" : gliding ? "GLIDE" : "BASE";
+
+  // --- speed / fov (smoothed for that elastic surge) -----------------------
+  let gateSlow = 1;
+  if (S.gate && S.phase==="approach"){
+    const t = clamp(1-(S.gate.z-GATE_TRIGGER_Z)/(GATE_APPROACH_Z-GATE_TRIGGER_Z), 0, 1);
+    gateSlow = lerp(1, 0.5, t*t);
+  }
+  const target = BASE_SPEED * (boosting ? 3.0 : gliding ? 0.5 : 1.0) * gateSlow;
+  S.speed = lerp(S.speed, target, clamp(dt*(boosting?7:4),0,1));
+  S.fovKick = lerp(S.fovKick, boosting?55:0, clamp(dt*(boosting?10:6),0,1));
+  S.fov = FOV_BASE + S.fovKick;
+  S.gridBoost = lerp(S.gridBoost, boosting?1:0, clamp(dt*6,0,1));
+
+  S.distance += S.speed*dt;
+  S.score += S.speed*dt*0.35;                 // gentle passive trickle
+
+  // --- steering: playerX snappy, cameraX lags for parallax + lean ----------
+  S.playerX = lerp(S.playerX, S.laneTarget*LANE_W, clamp(dt*13,0,1));
+  S.cameraX = lerp(S.cameraX, S.playerX, clamp(dt*6,0,1));
+  S.leanTarget *= Math.pow(0.001, dt);        // decay steer impulse
+  const leanFromVel = clamp((S.laneTarget*LANE_W - S.playerX)*-2.2, -1, 1);
+  S.lean = lerp(S.lean, clamp(S.leanTarget*0.5 + leanFromVel, -1, 1), clamp(dt*10,0,1));
+
+  // --- character anim ------------------------------------------------------
+  S.wing = lerp(S.wing, gliding?1:0, clamp(dt*8,0,1));
+  S.grapple = lerp(S.grapple, boosting?1:0, clamp(dt*(boosting?16:8),0,1));
+  S.runPhase += dt * (6 + S.speed*0.9);
+  S.bob = Math.sin(S.runPhase*2)*1.2*(1-S.wing);
+  S.floatY = lerp(S.floatY, gliding? -9 : boosting? -2 : 0, clamp(dt*7,0,1));
+
+  // --- combo decay ---------------------------------------------------------
+  if (S.comboTimer>0){ S.comboTimer-=dt; if(S.comboTimer<=0) S.combo=0; }
+  S.mult = 1 + S.combo*0.1;
+
+  // --- shake / flash -------------------------------------------------------
+  S.shake *= Math.pow(0.02, dt);
+  S.flash[3] *= Math.pow(0.008, dt);
+
+  // --- spawn / rungs / dust / objects ---------------------------------------
+  stepTunnelWorld(dt);
+
+  // --- particles -----------------------------------------------------------
+  stepParticles(dt);
+
+  // --- gate: spawn / approach / trigger -------------------------------------
+  updateGate(dt);
+
+  // --- HUD -----------------------------------------------------------------
+  updateHUD(mode);
+}
+function stepTunnelWorld(dt){
+  // --- spawn (tied to distance so density is speed-independent) ------------
+  S.spawnAcc += S.speed*dt;
+  while (S.spawnAcc > 2.3){ S.spawnAcc -= 2.3; spawnRow(); }
+  S.pillarAcc += S.speed*dt;
+  while (S.pillarAcc > 2.9){ S.pillarAcc -= 2.9; spawnPillar(); }
+
+  // --- rungs scroll --------------------------------------------------------
+  const maxZ = Math.max(...S.rungs, Z_NEAR);
+  for (let i=0;i<S.rungs.length;i++){
+    S.rungs[i] -= S.speed*dt;
+    if (S.rungs[i] < Z_NEAR) S.rungs[i] += Math.ceil((maxZ-Z_NEAR)/1.15)*1.15 + 1.15;
+  }
+
+  // --- dust ----------------------------------------------------------------
+  for (const d of S.dust){
+    d.z -= S.speed*dt;
+    if (d.z < Z_NEAR){ Object.assign(d, newDust(Z_FAR+rand(0,6))); }
+  }
+
+  // --- objects: move, resolve at the player plane, cull past camera --------
+  const objs = S.objects;
+  for (let i=objs.length-1; i>=0; i--){
+    const o = objs[i];
+    const prevZ = o.z;
+    o.z -= S.speed*dt;
+    if (o.blink!==undefined) o.blink += dt;
+
+    if (!o.resolved && prevZ > Z_HIT && o.z <= Z_HIT){
+      o.resolved = true;
+      if (o.type==="shard"){
+        if (o.lane===S.laneTarget){
+          S.combo++; S.comboTimer=2.6;
+          const gain = Math.round(10 * (1+S.combo*0.1));
+          S.score += gain; sfxCollect(S.combo);
+          burst(projX(o.x,Z_HIT), projY(o.h,Z_HIT), [255,215,90], 14);
+          S.flash=[255,220,120,0.14];
+          objs.splice(i,1); continue;
+        }
+      } else if (o.type==="block"){
+        if (o.lane===S.laneTarget){
+          S.combo=0; S.comboTimer=0;
+          S.speed*=0.55; S.shake=Math.min(S.shake+5,8);
+          S.flash=[255,70,60,0.4]; sfxHit();
+          burst(projX(o.x,Z_HIT), projY(o.h*0.6,Z_HIT), [255,90,70], 18);
+          objs.splice(i,1); continue;
+        } else if (Math.abs(o.lane-S.laneTarget)===1){
+          S.score += 4; blip(880,0.05,"triangle",0.08);   // near-miss tick
+        }
+      } else if (o.type==="ring"){
+        if (Math.abs(S.playerX - o.x) < LANE_W*0.55){
+          S.combo++; S.comboTimer=2.6;
+          S.score += Math.round(25*(1+S.combo*0.1)); sfxRing();
+          sparkleRing(projX(o.x,Z_HIT), projY(o.h,Z_HIT), o.hue);
+          S.flash=[150,220,255,0.16];
+        }
+      }
+    }
+    if (o.z < Z_NEAR) objs.splice(i,1);
+  }
+  // far → near so nearer objects paint on top
+  objs.sort((a,b)=> b.z - a.z);
+}
+function stepParticles(dt){
+  for (let i=S.parts.length-1;i>=0;i--){
+    const p=S.parts[i];
+    p.life-=dt;
+    if (p.life<=0){ S.parts.splice(i,1); continue; }
+    p.x+=p.vx*dt; p.y+=p.vy*dt; p.vy+=p.g*dt; p.vx*=0.98;
+  }
+}
+
+// ============================================================================
+//  GATE / HUB STATE MACHINE
+// ============================================================================
+function updateGate(dt){
+  if (!S.gate){
+    if (S.distance >= S.nextGateDist) S.gate = { z: Z_FAR + 6, exits: rollExitVariants() };
+    return;
+  }
+  S.gate.z -= S.speed*dt;
+  if (S.phase==="dive" && S.gate.z < GATE_APPROACH_Z){
+    S.phase = "approach";
+    // drop everything that hasn't passed the chamber mouth yet — nothing may
+    // be left floating inside the room the player is about to fly into
+    S.objects = S.objects.filter(o => o.z < S.gate.z - 0.5);
+    prepHub();
+  }
+  if (S.gate.z < GATE_TRIGGER_Z) enterHub();
+}
+
+// called once as soon as a gate enters "approach" — resets the hub look to
+// dead ahead (STRAIGHT pre-aimed) so the entry glide starts from a known pose
+function prepHub(){
+  S.ix.yaw = 0; S.ix.pitch = 0;
+  S.ix.locked = 0; S.ix.lockT = 0;
+  S.ix.enterT = 0;
+}
+function enterHub(){
+  S.phase = "hub";
+  S.ix.timer = HUB_TIMER;
+  S.ix.lockT = 0;
+  S.ix.enterT = 0; S.ix.entryK = 0;
+  S.ix.entryZ0 = S.gate ? S.gate.z : GATE_TRIGGER_Z;   // glide start depth
+  S.ix.fovAtEnter = S.fov;                             // lens handoff start
+  S.ix.charX0 = CX + (S.playerX - S.cameraX) * scaleAt(Z_CHAR);
+  S.ix.tubeVariants = (S.gate && S.gate.exits) ? S.gate.exits.slice() : rollExitVariants();
+  S.ix.entryVariant = S.variant;                       // the tunnel behind you
+  S.objects.length = 0;                                // room must be empty
+  S.input.rotL = S.input.rotR = S.input.rotU = S.input.rotD = false;
+  S.wing = 0; S.boostT = 0; S.boostCd = 0; S.shake = 0;
+  blip(140,0.22,"sine",0.16);
+}
+
+// scrolls only the tunnel dressing (rungs + dust) by a raw world-space delta —
+// used by the entry glide so the fading tunnel underlay moves in exact
+// lockstep with the hub camera instead of freezing mid-crossfade
+function scrollDressing(d){
+  const maxZ = Math.max(...S.rungs, Z_NEAR);
+  for (let i=0;i<S.rungs.length;i++){
+    S.rungs[i] -= d;
+    if (S.rungs[i] < Z_NEAR) S.rungs[i] += Math.ceil((maxZ-Z_NEAR)/1.15)*1.15 + 1.15;
+  }
+  for (const du of S.dust){
+    du.z -= d;
+    if (du.z < Z_NEAR) Object.assign(du, newDust(Z_FAR+rand(0,6)));
+  }
+}
+
+function updateHubLook(dt){
+  const rs = 1.7 * S.ix.entryK;   // look dampened while still gliding in
+  if (S.input.rotL) S.ix.yaw -= rs*dt;
+  if (S.input.rotR) S.ix.yaw += rs*dt;
+  if (S.input.rotU) S.ix.pitch += rs*dt;
+  if (S.input.rotD) S.ix.pitch -= rs*dt;
+  S.ix.yaw = wrapAngle(S.ix.yaw);
+  S.ix.pitch = wrapAngle(S.ix.pitch);
+
+  const L = lookVec(S.ix.yaw, S.ix.pitch);
+  let best=-1, bestDot=-1;
+  for (let i=0;i<EXITS.length;i++){
+    const d = EXITS[i].dir, dot = L[0]*d[0]+L[1]*d[1]+L[2]*d[2];
+    if (dot>bestDot){ bestDot=dot; best=i; }
+  }
+  const wasLocked = S.ix.locked;
+  S.ix.locked = bestDot > 0.93 ? best : -1;
+  if (S.ix.locked>=0 && S.ix.locked!==wasLocked) blip(880,0.05,"sine",0.11);
+  S.ix.lockT = S.ix.locked>=0 ? S.ix.lockT+dt : 0;
+}
+
+function updateHub(dt){
+  S.ix.enterT += dt;
+  // ---- entry glide: fly the last stretch of tunnel INTO the cube center ----
+  // S.gate.z keeps easing from the trigger depth down to -R (mouth passes
+  // behind the camera), which drives both the hub camera's back-offset
+  // (hubCamPos) and the tunnel underlay's chamber geometry — one motion,
+  // two renderers, zero seam.
+  S.ix.entryK = 1 - Math.pow(1 - clamp(S.ix.enterT/HUB_ENTRY_DUR, 0, 1), 3);
+  if (S.gate){
+    const prev = S.gate.z;
+    S.gate.z = lerp(S.ix.entryZ0, -GATE_CHAMBER_R, S.ix.entryK);
+    if (prev > S.gate.z) scrollDressing(prev - S.gate.z);
+  }
+  updateHubLook(dt);
+  S.shake *= Math.pow(0.02, dt);
+  if (S.ix.entryK >= 1){                       // timer holds until you've come to rest
+    S.ix.timer -= dt;
+    if (S.ix.timer <= 0){ S.ix.timer = 0; startCrash(); }
+  }
+}
+
+// the commit tween rotates to face the exit exactly while the tunnel world
+// keeps running underneath the whole time — by the time it crossfades into
+// view (see render()) it's already alive and moving, so the cut is invisible
+function updateCommit(dt){
+  S.ix.commitT += dt;
+  const t = clamp(S.ix.commitT/COMMIT_DUR, 0, 1);
+  const te = 1-Math.pow(1-t,3);
+  S.ix.yaw   = wrapAngle(lerpAngle(S.ix.startYaw,   S.ix.targetYaw,   te));
+  S.ix.pitch = wrapAngle(lerpAngle(S.ix.startPitch, S.ix.targetPitch, te));
+  S.shake = 2 + te*5;
+
+  S.speed = lerp(S.speed, BASE_SPEED*2.1, clamp(dt*5,0,1));
+  S.fovKick = lerp(S.fovKick, 70, clamp(dt*6,0,1));
+  S.fov = FOV_BASE + S.fovKick;
+  S.distance += S.speed*dt; S.score += S.speed*dt*0.35;
+  stepTunnelWorld(dt);
+  stepParticles(dt);
+
+  if (t>=1) finishCommit();
+}
+
+function finishCommit(){
+  S.phase = "dive";
+  S.score += Math.round(150*S.mult);
+  S.intersectionsCleared++;
+  S.nextGateDist = S.distance + rand(210,260);
+}
+
+function startCrash(){
+  S.phase = "crash";
+  S.ix.crashT = 0;
+  S.shake = 9; S.flash = [255,60,50,0.5];
+  sfxHit();
+  burst(CX, IX_CY, [255,90,70], 26);
+}
+function updateCrash(dt){
+  S.ix.crashT += dt;
+  S.shake *= Math.pow(0.02, dt);
+  S.flash[3] *= Math.pow(0.01, dt);
+  stepParticles(dt);
+  if (S.ix.crashT > 1.15) endRun();
+}
+function endRun(){
+  S.phase = "gameover";
+  document.getElementById("finalDist").textContent = (S.distance|0) + " m";
+  document.getElementById("finalScore").textContent = (S.score|0).toLocaleString();
+  document.getElementById("finalCross").textContent = S.intersectionsCleared;
+  document.getElementById("gameover").classList.remove("hidden");
+}
+function restartRun(){
+  document.getElementById("gameover").classList.add("hidden");
+  S.phase = "dive";
+  S.distance=0; S.score=0; S.combo=0; S.comboTimer=0; S.mult=1;
+  S.speed=BASE_SPEED; S.fov=FOV_BASE; S.fovKick=0;
+  S.playerX=0; S.cameraX=0; S.laneTarget=0; S.leanTarget=0; S.lean=0;
+  S.boostT=0; S.boostCd=0; S.wing=0; S.grapple=0;
+  S.shake=0; S.flash=[0,0,0,0]; S.gridBoost=0;
+  S.gate=null; S.nextGateDist=S.distance+rand(150,190);
+  S.intersectionsCleared=0;
+  S.variant=0; S.ix.tubeVariants=[0,1,2,3,0]; S.ix.entryVariant=0;
+  S.ix.locked=-1; S.ix.lockT=0; S.ix.entryK=1; S.ix.commitBack=0;
+  resetWorld();
+}
+
+function burst(x,y,col,n){
+  for(let i=0;i<n;i++){
+    const a=rand(0,6.28), s=rand(20,120);
+    S.parts.push({ x,y, vx:Math.cos(a)*s, vy:Math.sin(a)*s-30, g:180,
+                   life:rand(0.3,0.7), col, size:rand(1,2.6), kind:0 });
+  }
+}
+function sparkleRing(x,y,hue){
+  const col = hsl2rgb(hue,0.8,0.7);
+  for(let i=0;i<20;i++){
+    const a=(i/20)*6.28, s=rand(60,150);
+    S.parts.push({ x,y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, g:20,
+                   life:rand(0.35,0.6), col, size:rand(1,2.2), kind:1 });
+  }
+}
+function hsl2rgb(h,s,l){
+  h/=360; const q=l<0.5?l*(1+s):l+s-l*s, p=2*l-q;
+  const f=t=>{ t=(t+1)%1; if(t<1/6)return p+(q-p)*6*t; if(t<1/2)return q; if(t<2/3)return p+(q-p)*(2/3-t)*6; return p; };
+  return [f(h+1/3)*255, f(h)*255, f(h-1/3)*255];
+}
+
+// ============================================================================
+//  RENDER
+// ============================================================================
+function render(){
+  // clear to tunnel dark
+  ctx.fillStyle = "#0a0a10"; ctx.fillRect(0,0,VW,VH);
+
+  ctx.save();
+  // screen shake
+  if (S.shake>0.05){ ctx.translate((Math.random()*2-1)*S.shake,(Math.random()*2-1)*S.shake); }
+
+  if (S.phase==="hub" && S.ix.entryK < 1){
+    // entry glide: the tunnel scene keeps rendering underneath (its chamber
+    // geometry is driven by the same easing S.gate.z as the hub camera), and
+    // the hub scene fades in on top — two matched cameras, one motion
+    renderTunnelScene();
+    ctx.save(); ctx.globalAlpha = S.ix.entryK; renderHub(); ctx.restore();
+  } else if (S.phase==="hub" || S.phase==="crash" || S.phase==="gameover"){
+    renderHub();
+  } else if (S.phase==="commit"){
+    const t = clamp(S.ix.commitT/COMMIT_DUR, 0, 1);
+    if (t < COMMIT_FADE_START){
+      renderHub();
+    } else {
+      const fa = (t-COMMIT_FADE_START)/(1-COMMIT_FADE_START);
+      renderTunnelScene();
+      ctx.save(); ctx.globalAlpha = 1-fa; renderHub(); ctx.restore();
+    }
+  } else {
+    // dive + approach: pure tunnel rendering — the intersection ahead is real
+    // tunnel-space geometry (drawChamber), so the approach needs no overlay
+    renderTunnelScene();
+  }
+
+  ctx.restore();
+
+  // flash + vignette (screen-space, above shake)
+  if (S.flash[3] > 0.01){
+    ctx.fillStyle = rgb(S.flash, S.flash[3]); ctx.fillRect(0,0,VW,VH);
+  }
+  ctx.fillStyle = vignette; ctx.fillRect(0,0,VW,VH);
+
+  if (!S.started){ ctx.fillStyle="rgba(6,4,10,0.25)"; ctx.fillRect(0,0,VW,VH); }
+}
+
+function renderTunnelScene(){
+  drawTunnel();
+  drawGrid();
+  drawDust();
+  for (const o of S.objects){
+    if (o.type==="pillar") drawPillar(o);
+    else if (o.type==="ring") drawRing(o);
+    else if (o.type==="block") drawBlock(o);
+    else drawShard(o);
+  }
+  if (S.phase!=="hub") drawCharacter("tunnel");   // hub-entry underlay: char lives in the hub render
+  drawParticles();
+}
+
+// ============================================================================
+//  TUNNEL — the grey corridor. Four surfaces filled in fog-shaded depth bands
+//  converging on the vanishing point; hoop seams ride the rung scroll so the
+//  walls visibly stream past. When a crossing is pending, the walls stop at
+//  S.gate.z and open into the chamber interior (drawChamber) — the
+//  intersection is real tunnel-space geometry long before the phase flips.
+// ============================================================================
+const TUN_BANDS = (()=>{ const a=[Z_NEAR]; let z=Z_NEAR; while(z<Z_FAR){ z*=1.45; a.push(Math.min(z,Z_FAR)); } return a; })();
+// per-surface differential shading, parameterized by the active variant
+const tunShade = (V, bright, fog)=> lerpC([V.wall[0]*bright, V.wall[1]*bright, V.wall[2]*bright], V.dark, fog);
+
+function drawTunnel(){
+  const V = VARIANTS[S.variant];
+  const gz = S.gate ? S.gate.z : Infinity;
+  // chamber interior first — it's beyond the tunnel mouth, so it paints under
+  if (S.gate && gz < Z_FAR) drawChamber(gz);
+  const zEnd = Math.min(gz, Z_FAR);
+  if (zEnd <= Z_NEAR + 0.01) return;          // mouth already behind the camera
+
+  // far cap when no chamber ahead: the tunnel melts into dark
+  if (zEnd >= Z_FAR){
+    const l=projX(-TUN_HW,Z_FAR), r=projX(TUN_HW,Z_FAR);
+    const t=projY(TUN_CEIL,Z_FAR), b=projY(-CAM_Y,Z_FAR);
+    ctx.fillStyle = rgb(V.dark);
+    ctx.fillRect(l,t,r-l,b-t);
+  }
+
+  // ---- the four surfaces, far → near, fog-shaded bands ----
+  for (let i=TUN_BANDS.length-2; i>=0; i--){
+    const z0=TUN_BANDS[i], z1=Math.min(TUN_BANDS[i+1], zEnd);
+    if (z0 >= zEnd) continue;
+    const fog = fogF((z0+z1)/2)*0.92;
+    const l0=projX(-TUN_HW,z0), r0=projX(TUN_HW,z0), t0=projY(TUN_CEIL,z0), b0=projY(-CAM_Y,z0);
+    const l1=projX(-TUN_HW,z1), r1=projX(TUN_HW,z1), t1=projY(TUN_CEIL,z1), b1=projY(-CAM_Y,z1);
+    // ceiling
+    ctx.fillStyle = rgb(tunShade(V, V.bright.ceil, fog));
+    ctx.beginPath(); ctx.moveTo(l0,t0); ctx.lineTo(r0,t0); ctx.lineTo(r1,t1); ctx.lineTo(l1,t1); ctx.closePath(); ctx.fill();
+    // floor
+    ctx.fillStyle = rgb(tunShade(V, V.bright.floor, fog));
+    ctx.beginPath(); ctx.moveTo(l0,b0); ctx.lineTo(r0,b0); ctx.lineTo(r1,b1); ctx.lineTo(l1,b1); ctx.closePath(); ctx.fill();
+    // left / right walls
+    ctx.fillStyle = rgb(tunShade(V, V.bright.wall, fog));
+    ctx.beginPath(); ctx.moveTo(l0,t0); ctx.lineTo(l0,b0); ctx.lineTo(l1,b1); ctx.lineTo(l1,t1); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(r0,t0); ctx.lineTo(r0,b0); ctx.lineTo(r1,b1); ctx.lineTo(r1,t1); ctx.closePath(); ctx.fill();
+  }
+
+  // ---- corner edges (converging guide lines that sell the box) ----
+  const zN = Z_NEAR, zF = zEnd;
+  ctx.strokeStyle = rgb(lerpC(V.wall,[0,0,0],0.45), 0.8);
+  ctx.lineWidth = 1;
+  for (const [x,y] of [[-TUN_HW,TUN_CEIL],[TUN_HW,TUN_CEIL],[-TUN_HW,-CAM_Y],[TUN_HW,-CAM_Y]]){
+    ctx.beginPath();
+    ctx.moveTo(projX(x,zN), projY(y,zN));
+    ctx.lineTo(projX(x,zF), projY(y,zF));
+    ctx.stroke();
+  }
+
+  // ---- hoop seams riding the rung scroll: walls stream past at speed ----
+  for (const z of S.rungs){
+    if (z >= zEnd || z > 34) continue;
+    const a = clamp((1-fogF(z))*0.30, 0.03, 0.30);
+    ctx.strokeStyle = rgb(lerpC(V.wall,[255,255,255],0.18), a);
+    ctx.lineWidth = clamp(scaleAt(z)*0.008, 0.5, 1.4);
+    const l=projX(-TUN_HW,z), r=projX(TUN_HW,z), t=projY(TUN_CEIL,z), b=projY(-CAM_Y,z);
+    ctx.beginPath();
+    ctx.moveTo(l,b); ctx.lineTo(l,t); ctx.lineTo(r,t); ctx.lineTo(r,b);
+    ctx.stroke();
+  }
+
+  // ---- ceiling light strip down the center, with a soft glow ----
+  const cs0x=projX(0,zN), cs0y=projY(TUN_CEIL,zN), cs1x=projX(0,zF), cs1y=projY(TUN_CEIL,zF);
+  ctx.globalCompositeOperation="lighter";
+  ctx.strokeStyle = rgb(V.strip, 0.10); ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.moveTo(cs0x,cs0y); ctx.lineTo(cs1x,cs1y); ctx.stroke();
+  ctx.strokeStyle = rgb(V.strip, 0.32+0.06*Math.sin(S.time*2.1)); ctx.lineWidth = 1.4;
+  ctx.beginPath(); ctx.moveTo(cs0x,cs0y); ctx.lineTo(cs1x,cs1y); ctx.stroke();
+  ctx.globalCompositeOperation="source-over";
+}
+
+// ---- the intersection chamber, rendered in TUNNEL space -------------------
+// Same pinhole projection as the corridor, so the approach is pixel-continuous:
+// the walls literally end at gz and you look into the cube — far wall, side
+// walls, floor and ceiling all fog-shaded, with five TRUE-SIZE doorways
+// glowing in their destination tunnels' signature colors (the STRAIGHT one
+// showing its actual corridor). By the trigger the room fills the view, and
+// the hub camera takes over from the exact same vantage point.
+function drawChamber(gz){
+  const R = GATE_CHAMBER_R;
+  const zNear = Math.max(gz, 0.12), zFarW = gz + 2*R;
+  if (zFarW < 0.15) return;
+  const anticip = clamp(1 - gz/(GATE_APPROACH_Z*1.6), 0, 1); // glow ramps as you close in
+  const CHAM = [96, 102, 116];                              // slightly cooler grey than the corridor
+  const shade = (bright, fog)=> lerpC([CHAM[0]*bright, CHAM[1]*bright, CHAM[2]*bright], TUN_DARK, fog);
+  const fogAt = z => clamp((Math.max(z,0.15) - 2) / 26, 0, 1)*0.85;
+
+  // ---- far wall (with the STRAIGHT exit punched through it) ----
+  {
+    const l=projX(-R,zFarW), r=projX(R,zFarW), t=projY(R,zFarW), b=projY(-R,zFarW);
+    ctx.fillStyle = rgb(shade(0.5, fogAt(zFarW)));
+    ctx.fillRect(l,t,r-l,b-t);
+  }
+
+  // ---- side walls / floor / ceiling in 4 depth bands ----
+  const NB=4;
+  for (let i=NB-1; i>=0; i--){
+    const z0 = zNear + (zFarW-zNear)*i/NB, z1 = zNear + (zFarW-zNear)*(i+1)/NB;
+    if (z1 < 0.15) continue;
+    const z0c = Math.max(z0, 0.14);
+    const fog = fogAt((z0c+z1)/2);
+    const l0=projX(-R,z0c), r0=projX(R,z0c), t0=projY(R,z0c), b0=projY(-R,z0c);
+    const l1=projX(-R,z1),  r1=projX(R,z1),  t1=projY(R,z1),  b1=projY(-R,z1);
+    ctx.fillStyle = rgb(shade(0.30, fog));   // ceiling
+    ctx.beginPath(); ctx.moveTo(l0,t0); ctx.lineTo(r0,t0); ctx.lineTo(r1,t1); ctx.lineTo(l1,t1); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = rgb(shade(0.62, fog));   // floor
+    ctx.beginPath(); ctx.moveTo(l0,b0); ctx.lineTo(r0,b0); ctx.lineTo(r1,b1); ctx.lineTo(l1,b1); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = rgb(shade(0.44, fog));   // walls
+    ctx.beginPath(); ctx.moveTo(l0,t0); ctx.lineTo(l0,b0); ctx.lineTo(l1,b1); ctx.lineTo(l1,t1); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(r0,t0); ctx.lineTo(r0,b0); ctx.lineTo(r1,b1); ctx.lineTo(r1,t1); ctx.closePath(); ctx.fill();
+  }
+
+  // ---- the five exit mouths: TRUE-SIZE doorways (the tunnel cross-section,
+  // 2·TUN_HW wide, floor −CAM_Y to ceiling +TUN_CEIL), each glowing in its
+  // destination tunnel's signature color. Corner math is the same
+  // faceBasis construction the hub tubes use, so the two renders agree at
+  // the crossfade to the pixel.
+  const zc = gz + R;               // chamber center depth
+  const exv = S.gate && S.gate.exits ? S.gate.exits : [0,1,2,3,0];
+  const glow = (0.5 + 0.5*anticip) * (0.82 + 0.18*Math.sin(S.time*3.2));
+  const vOff = cv => cv>0 ? cv*CAM_Y : cv*TUN_CEIL;   // asymmetric: floor 1.0 down, ceiling 1.15 up
+  // projected corners of the doorway on face n (chamber-local), or null
+  const mouthCorners = n => {
+    const [u,v] = faceBasis(n);
+    const out=[];
+    for (const [cu,cv] of [[-1,-1],[1,-1],[1,1],[-1,1]]){
+      const w = vOff(cv);
+      const px = n[0]*R + u[0]*cu*TUN_HW + v[0]*w;
+      const py = n[1]*R + u[1]*cu*TUN_HW + v[1]*w;
+      const pz = n[2]*R + u[2]*cu*TUN_HW + v[2]*w + zc;
+      if (pz < 0.14) return null;
+      out.push([projX(px,pz), projY(py,pz)]);
+    }
+    return out;
+  };
+  const tracePoly = p => {
+    ctx.beginPath(); ctx.moveTo(p[0][0],p[0][1]);
+    for(let k=1;k<4;k++) ctx.lineTo(p[k][0],p[k][1]);
+    ctx.closePath();
+  };
+  const mouthHole = (p, Vx) => { ctx.fillStyle = rgb(Vx.dark); tracePoly(p); ctx.fill(); };
+  const mouthGlow = (p, col, inner) => {
+    ctx.globalCompositeOperation="lighter";                             // colored breath
+    const mcx=(p[0][0]+p[2][0])/2, mcy=(p[0][1]+p[2][1])/2;
+    const diag=Math.hypot(p[0][0]-p[2][0], p[0][1]-p[2][1]);
+    const rad=Math.max(diag*0.72, 2);
+    const g=ctx.createRadialGradient(mcx,mcy,0.5, mcx,mcy,rad);
+    g.addColorStop(0, rgb(lerpC(col,[255,255,255],0.3), 0.55*glow*inner));
+    g.addColorStop(0.55, rgb(col, 0.22*glow*inner));
+    g.addColorStop(1, rgb(col,0));
+    ctx.fillStyle=g;
+    ctx.beginPath(); ctx.arc(mcx,mcy,rad,0,6.283); ctx.fill();          // halo spills onto the wall
+    ctx.globalCompositeOperation="source-over";
+    ctx.strokeStyle = rgb(col, clamp(0.7*glow*inner,0,1));              // crisp rim
+    ctx.lineWidth = clamp(diag*0.012, 0.6, 1.8);
+    tracePoly(p); ctx.stroke();
+  };
+
+  // STRAIGHT — the corridor literally continues beyond the room, rendered
+  // with its destination variant's own walls, grid, and light strip
+  {
+    const Vf = VARIANTS[exv[0]];
+    const p = mouthCorners([0,0,1]);
+    if (p){
+      mouthHole(p, Vf);
+      const DEPTH = 13;
+      const bands = [0.03, 0.9, 2.0, 3.6, 6.0, 9.5, DEPTH];
+      for (let i=bands.length-2; i>=0; i--){
+        const z0=zFarW+bands[i], z1=zFarW+bands[i+1];
+        const fog = clamp((bands[i]+bands[i+1])/(2*DEPTH), 0, 1)*0.92;
+        const sh = b => rgb(lerpC([Vf.wall[0]*b,Vf.wall[1]*b,Vf.wall[2]*b], Vf.dark, fog));
+        const l0=projX(-TUN_HW,z0), r0=projX(TUN_HW,z0), t0=projY(TUN_CEIL,z0), b0=projY(-CAM_Y,z0);
+        const l1=projX(-TUN_HW,z1), r1=projX(TUN_HW,z1), t1=projY(TUN_CEIL,z1), b1=projY(-CAM_Y,z1);
+        ctx.fillStyle = sh(Vf.bright.ceil);
+        ctx.beginPath(); ctx.moveTo(l0,t0); ctx.lineTo(r0,t0); ctx.lineTo(r1,t1); ctx.lineTo(l1,t1); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = sh(Vf.bright.floor);
+        ctx.beginPath(); ctx.moveTo(l0,b0); ctx.lineTo(r0,b0); ctx.lineTo(r1,b1); ctx.lineTo(l1,b1); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = sh(Vf.bright.wall);
+        ctx.beginPath(); ctx.moveTo(l0,t0); ctx.lineTo(l0,b0); ctx.lineTo(l1,b1); ctx.lineTo(l1,t1); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(r0,t0); ctx.lineTo(r0,b0); ctx.lineTo(r1,b1); ctx.lineTo(r1,t1); ctx.closePath(); ctx.fill();
+      }
+      // its lane grid + rungs + ceiling strip — the real tunnel, seen ahead
+      const pulse = 0.5 + 0.5*Math.sin(S.time*3);
+      for (const x of [-1.5,-0.5,0.5,1.5].map(v=>v*LANE_W).concat([-TUN_HW,TUN_HW])){
+        const isEdge = Math.abs(Math.abs(x)-TUN_HW)<1e-6;
+        ctx.strokeStyle = rgb(Vf.grid, (isEdge?0.9:0.65)*(0.4+0.6*anticip));
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(projX(x,zFarW+0.05), projY(-CAM_Y,zFarW+0.05));
+        ctx.lineTo(projX(x,zFarW+DEPTH), projY(-CAM_Y,zFarW+DEPTH));
+        ctx.stroke();
+      }
+      for (let k=0;k<10;k++){
+        const zd = zFarW + 0.6 + k*1.15;
+        const a = clamp((1-k/10)*0.8, 0.05, 0.8) * (0.7+0.3*pulse) * (0.4+0.6*anticip);
+        ctx.strokeStyle = rgb(Vf.grid, a);
+        ctx.lineWidth = 1;
+        const y = projY(-CAM_Y, zd);
+        ctx.beginPath(); ctx.moveTo(projX(-TUN_HW,zd), y); ctx.lineTo(projX(TUN_HW,zd), y); ctx.stroke();
+      }
+      ctx.globalCompositeOperation="lighter";
+      ctx.strokeStyle = rgb(Vf.strip, 0.35); ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(projX(0,zFarW+0.05), projY(TUN_CEIL,zFarW+0.05));
+      ctx.lineTo(projX(0,zFarW+DEPTH), projY(TUN_CEIL,zFarW+DEPTH));
+      ctx.stroke();
+      ctx.globalCompositeOperation="source-over";
+      mouthGlow(p, Vf.sig, 1);
+    }
+  }
+  // side / vertical doorways: dark opening + destination-variant glow
+  for (const [n, ei] of [[[-1,0,0],3],[[1,0,0],4],[[0,1,0],1],[[0,-1,0],2]]){
+    const p = mouthCorners(n);
+    if (!p) continue;
+    const Vx = VARIANTS[exv[ei]];
+    mouthHole(p, Vx);
+    mouthGlow(p, Vx.sig, 0.85);
+  }
+
+  // ---- cool edge accents, matching the hub's wireframe language ----
+  ctx.strokeStyle = `rgba(130,200,235,${0.10+0.20*anticip})`;
+  ctx.lineWidth = 1;
+  for (const [x,y] of [[-R,R],[R,R],[-R,-R],[R,-R]]){
+    const za=Math.max(zNear,0.15);
+    if (zFarW<=za) continue;
+    ctx.beginPath();
+    ctx.moveTo(projX(x,za), projY(y,za));
+    ctx.lineTo(projX(x,zFarW), projY(y,zFarW));
+    ctx.stroke();
+  }
+  {
+    const l=projX(-R,zFarW), r=projX(R,zFarW), t=projY(R,zFarW), b=projY(-R,zFarW);
+    ctx.strokeRect(l,t,r-l,b-t);
+  }
+}
+
+function drawGrid(){
+  // grid ends where the tunnel opens into the chamber — the room has no lanes
+  const zEnd = S.gate ? Math.min(S.gate.z, Z_FAR) : Z_FAR;
+  if (zEnd <= Z_NEAR + 0.02) return;
+
+  const gcol = lerpC(VARIANTS[S.variant].grid, GRID_BOOST, S.gridBoost);
+  const edge = TUN_HW;
+  const pulse = 0.5 + 0.5*Math.sin(S.time*3);
+
+  // glow underlay (additive)
+  ctx.globalCompositeOperation="lighter";
+  ctx.lineWidth=3; ctx.strokeStyle = rgb(gcol, 0.10 + S.gridBoost*0.12);
+  gridLines(edge, zEnd);
+  ctx.globalCompositeOperation="source-over";
+
+  // lane boundary lines (converging to VP)
+  const bounds = [-1.5,-0.5,0.5,1.5].map(v=>v*LANE_W);
+  bounds.push(-edge, edge);
+  for (const x of bounds){
+    const isEdge = Math.abs(Math.abs(x)-edge)<1e-6;
+    ctx.strokeStyle = rgb(gcol, isEdge?0.95:0.7);
+    ctx.lineWidth = isEdge?1.4:1;
+    ctx.beginPath();
+    ctx.moveTo(projX(x,Z_NEAR), projY(-CAM_Y,Z_NEAR));
+    ctx.lineTo(projX(x,zEnd),  projY(-CAM_Y,zEnd));
+    ctx.stroke();
+  }
+  // scrolling lateral rungs
+  for (const z of S.rungs){
+    if (z >= zEnd) continue;
+    const a = clamp((1-fogF(z))*0.9, 0.06, 0.9) * (0.7+0.3*pulse);
+    ctx.strokeStyle = rgb(gcol, a);
+    ctx.lineWidth = clamp(scaleAt(z)*0.012, 0.5, 2);
+    const y = projY(-CAM_Y, z);
+    ctx.beginPath();
+    ctx.moveTo(projX(-edge,z), y);
+    ctx.lineTo(projX(edge,z),  y);
+    ctx.stroke();
+  }
+}
+function gridLines(edge, zEnd){
+  const bounds=[-edge,-1.5*LANE_W,-0.5*LANE_W,0.5*LANE_W,1.5*LANE_W,edge];
+  for(const x of bounds){
+    ctx.beginPath();
+    ctx.moveTo(projX(x,Z_NEAR), projY(-CAM_Y,Z_NEAR));
+    ctx.lineTo(projX(x,zEnd),  projY(-CAM_Y,zEnd));
+    ctx.stroke();
+  }
+}
+
+function drawDust(){
+  ctx.globalCompositeOperation="lighter";
+  const streak = 0.25 + S.gridBoost*1.4;    // longer on boost
+  for (const d of S.dust){
+    const s = scaleAt(d.z);
+    const x1=projX(d.x,d.z), y1=projY(d.y,d.z);
+    const z2 = d.z + (0.15 + streak);
+    const x2=projX(d.x,z2), y2=projY(d.y,z2);
+    const a = clamp((1-fogF(d.z))*0.5, 0, 0.7) * (0.5 + S.gridBoost*0.5);
+    ctx.strokeStyle = rgb(lerpC([180,235,255],[255,255,255],S.gridBoost), a);
+    ctx.lineWidth = clamp(s*0.006, 0.4, 2);
+    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+  }
+  ctx.globalCompositeOperation="source-over";
+}
+
+// ---- wall lamps: lengthwise light fixtures streaming past on the walls ------
+function drawPillar(o){
+  const z2 = o.z + o.len;
+  if (z2 < Z_NEAR + 0.02) return;
+  const za = Math.max(o.z, Z_NEAR + 0.02);
+  const fog = fogF(za);
+  const x = o.x * 0.985;                       // a hair inside the wall plane
+  const x1=projX(x,za), y1=projY(o.y,za), x2=projX(x,z2), y2=projY(o.y,z2);
+  if ((x1<-30&&x2<-30)||(x1>VW+30&&x2>VW+30)) return;
+  const s = scaleAt(za);
+  const flick = 0.75 + 0.25*Math.sin(S.time*2.4 + o.phase);
+  const col = lerpC(o.col, FOG, fog*0.85);
+
+  // dark housing strip
+  ctx.strokeStyle = rgb(lerpC(VARIANTS[S.variant].wall,[0,0,0],0.35), clamp(1-fog,0.15,1));
+  ctx.lineWidth = clamp(s*0.05, 1, 6);
+  ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+
+  // glowing core + wall wash
+  ctx.globalCompositeOperation="lighter";
+  ctx.strokeStyle = rgb(col, clamp((1-fog)*0.85,0,0.9)*flick);
+  ctx.lineWidth = clamp(s*0.022, 0.6, 3);
+  ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+  if (fog < 0.6){
+    const mx=(x1+x2)/2, my=(y1+y2)/2, rad=Math.max(s*0.32, 4);
+    const g=ctx.createRadialGradient(mx,my,1, mx,my,rad);
+    g.addColorStop(0, rgb(col, 0.22*(1-fog)*flick));
+    g.addColorStop(1, rgb(col, 0));
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(mx,my,rad,0,6.283); ctx.fill();
+  }
+  ctx.globalCompositeOperation="source-over";
+}
+
+function drawShard(o){
+  o.spin += 0.04;
+  const s = scaleAt(o.z), fog = fogF(o.z);
+  const sx = projX(o.x, o.z), cy = projY(o.h, o.z);
+  const sz = o.size*s;
+  if (sz<0.3 || cy>VH+20 || cy<-20) return;
+  const base = hsl2rgb(o.hue, 0.85, 0.6);
+  const col = lerpC(base, FOG, fog*0.8);
+
+  // glow
+  ctx.globalCompositeOperation="lighter";
+  const g = ctx.createRadialGradient(sx,cy,0, sx,cy, sz*2.2);
+  g.addColorStop(0, rgb(lerpC(col,[255,255,255],0.4), clamp((1-fog)*0.7,0,0.8)));
+  g.addColorStop(1, rgb(col,0));
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(sx,cy,sz*2.2,0,6.283); ctx.fill();
+  ctx.globalCompositeOperation="source-over";
+
+  // faceted diamond
+  const grad = ctx.createLinearGradient(sx,cy-sz,sx,cy+sz);
+  grad.addColorStop(0, rgb(lerpC(col,[255,255,255],0.5)));
+  grad.addColorStop(0.5, rgb(col));
+  grad.addColorStop(1, rgb(lerpC(col,[0,0,0],0.35)));
+  ctx.fillStyle=grad;
+  ctx.beginPath();
+  ctx.moveTo(sx, cy-sz); ctx.lineTo(sx+sz*0.72, cy); ctx.lineTo(sx, cy+sz); ctx.lineTo(sx-sz*0.72, cy); ctx.closePath(); ctx.fill();
+  // facet lines when big enough
+  if (sz>6){
+    ctx.strokeStyle=rgb(lerpC(col,[255,255,255],0.5),0.7); ctx.lineWidth=clamp(sz*0.04,0.5,1.5);
+    ctx.beginPath();
+    ctx.moveTo(sx,cy-sz); ctx.lineTo(sx,cy+sz);
+    ctx.moveTo(sx-sz*0.72,cy); ctx.lineTo(sx+sz*0.72,cy);
+    ctx.stroke();
+  }
+  // sparkle cross when near
+  if (sz>10){
+    ctx.globalCompositeOperation="lighter";
+    ctx.strokeStyle=rgb([255,255,255], clamp((1-fog)*0.6,0,0.7));
+    ctx.lineWidth=1; const r=sz*(1.3+0.2*Math.sin(o.spin*3));
+    ctx.beginPath();
+    ctx.moveTo(sx-r,cy); ctx.lineTo(sx+r,cy); ctx.moveTo(sx,cy-r); ctx.lineTo(sx,cy+r);
+    ctx.stroke();
+    ctx.globalCompositeOperation="source-over";
+  }
+}
+
+function drawBlock(o){
+  const s = scaleAt(o.z), fog = fogF(o.z);
+  const sx = projX(o.x, o.z), baseY = projY(-CAM_Y, o.z);
+  const w=o.w*s, h=o.h*s, top=baseY-h, l=sx-w/2;
+  if (h<0.5 || top>VH || baseY<0) return;
+  const body = lerpC([46,40,54], FOG, fog*0.55);
+  // glow / warning
+  ctx.fillStyle = rgb(body); ctx.fillRect(l, top, w, h);
+  ctx.fillStyle = rgb(lerpC(body,[0,0,0],0.4)); ctx.fillRect(l, top+h*0.66, w, h*0.34);
+  // hazard stripes
+  ctx.save();
+  ctx.beginPath(); ctx.rect(l,top,w,h); ctx.clip();
+  const step=Math.max(4,h*0.22), a=clamp((1-fog),0.2,1);
+  ctx.strokeStyle=rgb([255,196,40],a*0.9); ctx.lineWidth=Math.max(1.5,h*0.09);
+  for(let d=-h; d<w+h; d+=step*1.6){
+    ctx.beginPath(); ctx.moveTo(l+d,top+h); ctx.lineTo(l+d+h,top); ctx.stroke();
+  }
+  ctx.restore();
+  ctx.strokeStyle=rgb(lerpC([255,80,60],FOG,fog*0.4), a); ctx.lineWidth=clamp(s*0.01,0.6,2);
+  ctx.strokeRect(l,top,w,h);
+  // blinking warning light
+  if (h>16){
+    const on = (Math.sin(o.blink*8)>0);
+    ctx.fillStyle = on ? rgb([255,70,60],a) : rgb([90,20,20],a);
+    if(on){ ctx.globalCompositeOperation="lighter"; }
+    ctx.fillRect(sx-2, top-3, 4, 3);
+    ctx.globalCompositeOperation="source-over";
+  }
+}
+
+function drawRing(o){
+  const s = scaleAt(o.z), fog = fogF(o.z);
+  const sx = projX(o.x, o.z), cy = projY(o.h, o.z);
+  const rw=o.rw*s, rh=o.rh*s;
+  if (rw<1 || cy>VH+30 || cy<-30) return;
+  const aligned = Math.abs(S.playerX-o.x)<LANE_W*0.55 && o.z<8;
+  const col = lerpC(hsl2rgb(o.hue,0.8,0.62), FOG, fog*0.7);
+  ctx.globalCompositeOperation="lighter";
+  ctx.globalAlpha = clamp((1-fog)*0.9,0.15,1) * (aligned?1:0.7);
+  ctx.lineWidth = clamp(rw*0.16,1.5,10) * (aligned?1.2:1);
+  ctx.strokeStyle = rgb(lerpC(col,[255,255,255],aligned?0.5:0.2));
+  ctx.beginPath(); ctx.ellipse(sx,cy,rw,rh,0,0,6.283); ctx.stroke();
+  // inner faint ring
+  ctx.globalAlpha *= 0.5; ctx.lineWidth*=0.5;
+  ctx.beginPath(); ctx.ellipse(sx,cy,rw*0.82,rh*0.82,0,0,6.283); ctx.stroke();
+  ctx.globalAlpha=1; ctx.globalCompositeOperation="source-over";
+}
+
+// ---- particles --------------------------------------------------------------
+function drawParticles(){
+  ctx.globalCompositeOperation="lighter";
+  for (const p of S.parts){
+    const a = clamp(p.life*2, 0, 1);
+    ctx.fillStyle = rgb(p.col, a);
+    if (p.kind===1){
+      ctx.fillRect(p.x-p.size, p.y-0.5, p.size*2, 1);
+      ctx.fillRect(p.x-0.5, p.y-p.size, 1, p.size*2);
+    } else {
+      ctx.fillRect(p.x-p.size/2, p.y-p.size/2, p.size, p.size);
+    }
+  }
+  ctx.globalCompositeOperation="source-over";
+}
+
+// ============================================================================
+//  HUB SCENE — suspended inside the intersection cube, free-look aiming
+// ============================================================================
+function renderHub(){
+  updateHubProj();
+  const g = ctx.createRadialGradient(CX,HCY,10, CX,HCY,VW*0.75);
+  g.addColorStop(0,"#14121e"); g.addColorStop(1,"#050409");
+  ctx.fillStyle=g; ctx.fillRect(0,0,VW,VH);
+
+  drawHubCube();
+  drawHubPortals();
+  drawCharacter("hub");
+  drawParticles();
+  if (S.phase==="hub" && S.ix.entryK>0.5) drawHubReticle();
+}
+
+const CUBE_FACES = [[0,0,1],[0,0,-1],[0,1,0],[0,-1,0],[1,0,0],[-1,0,0]];
+function faceBasis(n){
+  const u = perp(n);
+  const v = [ n[1]*u[2]-n[2]*u[1], n[2]*u[0]-n[0]*u[2], n[0]*u[1]-n[1]*u[0] ];
+  return [u,v];
+}
+// the chamber's grey — matches drawChamber so the entry crossfade lands on
+// the same material; keep the two in sync if you retint either
+const CHAM_GREY = [96, 102, 116];
+const chamShade = (bright, fog)=> lerpC([CHAM_GREY[0]*bright, CHAM_GREY[1]*bright, CHAM_GREY[2]*bright], TUN_DARK, fog);
+const chamFog = dist => clamp((dist-1.4)/7, 0, 1)*0.75;
+
+function drawHubCube(){
+  const R = GATE_CHAMBER_R;
+  const cam = hubCamPos();
+  // solid shaded walls — a real grey room, same material as the corridor.
+  // Each face is a 4×4 grid of sub-quads: fog shades per-quad by distance
+  // (real depth cue), and quads that dip behind the camera drop individually
+  // instead of taking the whole wall with them.
+  const SUB = 4;
+  for (const n of CUBE_FACES){
+    // cull a face once the camera is at/beyond its plane (looking at its back)
+    if (n[0]*cam[0] + n[1]*cam[1] + n[2]*cam[2] > R - 0.02) continue;
+    const [u,v] = faceBasis(n);
+    const bright = n[1]>0.5 ? 0.30 : n[1]<-0.5 ? 0.62 : 0.44;   // ceiling dark, floor light
+    for (let gi=0; gi<SUB; gi++) for (let gj=0; gj<SUB; gj++){
+      const a0=-1+2*gi/SUB, a1=-1+2*(gi+1)/SUB, b0=-1+2*gj/SUB, b1=-1+2*(gj+1)/SUB;
+      const P = (a,b)=> projHub([ n[0]*R+u[0]*a*R+v[0]*b*R, n[1]*R+u[1]*a*R+v[1]*b*R, n[2]*R+u[2]*a*R+v[2]*b*R ]);
+      const c0=P(a0,b0), c1=P(a1,b0), c2=P(a1,b1), c3=P(a0,b1);
+      if (!c0||!c1||!c2||!c3) continue;
+      const am=(a0+a1)/2, bm=(b0+b1)/2;
+      const cc = toCam([ n[0]*R+u[0]*am*R+v[0]*bm*R, n[1]*R+u[1]*am*R+v[1]*bm*R, n[2]*R+u[2]*am*R+v[2]*bm*R ]);
+      const fog = chamFog(Math.hypot(cc[0],cc[1],cc[2]));
+      const panel = ((gi+gj)%2 ? 0.97 : 1.03);                   // faint panel checker
+      ctx.fillStyle = rgb(chamShade(bright*panel, fog));
+      ctx.beginPath(); ctx.moveTo(c0.x,c0.y); ctx.lineTo(c1.x,c1.y);
+      ctx.lineTo(c2.x,c2.y); ctx.lineTo(c3.x,c3.y); ctx.closePath(); ctx.fill();
+    }
+  }
+  // wireframe edge accents
+  const pts = CUBE_CORNERS.map(c => projHub([c[0]*R, c[1]*R, c[2]*R]));
+  ctx.globalCompositeOperation="lighter";
+  ctx.strokeStyle = "rgba(130,200,235,0.30)";
+  ctx.lineWidth = 1;
+  for (const [i,j] of CUBE_EDGE_IDX){
+    const a=pts[i], b=pts[j];
+    if (!a || !b) continue;
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+  }
+  ctx.globalCompositeOperation="source-over";
+}
+
+// Each exit tube is a TRUE trompe-l'œil render of the tunnel behind it: the
+// exact world cross-section (±TUN_HW wide, floor CAM_Y below the axis,
+// ceiling TUN_CEIL above — same asymmetry as the corridor), painted with the
+// destination variant's own walls, fog, lane grid, ceiling strip, and wall
+// lamps. The player is literally looking AT the tunnel they'd be running.
+// v = -world-up for the three horizontal exits (see faceBasis), so a
+// positive v offset is "down": floor at +CAM_Y, ceiling at −TUN_CEIL.
+const TUBE_BANDS = [0.03, 0.8, 1.7, 2.9, 4.5, 6.8, 10, 14.5, 20, 27];
+const TUBE_END = 27;
+// deterministic wall lamps per tube — the off-axis parallax props (they
+// mirror drawPillar's fixtures, so the preview furnishing is honest too)
+const TUBE_LAMPS = [
+  { d:2.3,  side:-1, y: 0.35, len:0.9 },
+  { d:5.6,  side: 1, y:-0.15, len:0.8 },
+  { d:9.8,  side:-1, y: 0.60, len:1.0 },
+  { d:15.5, side: 1, y: 0.20, len:0.9 },
+];
+
+// draws one tube: variant walls/grid/strip/lamps + aim UI (frame/label/glow).
+//   aim     – EXITS entry for the wayfinding frame+label, or null (entry tube)
+//   rungOff – d = rungZ + rungOff maps S.rungs into tube depths (world-locked
+//             floor grid, see drawHubPortals); null = static rungs
+//   te      – commit progress for this tube (chosen only): streaks + lamp fade
+function drawHubTube(dir, aim, locked, dim, vIdx, rungOff, te){
+  const V = VARIANTS[vIdx];
+  const R = GATE_CHAMBER_R;
+  const [u,v] = faceBasis(dir);
+  const pt = (d, uu, vv)=> projHub([
+    dir[0]*(R+d) + u[0]*uu + v[0]*vv,
+    dir[1]*(R+d) + u[1]*uu + v[1]*vv,
+    dir[2]*(R+d) + u[2]*uu + v[2]*vv
+  ]);
+  // corners: [0]=(-,ceil) [1]=(+,ceil) [2]=(+,floor) [3]=(-,floor)
+  const CORN = [[-TUN_HW,-TUN_CEIL],[TUN_HW,-TUN_CEIL],[TUN_HW,CAM_Y],[-TUN_HW,CAM_Y]];
+  const rings = TUBE_BANDS.map(d => CORN.map(([uu,vv])=> pt(d,uu,vv)));
+  const poly = pts => {
+    ctx.beginPath(); ctx.moveTo(pts[0].x,pts[0].y);
+    for(let k=1;k<4;k++) ctx.lineTo(pts[k].x,pts[k].y);
+    ctx.closePath();
+  };
+  // "lights come on" when aimed at — surfaces, grid and strip all brighten
+  const lit = locked ? (S.phase==="commit" ? 1.12 : 0.88+0.24*clamp(S.ix.lockT*5,0,1)) : 0.88;
+  const dimC = c => dim>=1 ? c : lerpC([4,4,6], c, dim);
+  const shade = (b, fog)=> dimC(lerpC([V.wall[0]*b*lit, V.wall[1]*b*lit, V.wall[2]*b*lit], V.dark, fog));
+
+  // opaque punch-through at the mouth — the hole in the solid chamber wall,
+  // pre-filled with the destination's deep-fog dark (also the far cap)
+  const mouth = rings[0];
+  const mOK = !mouth.some(p=>!p);
+  if (mOK){ ctx.fillStyle = rgb(dimC(V.dark)); poly(mouth); ctx.fill(); }
+
+  // ---- the four surfaces, opaque fog-shaded bands (same as drawTunnel) ----
+  for (let r=0; r<rings.length-1; r++){
+    const near = rings[r], far = rings[r+1];
+    if (near.some(p=>!p) || far.some(p=>!p)) continue;
+    const fog = fogF((TUBE_BANDS[r]+TUBE_BANDS[r+1])/2)*0.92;
+    const surf = (a,b,br)=>{
+      ctx.fillStyle = rgb(shade(br, fog));
+      ctx.beginPath();
+      ctx.moveTo(near[a].x,near[a].y); ctx.lineTo(far[a].x,far[a].y);
+      ctx.lineTo(far[b].x,far[b].y);   ctx.lineTo(near[b].x,near[b].y);
+      ctx.closePath(); ctx.fill();
+    };
+    surf(0,1,V.bright.ceil);    // ceiling
+    surf(3,2,V.bright.floor);   // floor
+    surf(0,3,V.bright.wall);    // left wall
+    surf(1,2,V.bright.wall);    // right wall
+  }
+
+  // ---- corner guide edges (same dark converging lines as the corridor) ----
+  ctx.strokeStyle = rgb(dimC(lerpC(V.wall,[0,0,0],0.45)), 0.8*dim);
+  ctx.lineWidth = 1;
+  for (let k=0;k<4;k++){
+    ctx.beginPath(); let started=false;
+    for (let r=0;r<rings.length;r++){
+      const p = rings[r][k]; if (!p) continue;
+      if (!started){ ctx.moveTo(p.x,p.y); started=true; } else ctx.lineTo(p.x,p.y);
+    }
+    ctx.stroke();
+  }
+
+  // ---- the destination's lane grid on the tube floor ----
+  const gA = clamp((locked?1:0.66)*lit*dim, 0, 1);
+  for (const x of [-1.5,-0.5,0.5,1.5].map(m=>m*LANE_W).concat([-TUN_HW,TUN_HW])){
+    const isEdge = Math.abs(Math.abs(x)-TUN_HW)<1e-6;
+    const p0 = pt(0.05, x, CAM_Y), p1 = pt(TUBE_END, x, CAM_Y);
+    if (!p0||!p1) continue;
+    ctx.strokeStyle = rgb(V.grid, (isEdge?0.95:0.7)*gA);
+    ctx.lineWidth = isEdge?1.2:1;
+    ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.stroke();
+  }
+  // rungs (world-locked when rungOff is set) + matching wall hoop seams
+  const pulse = 0.5 + 0.5*Math.sin(S.time*3);
+  const ds = [];
+  if (rungOff===null){ for(let k=0;k<24;k++){ const d=0.45+k*1.15; if(d<TUBE_END) ds.push(d); } }
+  else for (const z of S.rungs){ const d=z+rungOff; if (d>0.06 && d<TUBE_END) ds.push(d); }
+  for (const d of ds){
+    const pL = pt(d,-TUN_HW,CAM_Y), pR = pt(d,TUN_HW,CAM_Y);
+    if (!pL||!pR) continue;
+    ctx.strokeStyle = rgb(V.grid, clamp((1-fogF(d))*0.9,0.06,0.9)*(0.7+0.3*pulse)*gA);
+    ctx.lineWidth = clamp(pL.s*0.012, 0.5, 2);
+    ctx.beginPath(); ctx.moveTo(pL.x,pL.y); ctx.lineTo(pR.x,pR.y); ctx.stroke();
+    const tL = pt(d,-TUN_HW,-TUN_CEIL), tR = pt(d,TUN_HW,-TUN_CEIL);
+    if (!tL||!tR) continue;
+    ctx.strokeStyle = rgb(dimC(lerpC(V.wall,[255,255,255],0.18)), clamp((1-fogF(d))*0.30,0.03,0.30)*dim);
+    ctx.lineWidth = clamp(pL.s*0.008, 0.5, 1.4);
+    ctx.beginPath(); ctx.moveTo(pL.x,pL.y); ctx.lineTo(tL.x,tL.y); ctx.lineTo(tR.x,tR.y); ctx.lineTo(pR.x,pR.y); ctx.stroke();
+  }
+
+  // ---- ceiling light strip ----
+  const s0 = pt(0.05,0,-TUN_CEIL), s1 = pt(TUBE_END,0,-TUN_CEIL);
+  if (s0 && s1){
+    ctx.globalCompositeOperation="lighter";
+    ctx.strokeStyle = rgb(V.strip, 0.10*lit*dim); ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(s0.x,s0.y); ctx.lineTo(s1.x,s1.y); ctx.stroke();
+    ctx.strokeStyle = rgb(V.strip, (0.32+0.06*Math.sin(S.time*2.1))*lit*dim); ctx.lineWidth = 1.3;
+    ctx.beginPath(); ctx.moveTo(s0.x,s0.y); ctx.lineTo(s1.x,s1.y); ctx.stroke();
+    ctx.globalCompositeOperation="source-over";
+  }
+
+  // ---- wall lamps (the parallax props; fade out as the launch takes over) ----
+  const lampA = (1-te) * dim * (locked?1:0.8);
+  if (lampA > 0.03){
+    for (let k=0;k<TUBE_LAMPS.length;k++){
+      const L = TUBE_LAMPS[k];
+      const uu = L.side*TUN_HW*0.985, vv = -L.y;
+      const n1 = pt(L.d, uu, vv), n2 = pt(L.d+L.len, uu, vv);
+      if (!n1||!n2) continue;
+      const fog = fogF(L.d);
+      ctx.strokeStyle = rgb(dimC(lerpC(V.wall,[0,0,0],0.35)), clamp(1-fog,0.15,1)*lampA);
+      ctx.lineWidth = clamp(n1.s*0.05, 1, 5);
+      ctx.beginPath(); ctx.moveTo(n1.x,n1.y); ctx.lineTo(n2.x,n2.y); ctx.stroke();
+      ctx.globalCompositeOperation="lighter";
+      const lcol = V.lamps[k%2];
+      ctx.strokeStyle = rgb(lcol, clamp((1-fog)*0.8,0,0.85)*lampA);
+      ctx.lineWidth = clamp(n1.s*0.022, 0.6, 3);
+      ctx.beginPath(); ctx.moveTo(n1.x,n1.y); ctx.lineTo(n2.x,n2.y); ctx.stroke();
+      const mx=(n1.x+n2.x)/2, my=(n1.y+n2.y)/2, rad=Math.max(n1.s*0.32, 3);
+      const g=ctx.createRadialGradient(mx,my,1, mx,my,rad);
+      g.addColorStop(0, rgb(lcol, 0.18*(1-fog)*lampA));
+      g.addColorStop(1, rgb(lcol, 0));
+      ctx.fillStyle=g; ctx.beginPath(); ctx.arc(mx,my,rad,0,6.283); ctx.fill();
+      ctx.globalCompositeOperation="source-over";
+    }
+  }
+
+  // ---- wind streaks during the launch — the walls rushing past ----
+  if (te > 0){
+    const streaks = 0.25 + 0.75*te;
+    ctx.globalCompositeOperation="lighter";
+    for (let k=0;k<9;k++){
+      const base = (k*1.13 + S.time*22) % 8.6;
+      const m = k%4, pos = ((k*2.3)%1.8)-0.9;
+      const uu = m===0? TUN_HW*0.93 : m===1? -TUN_HW*0.93 : pos*TUN_HW;
+      const vv = m===2? CAM_Y*0.93 : m===3? -TUN_CEIL*0.93 : pos;
+      const n1 = pt(0.3+base, uu, vv), n2 = pt(0.3+base+1.4, uu, vv);
+      if (!n1||!n2) continue;
+      ctx.strokeStyle = rgb(lerpC(V.sig,[255,255,255],0.55), 0.5*streaks);
+      ctx.lineWidth = clamp(n1.s*0.02, 0.6, 2);
+      ctx.beginPath(); ctx.moveTo(n1.x,n1.y); ctx.lineTo(n2.x,n2.y); ctx.stroke();
+    }
+    ctx.globalCompositeOperation="source-over";
+  }
+
+  if (!mOK) return;
+
+  // ---- soft breath of the destination's light at the mouth ----
+  {
+    const mcx=(mouth[0].x+mouth[2].x)/2, mcy=(mouth[0].y+mouth[2].y)/2;
+    const diag = Math.hypot(mouth[0].x-mouth[2].x, mouth[0].y-mouth[2].y);
+    ctx.globalCompositeOperation="lighter";
+    const g = ctx.createRadialGradient(mcx,mcy,1, mcx,mcy,Math.max(diag*0.55,2));
+    g.addColorStop(0, rgb(lerpC(V.sig,[255,255,255],0.3), (locked?0.22:0.08)*dim));
+    g.addColorStop(1, rgb(V.sig,0));
+    ctx.fillStyle=g; poly(mouth); ctx.fill();
+    ctx.globalCompositeOperation="source-over";
+  }
+
+  // ---- aim UI: door frame in the exit's wayfinding color, label + variant ----
+  ctx.strokeStyle = aim ? rgb(aim.col, (locked?0.9:0.4)*dim) : rgb([150,155,168], 0.25*dim);
+  ctx.lineWidth = locked?1.6:1;
+  poly(mouth); ctx.stroke();
+  if (aim && dim>0.15){
+    // just inside the door's top edge — dark tunnel ceiling behind the text,
+    // and clear of the DOM HUD that lives above the canvas center-top
+    const tx=(mouth[0].x+mouth[1].x)/2, ty=Math.min(mouth[0].y,mouth[1].y);
+    ctx.textAlign="center";
+    ctx.font="7px monospace";
+    ctx.fillStyle = locked ? rgb(aim.col,dim) : `rgba(255,255,255,${0.6*dim})`;
+    ctx.fillText(aim.label, tx, ty + 10);
+    ctx.font="6px monospace";
+    ctx.fillStyle = rgb(V.sig, (locked?0.95:0.65)*dim);
+    ctx.fillText(V.name, tx, ty + 18);
+  }
+}
+
+function drawHubPortals(){
+  const committing = S.phase==="commit";
+  const chosen = committing ? S.ix.chosenExit : -1;
+  const te = committing ? 1-Math.pow(1-clamp(S.ix.commitT/COMMIT_DUR,0,1),3) : 0;
+  const R = GATE_CHAMBER_R;
+  const pushOff = te*(R+1.8);
+
+  // the entry tube first (under the exits): the tunnel you came in through,
+  // in its own variant. Skipped while the camera is still gliding IN through
+  // it — its opaque mouth-punch would black out the whole view.
+  if (!(S.phase==="hub" && S.ix.entryK < 0.95)){
+    drawHubTube([0,0,-1], null, false, 0.55, S.ix.entryVariant, null, 0);
+  }
+
+  // chosen exit draws last so the launch flies into it, over everything else
+  const order = [];
+  for (let i=0;i<EXITS.length;i++) if (i!==chosen) order.push(i);
+  if (chosen>=0) order.push(chosen);
+
+  for (const i of order){
+    const isChosen = committing && i===chosen;
+    const dim = (committing && !isChosen) ? clamp(1-te*0.9,0.05,1) : 1;
+    const locked = committing ? isChosen : S.ix.locked===i;
+    // rung sync: the fwd tube shares the world's rung set through the entry
+    // glide, and the chosen tube shares it through the commit push — so the
+    // preview's floor grid and the revealed tunnel's grid are the SAME lines,
+    // scrolling in phase across the crossfade
+    let rungOff = -R;
+    if (S.phase==="hub" && S.gate && i===0) rungOff = -(S.gate.z + 2*R);
+    if (isChosen) rungOff = pushOff - R;
+    drawHubTube(EXITS[i].dir, EXITS[i], locked, dim, S.ix.tubeVariants[i],
+                rungOff, isChosen ? te : 0);
+  }
+}
+
+function drawHubReticle(){
+  const locked = S.ix.locked>=0;
+  const col = locked ? EXITS[S.ix.locked].col : [255,255,255];
+  ctx.strokeStyle = rgb(col, locked?0.95:0.55);
+  ctx.lineWidth = locked?1.6:1;
+  const r = locked ? 5+Math.sin(S.time*10)*0.6 : 4;
+  ctx.beginPath(); ctx.arc(CX,HCY,r,0,6.283); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(CX-r-3,HCY); ctx.lineTo(CX-r,HCY);
+  ctx.moveTo(CX+r,HCY); ctx.lineTo(CX+r+3,HCY);
+  ctx.moveTo(CX,HCY-r-3); ctx.lineTo(CX,HCY-r);
+  ctx.moveTo(CX,HCY+r); ctx.lineTo(CX,HCY+r+3);
+  ctx.stroke();
+}
+
+// ============================================================================
+//  CHARACTER — procedural pixel diver (goggles, scarf, solar wings, grapple)
+// ============================================================================
+function drawCharacter(forceMode){
+  const inHub = forceMode ? forceMode==="hub"
+    : (S.phase==="hub" || S.phase==="commit" || S.phase==="crash" || S.phase==="gameover");
+  const u = inHub ? 2.7 : 3.3 * (S.fov/FOV_BASE);    // px per sprite-pixel
+  let csx, feetY, rotZ;
+  if (inHub){
+    // resting float pose at the room center...
+    csx = CX + Math.sin(S.ix.enterT*0.7)*3;
+    feetY = HCY + 22 + Math.sin(S.ix.enterT*0.5)*2;
+    rotZ = Math.sin(S.ix.enterT*0.6)*0.22 + S.ix.yaw*0.12;
+    // ...blended from the runner's screen position on the way in, and back
+    // toward it on the way out, so the body never pops between renderers
+    if (S.phase==="hub" && S.ix.entryK<1){
+      csx = lerp(S.ix.charX0, csx, S.ix.entryK);
+      feetY = lerp(VH*0.855, feetY, S.ix.entryK);
+      rotZ *= S.ix.entryK;
+    } else if (S.phase==="commit"){
+      const te = 1-Math.pow(1-clamp(S.ix.commitT/COMMIT_DUR,0,1),3);
+      csx = lerp(csx, CX, te);
+      feetY = lerp(feetY, VH*0.855, te);
+      rotZ *= (1-te);
+    }
+  } else {
+    csx = CX + (S.playerX - S.cameraX) * scaleAt(Z_CHAR);
+    feetY = VH*0.855 + S.bob + S.floatY;
+    rotZ = S.lean * 0.12;
+  }
+  const boosting = S.boostT>0 && !inHub;
+
+  // ---- grapple line first (behind everything reads odd; draw to VP over sky but under body) ----
+  if (inHub){
+    const lockedIdx = S.phase==="commit" ? S.ix.chosenExit : S.ix.locked;
+    if (lockedIdx>=0){
+      const ex = EXITS[lockedIdx];
+      const p = projHub([ex.dir[0]*(GATE_CHAMBER_R+0.3), ex.dir[1]*(GATE_CHAMBER_R+0.3), ex.dir[2]*(GATE_CHAMBER_R+0.3)]);
+      if (p){
+        ctx.globalCompositeOperation="lighter";
+        ctx.strokeStyle = rgb(ex.col, 0.55+0.3*Math.sin(S.time*10));
+        ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.moveTo(csx+4, feetY-16); ctx.lineTo(p.x,p.y); ctx.stroke();
+        ctx.globalCompositeOperation="source-over";
+      }
+    }
+  } else if (S.grapple>0.02){
+    const handY = feetY - 15*u/3.3;
+    ctx.globalCompositeOperation="lighter";
+    ctx.strokeStyle = rgb(P.grap, 0.6*S.grapple);
+    ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.moveTo(csx + 6, handY); ctx.lineTo(CX + rand(-1,1), HORIZON + rand(-1,1)); ctx.stroke();
+    // anchor spark
+    ctx.fillStyle = rgb([255,255,255], 0.8*S.grapple);
+    ctx.fillRect(CX-2, HORIZON-2, 4, 4);
+    ctx.globalCompositeOperation="source-over";
+  }
+
+  ctx.save();
+  ctx.translate(csx, feetY);
+  ctx.rotate(rotZ);
+
+  const R = (x,y,w,h,c)=>{ ctx.fillStyle = rgb(c); ctx.fillRect(x*u, y*u, w*u, h*u); };
+  // sprite coords: origin at feet-center, up is negative y
+
+  // ---- solar wings (behind body) ----
+  if (S.wing>0.02){
+    const open = S.wing;
+    for (const dir of [-1,1]){
+      ctx.save();
+      ctx.translate(dir*2*u, -13*u);
+      ctx.rotate(dir * (-0.9 + 0.35*Math.sin(S.time*4)) * open + (dir<0?0:0));
+      // flap subtly
+      const wingScale = 0.4 + 0.6*open;
+      ctx.scale(dir*wingScale, wingScale);
+      // frame
+      ctx.fillStyle = rgb(P.frame); ctx.fillRect(0,-1*u, 12*u, 2*u);
+      // 2 rows x 4 cols of cells
+      for(let r=0;r<3;r++) for(let c=0;c<4;c++){
+        const cx0 = (1+c*2.6)*u, cy0 = (-4+r*2.6)*u, cw=2.4*u, ch=2.4*u;
+        ctx.fillStyle = rgb(P.cell); ctx.fillRect(cx0,cy0,cw,ch);
+        ctx.fillStyle = rgb(P.cellhi); ctx.fillRect(cx0,cy0,cw,0.5*u);
+        ctx.fillStyle = rgb(P.cellgrid); ctx.fillRect(cx0,cy0,0.4*u,ch);
+      }
+      ctx.restore();
+    }
+  }
+
+  // ---- scarf (streaming) drawn behind torso, to the lean/wind side ----
+  {
+    const dir = boosting ? -1 : (S.lean>=0?-1:1);
+    const stream = boosting ? 1 : 0.45;
+    ctx.fillStyle = rgb(P.scarfsh);
+    let sxp = -1, syp = -15;
+    for(let i=0;i<7;i++){
+      const t=i/6;
+      const wob = Math.sin(S.time*8 - i*0.7)*(1.2+stream*2)*t;
+      const px2 = sxp + dir*(1.6+stream*3.2)*t*i*0.5;
+      const py2 = syp + wob + (boosting? 0.5 : 2.2)*i*0.5;
+      R(px2, py2, 2.2 - t*1.2, 2.0 - t*1.0, i%2?P.scarf:P.scarfsh);
+    }
+  }
+
+  // ---- legs (run cycle; fold up when gliding) ----
+  const gl = 1 - S.wing;
+  const swing = Math.sin(S.runPhase*2) * 2.2 * gl;
+  // left leg (steps opposite to the right)
+  R(-3, -6, 3, 6 - Math.abs(swing)*0.4, P.pants);
+  R(-3, -1.5, 3, 1.5, P.boot);
+  // right leg (offset by swing so the run cycle reads)
+  R(0.5 + swing*0.3, -6, 3, 6, P.pantssh);
+  R(0.5 + swing*0.3, -1.5, 3, 1.5, P.boot);
+
+  // ---- torso ----
+  R(-3.5, -14, 7, 8, P.top);
+  R(-3.5, -14, 7, 2, P.topsh);      // shoulder shade
+  R(-3.5, -8, 7, 2, P.pants);       // belt/pant top
+  // chest highlight
+  R(-1, -13, 2, 6, lerpC(P.top,[255,255,255],0.25));
+
+  // ---- arms ----
+  const armSwing = Math.sin(S.runPhase*2 + Math.PI) * 1.6 * gl;
+  if (boosting){
+    // right arm extended forward-up toward grapple
+    R(3, -14, 5, 2.4, P.top); R(7.5, -15, 2, 2.2, P.skin);
+    R(-6, -13, 3, 2.2, P.top); R(-6.5, -11, 2, 2, P.skin);
+  } else if (S.wing>0.5){
+    // arms out for glide
+    R(3.5, -13, 3.5, 2.2, P.top); R(6.5, -12.5, 2, 2, P.skin);
+    R(-7, -13, 3.5, 2.2, P.top); R(-8.5, -12.5, 2, 2, P.skin);
+  } else {
+    R(-5, -13 + armSwing*0.3, 2.4, 5, P.topsh); R(-5, -8.5 + armSwing*0.3, 2.4, 2, P.skin);
+    R(2.6, -13 - armSwing*0.3, 2.4, 5, P.top);  R(2.6, -8.5 - armSwing*0.3, 2.4, 2, P.skin);
+  }
+
+  // ---- head ----
+  R(-3, -20, 6, 6, P.skin);
+  R(-3, -20, 6, 1, P.skinsh);        // top shade under hair
+  R(2, -19, 1, 5, P.skinsh);         // side shade
+  // hair
+  R(-3.5, -21, 7, 2, P.hair);
+  R(-3.5, -21, 7, 0.8, P.hairhi);
+  R(3, -20, 1.4, 3, P.hair);         // side tuft
+  R(-3.6, -20, 1, 3, P.hair);
+  // goggles
+  R(-3, -17.5, 6, 2.6, P.gogf);
+  R(-2.4, -17, 2.2, 1.8, P.lens);
+  R(0.4, -17, 2.2, 1.8, P.lens);
+  R(-2.4, -17, 2.2, 0.7, P.lenshi);  // lens glint
+  R(0.4, -17, 2.2, 0.7, P.lenshi);
+  // strap
+  R(-3.4, -17.4, 6.8, 0.6, lerpC(P.gogf,[0,0,0],0.2));
+
+  ctx.restore();
+
+  // ---- boost speed-lines hugging the character ----
+  if (boosting){
+    ctx.globalCompositeOperation="lighter";
+    ctx.strokeStyle=rgb([200,240,255],0.5);
+    ctx.lineWidth=1;
+    for(let i=0;i<6;i++){
+      const yy = feetY - rand(4,22)*u/3.3, len=rand(14,34);
+      ctx.beginPath(); ctx.moveTo(csx-rand(6,14)*u/3.3, yy); ctx.lineTo(csx-rand(6,14)*u/3.3-len, yy+rand(-2,2)); ctx.stroke();
+    }
+    ctx.globalCompositeOperation="source-over";
+  }
+}
+
+// ============================================================================
+//  HUD
+// ============================================================================
+const el = {
+  distv:document.getElementById("distv"), scorev:document.getElementById("scorev"),
+  combo:document.getElementById("combo"), chip:document.getElementById("chip"),
+  spdfill:document.getElementById("spdfill"),
+  ixtimer:document.getElementById("ixtimer"), ixhint:document.getElementById("ixhint"),
+  bB:document.getElementById("bB"), bG:document.getElementById("bG")
+};
+const MODE_COL = { BASE:"#ffd24a", GLIDE:"#6fd3e8", BOOST:"#8cf07a", HUB:"#c48cff", GRAPPLE:"#fff", CRASH:"#ff5a46", OVER:"#888" };
+let lastTouchLabel = "";
+function updateHUD(mode){
+  el.distv.innerHTML = (S.distance|0) + '<span style="font-size:.5em;opacity:.6"> m</span>';
+  el.scorev.textContent = (S.score|0).toLocaleString();
+  if (S.combo>0){
+    el.combo.classList.add("on");
+    el.combo.textContent = `×${S.mult.toFixed(1)} · COMBO ${S.combo}`;
+  } else el.combo.classList.remove("on");
+  el.chip.textContent = mode;
+  el.chip.style.color = MODE_COL[mode];
+  el.chip.style.borderColor = MODE_COL[mode];
+
+  const inHub = mode==="HUB";
+  el.ixtimer.classList.toggle("on", inHub);
+  el.ixhint.classList.toggle("on", inHub);
+  if (inHub) el.ixtimer.textContent = Math.max(1, Math.ceil(S.ix.timer));
+
+  if (inHub){
+    el.spdfill.style.width = clamp((S.ix.timer/HUB_TIMER)*100,0,100) + "%";
+    el.spdfill.style.background = "linear-gradient(90deg,#ff5a46,#ffd24a,#8cf07a)";
+  } else {
+    el.spdfill.style.width = clamp((S.speed/(BASE_SPEED*3))*100, 8, 100) + "%";
+    el.spdfill.style.background = mode==="BOOST"
+      ? "linear-gradient(90deg,#8cf07a,#d9ffcf)"
+      : mode==="GLIDE" ? "linear-gradient(90deg,#6fd3e8,#bfeff9)"
+      : "linear-gradient(90deg,#ffd24a,#ffcaa0)";
+  }
+
+  const wantLabel = inHub ? "hub" : "fly";
+  if (wantLabel !== lastTouchLabel){
+    lastTouchLabel = wantLabel;
+    el.bB.textContent = inHub ? "GRAPPLE" : "BOOST";
+    el.bG.textContent = inHub ? "LOOK ▲" : "GLIDE";
+  }
+}
+
+// ============================================================================
+//  MAIN LOOP
+// ============================================================================
+buildStatics();
+resetWorld();
+let last = performance.now();
+function frame(now){
+  let dt = (now-last)/1000; last = now;
+  dt = Math.min(dt, 0.05);
+  if (S.started && !S.paused) update(dt);
+  render();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// debug handle (used by automated checks; harmless in play)
+window.__vp = S;
+})();
+</script>
+</body>
+</html>
