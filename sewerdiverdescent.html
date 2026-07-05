@@ -3737,25 +3737,85 @@ function startStudioIntro(){
   function drawWaves(cx,y,w,t,col){
     for(let x=-w/2;x<w/2;x+=3){const yy=y+Math.round(Math.sin(x*0.18+t*0.05)*2);px(ctx,Math.round(cx+x),yy,3,2,col);}
   }
-  function drawDweller(cx,cy,t,ink,bg){
-    const well=shade(bg,0.92);
-    pxDisc(ctx,cx,cy,46,well);
-    for(let i=0;i<8;i++){const a=i/8*Math.PI*2;px(ctx,Math.round(cx+Math.cos(a)*44)-1,Math.round(cy+Math.sin(a)*44)-1,2,2,ink);} // rivets
-    px(ctx,cx-22,cy-4,44,30,ink); // hood / shoulders
-    for(let i=0;i<7;i++)px(ctx,cx-22+i*7,cy+24+((i%2)?3:0),5,4,ink); // ragged hem
-    px(ctx,cx-6,cy-14,12,12,ink); // hood peak
+  // cyberpunk sewer-mouth backdrop for the "first time" prompt: brick, a Roman-arch tunnel void,
+  // magenta/cyan neon tubing, a sagging cable, a reflective puddle and drifting mist/rain.
+  function drawSewerEntranceBg(t){
+    let g=ctx.createLinearGradient(0,0,0,VH);
+    g.addColorStop(0,'#0a0414');g.addColorStop(0.6,'#130a1c');g.addColorStop(1,'#1b0f20');
+    ctx.fillStyle=g;ctx.fillRect(0,0,VW,VH);
+    const brick='#1d1424',brickD='#140e18';
+    for(let by=0;by<VH*0.78;by+=10){const off=((by/10|0)%2)?9:0;for(let bx=-18+off;bx<VW+18;bx+=18){px(ctx,bx,by,16,8,brick);px(ctx,bx,by+7,16,1,brickD);}}
+    const archCX=VW/2,archW=Math.min(VW*0.7,240),r=archW/2,rustCol='#9a5128';
+    const archTopY=Math.round(VH*0.10),archBotY=VH+6,archH=archBotY-archTopY;
+    px(ctx,archCX-r-16,archTopY-14,archW+32,archH+14,'#2b2430');
+    px(ctx,archCX-r-16,archTopY-14,archW+32,3,'#3a3240');
+    for(let i=0;i<10;i++){const sx=Math.round(archCX-r-12+((i*37)%(archW+24))),sh=20+((i*53)%60);
+      ctx.globalAlpha=0.35;px(ctx,sx,archTopY-6,2,sh,rustCol);ctx.globalAlpha=1;}
+    for(let yy=0;yy<=archH;yy++){const Y=archTopY+yy,dy=r-yy,halfW=yy<r?Math.sqrt(Math.max(0,r*r-dy*dy)):r;
+      px(ctx,Math.round(archCX-halfW),Y,Math.max(1,Math.round(halfW*2)),1,'#030106');}
+    ctx.globalAlpha=0.55;const rg=ctx.createRadialGradient(archCX,archBotY-40,10,archCX,archBotY-40,r*1.3);
+    rg.addColorStop(0,'rgba(90,40,100,0.4)');rg.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=rg;ctx.fillRect(archCX-r,archTopY,archW,archH);ctx.globalAlpha=1;
+    for(let i=0;i<3;i++){const lx=Math.round(archCX-r*0.5+i*r*0.5),ly=archBotY-90+((i*23)%30);if((t>>3)%14<2)px(ctx,lx,ly,2,2,'#ffd9a0');}
+    const flick=s=>Math.sin(t*0.2+s)>-0.85,magOn=flick(0),cyanOn=flick(10);
+    if(magOn){px(ctx,Math.round(archCX-r-8),archTopY-2,3,archBotY-archTopY-12,'#ff2fd6');ctx.globalAlpha=0.32;px(ctx,Math.round(archCX-r-11),archTopY-2,9,archBotY-archTopY-12,'rgba(255,47,214,0.6)');ctx.globalAlpha=1;}
+    if(cyanOn){px(ctx,Math.round(archCX+r+5),archTopY-2,3,archBotY-archTopY-12,'#2fe8ff');ctx.globalAlpha=0.32;px(ctx,Math.round(archCX+r+2),archTopY-2,9,archBotY-archTopY-12,'rgba(47,232,255,0.6)');ctx.globalAlpha=1;}
+    ctx.save();ctx.shadowColor='rgba(255,47,214,0.65)';ctx.shadowBlur=4;
+    pxTextXL(ctx,'ACCESS',archCX,archTopY-26,2,magOn?'#ff6bf0':'#7a2f63');
+    ctx.restore();
+    for(let x=10;x<VW-10;x+=4){const sagY=18+Math.round(Math.sin((x/(VW-20))*Math.PI)*14);px(ctx,x,sagY,3,2,'#0c0810');}
+    if((t>>3)%10<2)px(ctx,Math.round(VW*0.5-1),30,3,3,'#fff6c2');
+    const pY=VH-26;px(ctx,archCX-r-10,pY,archW+20,26,'#05030a');
+    for(let i=0;i<14;i++){const ppx=Math.round(archCX-r-6+((i*29)%(archW+12))),rip=Math.sin(t*0.08+i)*1;
+      px(ctx,ppx,Math.round(pY+4+rip),10,1,(i%2)?'rgba(255,47,214,0.18)':'rgba(47,232,255,0.16)');}
+    for(let i=0;i<3;i++){const my=VH-40-i*10,mx=((t*0.3+i*60)%(VW+80))-40;ctx.globalAlpha=0.06+i*0.02;ctx.fillStyle='#bcd6e6';ctx.fillRect(mx,my,80,8);ctx.globalAlpha=1;}
+    for(let i=0;i<6;i++){const rx=(i*53+((t*3)%VW))%VW,ry=((t*9+i*40)%VH);px(ctx,rx,ry,1,6,'rgba(180,210,230,0.25)');}
+  }
+  // close-up, full-colour pixel-art portrait — same chunky px() style as the in-game diver
+  // sprites (see diverBody g===0 "PATCH DIVER" for the matching palette), but tighter and far
+  // more personal: a real watchful eye, a cracked wired-on lens, scar, grime, breath in the cold.
+  function drawDwellerFace(cx,cy,t){
+    const DK='#161d24', su='#5d6b62', suD='#3d4942', suL='#76897e';
+    const rust='#9a5128', rustD='#5e2f15', rustL='#c97c42';
+    const skin='#9c7a5c', skinD='#6b5236', skinL='#c2a07c';
+    const wire='#caa23a', tape='#cfd6da', tapeD='#9aa4a8';
+    const tilt=Math.sin(t*0.04)*0.04, bob=Math.sin(t*0.07+1)*1;
+    ctx.save();ctx.translate(Math.round(cx),Math.round(cy+bob));ctx.rotate(tilt);
+    pxDisc(ctx,0,4,46,'rgba(4,3,8,0.55)'); // deep shadow well so the face reads against the busy backdrop
+    px(ctx,-38,-40,76,30,DK);px(ctx,-36,-38,72,26,suD);px(ctx,-36,-38,72,3,suL); // hood / cowl
+    for(let i=0;i<9;i++)px(ctx,-34+i*8,-12,3,3,i%3===0?rustD:DK); // riveted hood rim
+    px(ctx,-36,-12,72,4,DK); // brow shadow
+    px(ctx,-30,-10,60,40,skinD);px(ctx,-28,-8,56,34,skin); // grimy skin glimpsed beneath the hood
+    for(let i=0;i<5;i++)px(ctx,-24+(i*11)%50,2+(i*7)%18,2,2,skinD); // grime smudges
+    px(ctx,-22,-6,1,9,skinL); // an old scar by the real eye
     const blink=((t/40|0)%9===0);
-    if(!blink){px(ctx,cx-15,cy-4,11,8,well);px(ctx,cx-13,cy-2,7,4,ink);px(ctx,cx+4,cy-4,11,8,well);px(ctx,cx+6,cy-2,7,4,ink);}
-    else{px(ctx,cx-13,cy-1,7,1,ink);px(ctx,cx+6,cy-1,7,1,ink);}
-    px(ctx,cx-4,cy,8,2,ink); // bridge
-    px(ctx,cx-7,cy+10,14,7,ink); px(ctx,cx-5,cy+12,10,3,well); // respirator
-    px(ctx,cx-20,cy+6,2,2,ink); px(ctx,cx+17,cy+14,2,2,ink); // grime flecks
+    px(ctx,-19,-4,14,8,'#332a22'); // LEFT — a real, watchful eye
+    if(!blink){px(ctx,-17,-2,10,5,'#d8dccb');px(ctx,-13,-1,4,4,'#1a5a66');px(ctx,-12,0,2,2,DK);px(ctx,-13,-1,1,1,'#bfeeff');}
+    else px(ctx,-17,0,10,1,'#332a22');
+    px(ctx,-3,-2,7,3,tapeD);px(ctx,-2,-1,5,1,tape); // taped nose bridge, where the goggle strap bites in
+    px(ctx,4,-9,22,20,rustD);px(ctx,6,-7,18,16,'#1c2d2a'); // RIGHT — a cracked salvage lens, wired on crooked
+    if(!blink){px(ctx,8,-5,12,11,'#234b46');px(ctx,11,-2,6,5,'#7fe6dc');px(ctx,12,-1,2,2,'#eafffa');}
+    else px(ctx,8,-1,12,2,'#1c2d2a');
+    px(ctx,9,-8,1,9,DK);px(ctx,10,-2,7,1,DK);px(ctx,18,-6,1,6,DK); // crack lines
+    px(ctx,10,-4,1,1,'#cdeefc');px(ctx,16,2,1,1,'#cdeefc'); // condensation specks
+    px(ctx,5,-8,2,2,rustL);px(ctx,5,9,2,2,rustL);px(ctx,24,-8,2,2,rustL);px(ctx,24,9,2,2,rustL); // bezel screws
+    px(ctx,2,-2,4,1,wire);px(ctx,2,4,4,1,wire); // binding wire
+    px(ctx,-13,12,26,16,rustD);px(ctx,-11,14,22,12,rust); // riveted tin-cap respirator
+    px(ctx,-11,15,22,4,tape);px(ctx,9,15,2,4,tapeD); // tape patch, peeling at one corner
+    for(let i=0;i<4;i++)px(ctx,-9+i*6,21,2,2,DK); // breathing grate
+    px(ctx,-2,16,1,1,rustL);px(ctx,6,16,1,1,rustL);
+    px(ctx,11,18,5,3,rustD);px(ctx,15,19,3,2,rustD); // hose nozzle stub heading off-frame
+    for(let i=0;i<3;i++){const ph=(t*0.6+i*22)%60,fy=12-ph*0.5,fx=-6+i*7+Math.sin(t*0.1+i)*2,a=clamp(1-ph/60,0,1)*0.3;
+      ctx.globalAlpha=a;ctx.fillStyle='#cfe9ee';ctx.fillRect(Math.round(fx),Math.round(fy),2,2);ctx.globalAlpha=1;} // breath vapour
+    if((t>>2)%11===0)px(ctx,3,-9,1,1,'#fff1c0'); // a stray spark off the lens wiring
+    ctx.globalAlpha=0.18;px(ctx,-38,-40,6,74,'#2fe8ff');ctx.globalAlpha=0.16;px(ctx,32,-40,6,74,'#ff2fd6');ctx.globalAlpha=1; // neon rim light off the tunnel
+    ctx.restore();
   }
 
   /* ---- per-phase render ---- */
   function render(t){
-    fillLcdBg();
     const cx=VW/2;
+    if(phase==='firsttime'){drawSewerEntranceBg(t);} else {fillLcdBg();}
     if(phase==='power'){
       const a=Math.min(1,phaseT/22);                              // backlight ramping up to full LCD tone
       ctx.fillStyle=`rgba(18,28,24,${(1-a)*0.85})`; ctx.fillRect(0,0,VW,VH);
@@ -3784,11 +3844,12 @@ function startStudioIntro(){
       if(phaseT>30&&(phaseT/20|0)%2===0)pxTextXL(ctx,'TAP TO CONTINUE',cx,VH*0.40+76,1,INK);
       inkOff();
     } else if(phase==='firsttime'){
-      inkOn(); drawDweller(cx,VH*0.34,t,INK,LCD_BG); inkOff();
-      inkOn();
-      pxTextGhost(ctx,'FIRST TIME HERE',cx,VH*0.34+70,2,GHOST);
-      pxTextXL(ctx,'FIRST TIME HERE',cx,VH*0.34+70,2,INK);
-      inkOff();
+      drawDwellerFace(cx,VH*0.32,t);
+      ctx.save();ctx.shadowColor='rgba(120,230,255,0.7)';ctx.shadowBlur=5;
+      pxTextXL(ctx,'FIRST TIME HERE',cx-1,VH*0.32+62,2,'rgba(255,47,214,0.55)');
+      pxTextXL(ctx,'FIRST TIME HERE',cx+1,VH*0.32+62,2,'rgba(47,232,255,0.55)');
+      pxTextXL(ctx,'FIRST TIME HERE',cx,VH*0.32+62,2,'#eafcff');
+      ctx.restore();
     }
   }
 

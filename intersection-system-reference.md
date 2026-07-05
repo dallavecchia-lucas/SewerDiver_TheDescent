@@ -6,10 +6,19 @@ to support **intersections**: cube-shaped junctions the player flies into,
 looks around freely, and grapples out of through one of five true-size
 tunnel doorways.
 
-Read this before touching any of `EXITS`, `VARIANTS`, `TUBE_*`, `TUN_*`,
-`GATE_*`, `HUB_*`, `COMMIT_*`, `CHAM_*`, `S.gate`, `S.ix`, `S.variant`, or
-any function whose name contains `Hub`, `Gate`, `Commit`, `Crash`, `Tube`,
-`Tunnel`, or `Chamber`.
+Read this before touching any of `EXITS`, `VARIANTS`, `EXIT_TYPES`, `TUBE_*`,
+`TUN_*`, `SHAFT_*`, `BALCONY_*`, `GATE_*`, `HUB_*`, `COMMIT_*`, `CHAM_*`,
+`S.gate`, `S.ix`, `S.variant`, `S.mode`, or any function whose name contains
+`Hub`, `Gate`, `Commit`, `Crash`, `Tube`, `Tunnel`, `Shaft`, `Balcony`, or
+`Chamber`.
+
+> **Locomotion modes (see §11).** The corridor is only one of three locomotion
+> types. `S.mode ∈ {"flat","climb","fall"}` selects a *skin* of the same
+> engine: `flat` is the horizontal corridor; `climb`/`fall` are vertical
+> shafts (looking up / down a tube, balconies instead of a lane grid). The
+> whole gate→approach→hub→commit machine runs identically for all three —
+> `S.mode` only changes what gets rendered and which exit *types* the next
+> intersection offers. Set on commit exactly like `S.variant`.
 
 ---
 
@@ -428,4 +437,153 @@ more entry.
    variant (grid color, walls) as the preview; rungs cross the fade in
    phase.
 6. Timer expiry: crash → gameover → restart returns a clean `dive`
-   (SERVICE variant, no leftover `S.gate`, `locked`, `entryK`, or speed).
+   (SERVICE variant, `flat` mode, no leftover `S.gate`, `locked`, `entryK`,
+   `mode`, or speed).
+
+---
+
+## 11. Vertical shafts — CLIMB / FALL modes
+
+### 11.1 The one idea
+A tube viewed straight along its axis is the **same pinhole projection**
+whether it runs forward, up, or down. So a shaft is the corridor *re-skinned*,
+not a second engine. `S.mode ∈ {"flat","climb","fall"}` picks the skin; the
+gate/approach/hub/commit state machine is untouched. Four things differ by
+mode:
+1. **Cross-section content** — balconies on the 4 walls instead of a floor
+   lane-grid.
+2. **Vanishing-point Y** (`shaftVPY()`) — shifted up (`SHAFT_VP_UP`) for CLIMB,
+   down (`SHAFT_VP_DOWN`) for FALL. This is what sells "looking up/down a
+   tube." Eased back to `HORIZON` near a gate (`shaftGateBlend`) and eased *in*
+   from `HORIZON` on entry (`S.modeT` settle) so the commit crossfade — which
+   converges on `HORIZON` — never pops.
+3. **Player pose** — CLIMB reaches up with the grapple line to the shaft VP;
+   FALL flies with wings always deployed (`S.wing→1`).
+4. **Exit types** offered at the next intersection (the orientation rule).
+
+### 11.2 Shaft projection
+`sprojX(a,d)` / `sprojY(b,d)` mirror `projX/projY` but subtract the camera pan
+(`S.shaftCamA/B`, the lagged follow of the player's cross-section position
+`S.shaftA/B`) and use `shaftVPY()` for the vertical vanishing point. Cross-
+section is the SAME box as the corridor: `a∈[-TUN_HW,TUN_HW]`,
+`b∈[-CAM_Y,TUN_CEIL]` (b up-positive). Near a gate both the pan and the VP ease
+to the flat values so `drawChamber` (drawn in `projX/projY` space) stays
+continuous — that's how the shaft→intersection approach reuses all the gate
+machinery for free.
+
+### 11.3 The orientation rule (`EXIT_TYPES` / `exitTypeFor`)
+Which tube TYPE each exit leads into depends on the mode you ARRIVED in (player
+always faces fwd in the hub; entry tube stays at the back):
+
+| mode \ exit | fwd    | up    | down  | left | right |
+|-------------|--------|-------|-------|------|-------|
+| flat        | flat   | climb | fall  | flat | flat  |
+| fall        | fall   | climb | flat  | flat | flat  |
+| climb       | climb  | fall  | flat  | flat | flat  |
+
+Rolled at gate spawn as `S.gate.types = rollExitTypes(S.mode)` (alongside
+`exits`/variants). Copied to `S.ix.tubeTypes` in `enterHub` (+ `entryMode`).
+`tryCommit` sets `S.mode = S.ix.tubeTypes[chosenExit]` and `S.modeT` (1 for
+flat, 0 for a shaft so the VP eases in).
+
+### 11.4 The tube is a ROUND cylinder (concept-art rework, 2026-07-05)
+Radius `TUN_R`. Cross-section point from `polar(ang, rad)`. The diver moves
+**freely in 2D** anywhere in the disc (`updateShaftPlayer` clamps
+`hypot(shaftA,shaftB) ≤ TUN_R*0.9`) — not locked to lanes like the corridor.
+`drawShaft` renders the wall as a **radial funnel** (filled discs near→far,
+each farther/smaller/darker disc overpainting the center) + circumferential
+ring seams + `SHAFT_PIPES` (the climbable conduits, warm tan supply / cool
+steel data lines, with clamp brackets) + wall panels + a VP end-glow. No flat
+walls, no lane grid.
+
+### 11.5 Balconies (hexagonal platforms) + pipe-climbing
+`{ type:"balcony", d, ang, rin, aw, w, grabbed, seed }` — a big **hexagonal
+platform** jutting inward from the wall at angle `ang` to inner radius `rin`
+(modelled on the concept's interlocking triangular masses). `drawBalcony`
+draws an extruded slab, panelled deck, bright inner rail (grab edge), and
+**tiny figures for scale**. `spawnBalconyLevel(z)` emits 1–3 spread around the
+tube (never >3) so they interlock. They stream toward the camera
+(`stepShaftWorld`).
+Two ways up, **both score-only / no fail this pass** (user decision):
+- **Grapple a balcony** — reach its inner nose (`balconyAnchor`) within
+  `BALCONY_GRAB` → grabbed, combo/score/pull (`sfxCollect`).
+- **Climb the pipes** — hug the wall past `PIPE_CLIMB_R` near a `SHAFT_PIPES`
+  angle → `S.climbing`, steady score + upward assist + sustains combo; the
+  pipe highlights.
+
+### 11.6 Rendering / input
+- `renderTunnelScene` branches by `S.mode`: `drawShaft` + `drawShaftDust` +
+  `drawBalcony` for shafts, else the corridor path. The gate is handled via
+  `drawChamber` exactly like the corridor.
+- `drawCharacter` gained a `"shaft"` framing (projects the diver at
+  `sproj(shaftA,shaftB,Z_CHAR)`, pose by mode).
+- Input: in shaft mode L/R/U/D drive `S.input.rot*` (full 2D cross-section
+  steer); boost still speeds travel. `updateShaftPlayer` handles steering (disc
+  clamp) + pose + the `S.modeT` settle + the pan un-panning near a gate.
+
+### 11.7 Trompe-l'œil shaft previews (user requirement)
+`drawHubTube` takes a `type` arg. For `climb`/`fall` it swaps the floor lane-
+grid for `TUBE_BALCONIES` — big **hexagonal** platforms placed radially
+(`ang`), the same hex as `drawBalcony` (the hub preview tube is still a box,
+but the balconies read it as a shaft) — and draws uniform ring seams instead of
+a bright floor rung. The label gains `▲ CLIMB` / `▼ FALL`. `drawHubPortals`
+passes `S.ix.tubeTypes[i]` (entry tube: `S.ix.entryMode`). `drawChamber`'s
+up/down doorways get angular balcony-rail hints (`facePt`) so the approach
+reads as a shaft too. **Any new shaft feature must be added to `drawShaft`
+AND the `drawHubTube` preview branch AND `drawChamber`'s hints**, or the
+preview lies — same contract as the corridor/variant parity.
+
+### 11.8 Constants
+`TUN_R` (=TUN_HW) — round tube radius. `SHAFT_PIPES` / `PIPE_WARM`/`PIPE_COOL`
+— the climbable conduits. `PIPE_CLIMB_R` (TUN_R*0.6) — wall-hug climb radius.
+`polar(ang,rad)` → `(a,b)`. `SHAFT_VP_UP` (VH*0.40) / `SHAFT_VP_DOWN` (VH*0.50)
+— mild shaft VPs (the round tube reads best near-centered). `BALCONY_GAP`
+(4.2) — depth between levels. `BALCONY_GRAB` (0.6) — auto-latch radius.
+`S.modeT` settle — the `dt/0.8` in `updateShaftPlayer`/`updateCommit`.
+
+### 11.9 v3 — scale, organic control, walkable balconies, pipe-climb (2026-07-05)
+Playtest pass against concept art. Big changes:
+- **Scale.** The world is ~2× bigger so the player feels small: `TUN_HW`
+  (=5·LANE_W), `TUN_R`, `TUN_CEIL` up ~2×; `CAM_Y`/floor kept so the runner's
+  feet stay on the floor (sprite anchor is decoupled). Object/balcony spacing +
+  sizes scaled to match. **The hub scaled too** (`GATE_CHAMBER_R`=4.5,
+  `HUB_EYE_DRIFT`=0.66, `GATE_APPROACH_Z`/`TRIGGER_Z`, commit push `R+3.8`) —
+  or the true-size (`TUN_HW`) doorways overflow the cube. Keep
+  `TUN_HW < GATE_CHAMBER_R`.
+- **No void = camera-pan clamp** (`PAN_MAX`). `updateShaftPlayer` clamps the
+  camera pan radially so the tube edge never leaves the screen; past the clamp
+  the diver slides off-centre toward the wall/pipe. Plus a full-viewport base
+  fill in `drawShaft` as a safety net.
+- **Gentle fall + per-mode speed** in `update()`: FALL ≈0.36× drift, CLIMB gated
+  by the pipe (0 when `S.climbBlocked`), WALK 0, flat unchanged.
+- **Organic flat movement.** The 3-lane snap is gone: analog `playerX` from held
+  L/R (`S.input.rotL/rotR`); collisions are positional (`|o.x-playerX|`), spawns
+  scatter across the wide floor. `moveLane`/`laneTarget` are dead.
+- **FALL → land on a balcony → WALK sub-mode.** `stepShaftWorld` (fall) lands
+  when the diver is over a deck as it crosses `Z_HIT` → `enterWalk`. `S.mode==
+  "walk"`: `S.walkT` swings the camera from the frozen shaft (crossfade) to a
+  flat horizon **deck** view (`drawBalconyWalk`, its own local flat camera —
+  floor + rails + far drop-rail). Walk analog (`walkX` strafe, `walkZ` forward);
+  step off the far edge (`walkZ>DECK_LEN`) → `walkExiting` swings back → FALL.
+  Decks are sized (`DECK_LEN`/`DECK_HW`) for future enemies.
+- **CLIMB = pipe-locked lane-switch.** `S.climbPipe` indexes `SHAFT_PIPES`;
+  `updateShaftPlayer` eases the diver to that pipe's wall position and hops to
+  the angular neighbour on an L/R tap (edge-detected via `_climbPrevL/R`).
+  `stepShaftWorld` sets `S.climbBlocked` when a balcony's angular span covers the
+  current pipe just above → ascent halts at the underside until you hop to a
+  clear pipe. Free-drift climbing is gone.
+- **Round hub previews.** `drawHubTube` delegates climb/fall exits to
+  `drawHubShaftTube`: a circular mouth + cylindrical funnel + `SHAFT_PIPES` +
+  hex `TUBE_BALCONIES` (a port of `drawShaft` into the tube-local `pt()`).
+  Flat exits keep the box corridor. `drawChamber` up/down doorways get angular
+  balcony-rail hints.
+
+### 11.10 Known constraints
+- **Shaft = re-skinned corridor.** Don't fork a second projection lineage; the
+  gate/hub/commit machine must keep operating on `z`=depth-along-tube.
+- **VP continuity is load-bearing.** `shaftVPY` must ease to `HORIZON` near a
+  gate AND in from `HORIZON` on entry, or the commit/approach crossfades pop.
+- **Shaft surfaces are near-uniform** (no dominant bright floor) — that's what
+  reads as "vertical tube" vs "floored corridor."
+- **Score-only shafts** — there is deliberately no crash path inside a shaft
+  yet; if you add one, it's a new feature, not a bug fix.

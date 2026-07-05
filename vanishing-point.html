@@ -203,8 +203,11 @@ const Z_FAR = 58, Z_NEAR = 0.72, Z_HIT = 2.0, Z_CHAR = 1.9;
 const BASE_SPEED = 9.2;            // world units / second
 
 // ---- tunnel (the corridor the player runs down) ------------------------------
-const TUN_HW   = 2.35*LANE_W;      // tunnel half-width (matches the old grid edge)
-const TUN_CEIL = 1.15;             // ceiling height above the camera axis (floor is -CAM_Y)
+// Big by design: the player should feel small in a large space. Width & ceiling
+// are ~2× a human-scale corridor; the floor (CAM_Y) stays put so the runner's
+// feet still land on it (the sprite anchor is decoupled from world projection).
+const TUN_HW   = 5.0*LANE_W;       // tunnel half-width (~2.9 world units, wide)
+const TUN_CEIL = 2.1;              // ceiling height above the camera axis (floor is -CAM_Y)
 const TUN_GREY = [98, 101, 110];   // neutral grey (chamber fixtures, lamp housings)
 const TUN_DARK = [13, 13, 17];     // neutral dark (chamber fog)
 
@@ -244,15 +247,41 @@ function rollExitVariants(){
 }
 
 // ---- intersection ("hub") constants -----------------------------------------
-const GATE_APPROACH_Z = 11;        // tunnel starts opening into the chamber
-const GATE_TRIGGER_Z  = 2.4;       // crossing the threshold starts the glide into the hub
-const GATE_CHAMBER_R  = 2.15;      // half-extent of the cube you're suspended inside
-const HUB_EYE_DRIFT   = 0.32;      // how far the eye drifts toward the current look direction
+// Scaled with the bigger world: the chamber must be larger than the tube
+// cross-section (TUN_HW) or the true-size doorways overflow the cube.
+const GATE_APPROACH_Z = 18;        // tunnel starts opening into the chamber
+const GATE_TRIGGER_Z  = 3.8;       // crossing the threshold starts the glide into the hub
+const GATE_CHAMBER_R  = 4.5;       // half-extent of the cube you're suspended inside
+const HUB_EYE_DRIFT   = 0.66;      // how far the eye drifts toward the current look direction
 const HUB_TIMER   = 15.0;          // seconds to pick an exit
 const HUB_ENTRY_DUR = 0.75;        // seconds the camera glides from the tunnel mouth to the cube center
 const COMMIT_DUR  = 0.58;          // grapple-launch tween duration
 const IX_FOV = 165, IX_CY = VH*0.47;
 const COMMIT_FADE_START = 0.30;    // fraction of the commit tween where the tunnel starts crossfading in
+
+// ---- shaft (vertical CLIMB / FALL tube) -------------------------------------
+// A shaft is the corridor re-skinned: the SAME pinhole projection, depth along
+// the tube axis. What differs is the vanishing-point Y (shifted up for CLIMB /
+// down for FALL to sell "looking up/down a tube"), the cross-section content
+// (balconies on the walls instead of a floor lane-grid) and the player pose.
+const TUN_R = TUN_HW;              // tube radius — the shaft is a ROUND cylinder
+const SHAFT_VP_UP   = VH*0.40;     // mild VP bias up (climb) / down (fall); the
+const SHAFT_VP_DOWN = VH*0.50;     //   round tube reads best near-centered
+const BALCONY_GAP   = 6.5;         // world-depth between balcony levels (big scale)
+const BALCONY_GRAB  = 0.9;         // cross-section radius to auto-latch a balcony nose
+const PIPE_CLIMB_R  = TUN_R*0.6;   // hug the wall past this radius → climbing the pipes
+const PAN_MAX       = TUN_R*0.52;  // max camera pan: the tube edge never leaves the
+                                   //   screen, so no void — the diver slides off-centre
+// conduits running the length of the shaft wall — the climbable pipes. warm =
+// tan/copper supply lines, cool = steel data/coolant (as in the concept art)
+const SHAFT_PIPES = [
+  { ang:-2.55, r:0.95, w:0.12, warm:1 }, { ang:-1.95, r:0.99, w:0.06, warm:0 },
+  { ang:-1.15, r:0.9,  w:0.14, warm:1 }, { ang:-0.35, r:0.98, w:0.07, warm:0 },
+  { ang: 0.5,  r:0.94, w:0.11, warm:1 }, { ang: 1.35, r:0.99, w:0.06, warm:0 },
+  { ang: 2.15, r:0.9,  w:0.13, warm:1 }, { ang: 2.85, r:0.97, w:0.07, warm:0 },
+];
+const PIPE_WARM = [201,150,92], PIPE_COOL = [120,150,181];
+const polar = (ang, rad)=> [Math.cos(ang)*rad, Math.sin(ang)*rad];   // (a,b) on the tube
 
 // ---- palettes (as [r,g,b]) --------------------------------------------------
 const FOG   = [26, 27, 32];        // cold tunnel murk that far objects melt into
@@ -291,8 +320,17 @@ const S = {
   shake:0, flash:[0,0,0,0], gridBoost:0,
   input:{ boost:false, glide:false, rotL:false, rotR:false, rotU:false, rotD:false },
   objects:[], rungs:[], dust:[], parts:[],
-  spawnAcc:0, pillarAcc:0,
+  spawnAcc:0, pillarAcc:0, balconyAcc:0,
   variant:0,                        // index into VARIANTS — the tunnel you're running NOW
+  mode:"flat",                      // locomotion: "flat" corridor | "climb" shaft up | "fall" shaft down
+  modeT:1,                          // 0→1 settle after entering a shaft: eases the VP in from HORIZON
+  shaftA:0, shaftB:0,               // player position within the shaft cross-section
+  shaftCamA:0, shaftCamB:0,         // lagged camera pan (parallax), mirrors playerX/cameraX
+  climbing:false,                   // hugging a wall pipe in a CLIMB shaft
+  climbPipe:0, climbBlocked:false,  // CLIMB: current pipe index + blocked-by-balcony flag
+  _climbPrevL:false, _climbPrevR:false,   // edge-detect for pipe hops
+  onBalcony:null, walkT:0, walkExiting:false,  // WALK: balcony + camera-swing 0→1 (+ reverse)
+  walkX:0, walkZ:0,                 // position while walking a balcony deck (strafe, forward)
 
   // ---- intersection phase machine ----
   // "dive" -> "approach" -> "hub" -> "commit" -> "dive"   (or "hub" -> "crash" -> "gameover")
@@ -303,6 +341,8 @@ const S = {
     entryK:1, entryZ0:0, fovAtEnter:FOV_BASE, charX0:VW/2, commitBack:0,
     tubeVariants:[0,1,2,3,0],       // per-exit variant, copied from S.gate.exits at enterHub
     entryVariant:0,                 // variant of the tunnel you came in through
+    tubeTypes:["flat","climb","fall","flat","flat"], // per-exit tube TYPE, from S.gate.types
+    entryMode:"flat",               // locomotion type of the tube you came in through
     chosenExit:-1, commitT:0, startYaw:0, startPitch:0, targetYaw:0, targetPitch:0,
     crashT:0
   }
@@ -313,6 +353,27 @@ const projX = (x,z)=> CX + (x - S.cameraX) * S.fov / z;
 const projY = (y,z)=> HORIZON - y * S.fov / z;
 const scaleAt = z => S.fov / z;
 const fogF = z => clamp((z - 5) / (Z_FAR - 5), 0, 1);   // 0 near → 1 far
+
+// shaft projection: same pinhole as projX/projY, but the vanishing point
+// shifts (up for CLIMB, down for FALL) and the camera pans by the player's
+// cross-section position (S.shaftCamA/B). Both ease back to the flat framing
+// as a gate nears (shaftGateBlend) so the chamber/hub handoff — which is drawn
+// in the flat projX/projY space — stays pixel-continuous.
+function shaftGateBlend(){
+  if (S.mode==="flat" || !S.gate) return 0;
+  return clamp(1 - (S.gate.z - GATE_TRIGGER_Z)/(GATE_APPROACH_Z*1.4), 0, 1);
+}
+function shaftVPY(){
+  if (S.mode==="flat") return HORIZON;
+  const base = S.mode==="climb" ? SHAFT_VP_UP : SHAFT_VP_DOWN;
+  // near a gate the shaft VP eases back to HORIZON (chamber/hub handoff); on
+  // ENTRY it eases IN from HORIZON (modeT settle) so the commit crossfade —
+  // which converges on HORIZON — lands without a vertical pop
+  const settle = 1 - Math.pow(1 - clamp(S.modeT,0,1), 3);
+  return lerp(HORIZON, lerp(base, HORIZON, shaftGateBlend()), settle);
+}
+const sprojX = (a,d)=> CX + (a - S.shaftCamA) * S.fov / d;
+const sprojY = (b,d)=> shaftVPY() - (b - S.shaftCamB) * S.fov / d;
 
 // ============================================================================
 //  AUDIO — tiny Web Audio synth, gated behind the first user gesture.
@@ -374,9 +435,8 @@ function resetWorld(){
   // pre-seed scenery so the tunnel reads with depth from frame one
   for(let i=0;i<9;i++){ spawnPillar(); S.objects[S.objects.length-1].z = rand(4,Z_FAR); }
   for(let i=0;i<7;i++){
-    const lane=pick(LANES);
-    S.objects.push({ type:"shard", lane, x:lane*LANE_W, z:rand(6,Z_FAR),
-                     size:0.26, h:0.55, hue:rand(28,60), spin:rand(0,6.28), resolved:false });
+    S.objects.push({ type:"shard", x:rand(-TUN_HW*0.8,TUN_HW*0.8), z:rand(6,Z_FAR),
+                     size:0.42, h:0.7, hue:rand(28,60), spin:rand(0,6.28), resolved:false });
   }
   S.spawnAcc=0; S.pillarAcc=0;
 }
@@ -384,30 +444,29 @@ function newDust(z){
   return { x: rand(-TUN_HW*0.95, TUN_HW*0.95), y: rand(-CAM_Y+0.05, TUN_CEIL-0.05), z };
 }
 
-// spawn a "row" of gameplay objects (shards / obstacle / ring), plus scenery pillars
+// spawn a "row" of gameplay objects (shards / obstacle / ring), plus scenery.
+// Movement is analog now, so objects scatter across the whole wide floor with
+// spacing (no lanes); sizes are scaled up to match the bigger space.
 function spawnRow(){
-  if (S.gate && S.gate.z < 16) return;   // keep lanes clear as a crossing nears
+  if (S.gate && S.gate.z < 16) return;   // keep the floor clear as a crossing nears
+  const HW = TUN_HW*0.8;                 // playable floor half-width
   const r = Math.random();
   if (r < 0.14){
-    // ring spanning a lane — pass through the center for a bonus
-    const lane = pick(LANES);
-    S.objects.push({ type:"ring", lane, x:lane*LANE_W, z:Z_FAR,
-                     rw:0.5, rh:0.62, h:0.85, hue:rand(180,300), resolved:false });
+    S.objects.push({ type:"ring", x:rand(-HW,HW), z:Z_FAR,
+                     rw:0.85, rh:1.05, h:1.25, hue:rand(180,300), resolved:false });
   } else {
-    // 1–2 shard lanes and maybe an obstacle, never all three blocked
-    const lanes = LANES.slice();
-    // shuffle
-    for(let i=lanes.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [lanes[i],lanes[j]]=[lanes[j],lanes[i]]; }
-    const nShard = rint(1,2);
-    for(let i=0;i<nShard;i++){
-      const lane = lanes[i];
-      S.objects.push({ type:"shard", lane, x:lane*LANE_W, z:Z_FAR+rand(0,0.6),
-                       size:0.26, h:0.55, hue:rand(28,60), spin:rand(0,6.28), resolved:false });
+    const n = rint(1,3);
+    let last = -99;
+    for (let i=0;i<n;i++){
+      let x, tries=0;
+      do { x = rand(-HW,HW); tries++; } while (Math.abs(x-last)<LANE_W*1.5 && tries<6);
+      last = x;
+      S.objects.push({ type:"shard", x, z:Z_FAR+rand(0,0.6),
+                       size:0.42, h:0.7, hue:rand(28,60), spin:rand(0,6.28), resolved:false });
     }
-    if (Math.random()<0.5 && nShard<3){
-      const lane = lanes[2];
-      S.objects.push({ type:"block", lane, x:lane*LANE_W, z:Z_FAR+rand(0.2,1.2),
-                       w:0.42, h:0.5, resolved:false, blink:0 });
+    if (Math.random()<0.45){
+      S.objects.push({ type:"block", x:rand(-HW,HW), z:Z_FAR+rand(0.2,1.2),
+                       w:0.72, h:0.85, resolved:false, blink:0 });
     }
   }
 }
@@ -435,6 +494,20 @@ const EXITS = [
   { key:"left",  dir:[-1,0,0], yaw:-Math.PI/2,  pitch:0,          label:"LEFT",     col:[140,240,122] },
   { key:"right", dir:[1,0,0],  yaw: Math.PI/2,  pitch:0,          label:"RIGHT",    col:[255,150,110] },
 ];
+// Which tube TYPE each exit leads into, keyed by the locomotion mode you
+// ARRIVED in. The player always faces fwd in the hub and the entry tube stays
+// at the back, so "up/down/left/right" are fixed screen directions; only their
+// meaning changes. From the spec: walk in → up=climb, down=fall; fall in →
+// fwd=fall, down=flat; climb in → fwd=climb, down=flat. The remaining cells are
+// filled so every orientation always offers all three types somewhere.
+const EXIT_TYPES = {
+  flat:  { fwd:"flat",  up:"climb", down:"fall",  left:"flat", right:"flat" },
+  fall:  { fwd:"fall",  up:"climb", down:"flat",  left:"flat", right:"flat" },
+  climb: { fwd:"climb", up:"fall",  down:"flat",  left:"flat", right:"flat" },
+};
+const exitTypeFor = (mode, key)=> (EXIT_TYPES[mode]||EXIT_TYPES.flat)[key];
+const rollExitTypes = mode => EXITS.map(e => exitTypeFor(mode, e.key));
+
 const CUBE_CORNERS = (()=>{ const c=[]; for(const sx of[-1,1]) for(const sy of[-1,1]) for(const sz of[-1,1]) c.push([sx,sy,sz]); return c; })();
 const CUBE_EDGE_IDX = (()=>{
   const e=[];
@@ -483,7 +556,7 @@ function hubCamPos(){
     // adding up and clipping through the tube walls mid-launch
     const fade = Math.max(0, 1-te*2.5);
     const ex = EXITS[S.ix.chosenExit];
-    const off = te * (GATE_CHAMBER_R + 1.8);   // pushes THROUGH the mouth, down the tube
+    const off = te * (GATE_CHAMBER_R + 3.8);   // pushes THROUGH the mouth, down the tube
     return [ L[0]*HUB_EYE_DRIFT*fade + ex.dir[0]*off,
              L[1]*HUB_EYE_DRIFT*fade + ex.dir[1]*off,
              L[2]*HUB_EYE_DRIFT*fade + ex.dir[2]*off - S.ix.commitBack*fade ];
@@ -561,13 +634,24 @@ function tryCommit(){
   // everything spawned/rendered under the tween is already the new variant —
   // the tube you fly down and the tunnel that fades in are the same place
   S.variant = S.ix.tubeVariants[S.ix.chosenExit];
+  // the locomotion type also becomes the chosen exit's — flat corridor, or a
+  // vertical CLIMB / FALL shaft — so the tube you fly down IS the world you
+  // land in (the commit tween already pitches the camera up/down for up/down)
+  S.mode = S.ix.tubeTypes[S.ix.chosenExit];
+  S.modeT = (S.mode==="flat") ? 1 : 0;   // shaft: ease the offset VP in from HORIZON
 
-  // prime the tunnel now — it runs underneath the whole tween (see updateCommit)
+  // prime the world now — it runs underneath the whole tween (see updateCommit)
   // so it's already moving by the time it crossfades into view, no pop on cut
   S.gate = null;
   S.playerX=0; S.cameraX=0; S.laneTarget=0; S.leanTarget=0;
-  S.spawnAcc=0; S.pillarAcc=0; S.speed=0; S.fovKick=0;
-  for (let i=0;i<5;i++){ spawnPillar(); S.objects[S.objects.length-1].z = rand(10,Z_FAR); }
+  S.shaftA=0; S.shaftB=0; S.shaftCamA=0; S.shaftCamB=0;
+  S.spawnAcc=0; S.pillarAcc=0; S.balconyAcc=0; S.speed=0; S.fovKick=0;
+  S.objects.length = 0;
+  if (S.mode==="flat"){
+    for (let i=0;i<5;i++){ spawnPillar(); S.objects[S.objects.length-1].z = rand(10,Z_FAR); }
+  } else {
+    seedShaft();
+  }
 
   whoosh();
 }
@@ -595,21 +679,31 @@ addEventListener("keydown", e=>{
     else if (k===" "){ e.preventDefault(); tryCommit(); }
     return;
   }
+  if (S.mode!=="flat"){                         // vertical shaft: 4-way steer
+    if (k==="arrowleft"||k==="a"){ e.preventDefault(); S.input.rotL=true; }
+    else if (k==="arrowright"||k==="d"){ e.preventDefault(); S.input.rotR=true; }
+    else if (k==="arrowup"||k==="w"){ e.preventDefault(); S.input.rotU=true; }
+    else if (k==="arrowdown"||k==="s"){ e.preventDefault(); S.input.rotD=true; }
+    else if (k===" "){ e.preventDefault(); doBoost(); }
+    return;
+  }
   if (k===" "||k==="arrowup"||k==="w"){ e.preventDefault(); doBoost(); }
-  else if (k==="arrowleft"||k==="a") { e.preventDefault(); moveLane(-1); }
-  else if (k==="arrowright"||k==="d"){ e.preventDefault(); moveLane(1); }
+  else if (k==="arrowleft"||k==="a") { e.preventDefault(); S.input.rotL=true; }   // analog steer
+  else if (k==="arrowright"||k==="d"){ e.preventDefault(); S.input.rotR=true; }
   else if (k==="shift"||k==="arrowdown"||k==="s"){ e.preventDefault(); setGlide(true); }
 });
 addEventListener("keyup", e=>{
   const k=e.key.toLowerCase();
-  if (S.phase==="hub"){
+  if (S.phase==="hub" || S.mode!=="flat"){
     if (k==="arrowleft"||k==="a") S.input.rotL=false;
     else if (k==="arrowright"||k==="d") S.input.rotR=false;
     else if (k==="arrowup"||k==="w") S.input.rotU=false;
     else if (k==="arrowdown"||k==="s") S.input.rotD=false;
     return;
   }
-  if (k==="shift"||k==="arrowdown"||k==="s") setGlide(false);
+  if (k==="arrowleft"||k==="a") S.input.rotL=false;          // flat analog steer
+  else if (k==="arrowright"||k==="d") S.input.rotR=false;
+  else if (k==="shift"||k==="arrowdown"||k==="s") setGlide(false);
 });
 
 // pointer / touch
@@ -621,15 +715,17 @@ const bind = (id, dn, up) => {
   if(up) el.addEventListener("pointercancel", e=>{ e.preventDefault(); up(); });
   if(up) el.addEventListener("pointerleave", e=>{ if(e.buttons) up(); });
 };
-bind("bL", ()=>{ if(S.phase==="hub") S.input.rotL=true; else moveLane(-1); }, ()=>S.input.rotL=false);
-bind("bR", ()=>{ if(S.phase==="hub") S.input.rotR=true; else moveLane(1); },  ()=>S.input.rotR=false);
+// left/right is a held flag in every mode now (hub look / shaft steer / flat analog)
+bind("bL", ()=>{ S.input.rotL=true; }, ()=>S.input.rotL=false);
+bind("bR", ()=>{ S.input.rotR=true; }, ()=>S.input.rotR=false);
+const steerable = ()=> S.phase==="hub" || S.mode!=="flat";
 bind("bB", ()=>{
   if(!S.started){ startGame(); return; }
   if(S.phase==="gameover"){ restartRun(); return; }
   if(S.phase==="hub"){ tryCommit(); return; }
   doBoost();
 });
-bind("bG", ()=>{ if(S.phase==="hub") S.input.rotU=true; else setGlide(true); },
+bind("bG", ()=>{ if(steerable()) S.input.rotU=true; else setGlide(true); },
            ()=>{ S.input.rotU=false; setGlide(false); });
 
 document.getElementById("start").addEventListener("pointerdown", startGame);
@@ -675,8 +771,11 @@ function update(dt){
   if (S.boostCd>0) S.boostCd-=dt;
   if (S.boostT>0){ S.boostT-=dt; if(S.boostT<0)S.boostT=0; }
   const boosting = S.boostT>0;
-  const gliding  = S.input.glide && !boosting;
-  const mode = boosting ? "BOOST" : gliding ? "GLIDE" : "BASE";
+  const gliding  = S.input.glide && !boosting && S.mode==="flat";
+  const mode = S.mode==="walk" ? "BALCONY"
+             : boosting ? "BOOST"
+             : S.mode==="climb" ? "CLIMB" : S.mode==="fall" ? "FALL"
+             : gliding ? "GLIDE" : "BASE";
 
   // --- speed / fov (smoothed for that elastic surge) -----------------------
   let gateSlow = 1;
@@ -684,8 +783,14 @@ function update(dt){
     const t = clamp(1-(S.gate.z-GATE_TRIGGER_Z)/(GATE_APPROACH_Z-GATE_TRIGGER_Z), 0, 1);
     gateSlow = lerp(1, 0.5, t*t);
   }
-  const target = BASE_SPEED * (boosting ? 3.0 : gliding ? 0.5 : 1.0) * gateSlow;
-  S.speed = lerp(S.speed, target, clamp(dt*(boosting?7:4),0,1));
+  // per-mode travel speed: flat runs/boosts/glides; FALL is a gentle drift;
+  // CLIMB is gated by the pipe (0 when a balcony blocks it); WALK freezes the tube
+  let target;
+  if (S.mode==="flat")       target = BASE_SPEED*(boosting?3.0:gliding?0.5:1.0)*gateSlow;
+  else if (S.mode==="fall")  target = BASE_SPEED*(boosting?0.85:0.36)*gateSlow;   // gentle
+  else if (S.mode==="climb") target = BASE_SPEED*(S.climbBlocked?0:(boosting?1.0:0.62))*gateSlow;
+  else                       target = 0;   // walk: no tube motion while on a balcony
+  S.speed = lerp(S.speed, target, clamp(dt*(boosting?7:5),0,1));
   S.fovKick = lerp(S.fovKick, boosting?55:0, clamp(dt*(boosting?10:6),0,1));
   S.fov = FOV_BASE + S.fovKick;
   S.gridBoost = lerp(S.gridBoost, boosting?1:0, clamp(dt*6,0,1));
@@ -693,19 +798,27 @@ function update(dt){
   S.distance += S.speed*dt;
   S.score += S.speed*dt*0.35;                 // gentle passive trickle
 
-  // --- steering: playerX snappy, cameraX lags for parallax + lean ----------
-  S.playerX = lerp(S.playerX, S.laneTarget*LANE_W, clamp(dt*13,0,1));
-  S.cameraX = lerp(S.cameraX, S.playerX, clamp(dt*6,0,1));
-  S.leanTarget *= Math.pow(0.001, dt);        // decay steer impulse
-  const leanFromVel = clamp((S.laneTarget*LANE_W - S.playerX)*-2.2, -1, 1);
-  S.lean = lerp(S.lean, clamp(S.leanTarget*0.5 + leanFromVel, -1, 1), clamp(dt*10,0,1));
+  if (S.mode==="flat"){
+    // --- ANALOG steering: hold left/right to slide across the wide floor ----
+    const steer = (S.input.rotR?1:0) - (S.input.rotL?1:0);
+    S.playerX = clamp(S.playerX + steer*6.0*dt, -TUN_HW*0.86, TUN_HW*0.86);
+    S.cameraX = lerp(S.cameraX, S.playerX, clamp(dt*6,0,1));
+    const leanFromVel = clamp((S.playerX - S.cameraX)*1.6, -1, 1);
+    S.lean = lerp(S.lean, clamp(steer*0.7 + leanFromVel, -1, 1), clamp(dt*9,0,1));
 
-  // --- character anim ------------------------------------------------------
-  S.wing = lerp(S.wing, gliding?1:0, clamp(dt*8,0,1));
-  S.grapple = lerp(S.grapple, boosting?1:0, clamp(dt*(boosting?16:8),0,1));
-  S.runPhase += dt * (6 + S.speed*0.9);
-  S.bob = Math.sin(S.runPhase*2)*1.2*(1-S.wing);
-  S.floatY = lerp(S.floatY, gliding? -9 : boosting? -2 : 0, clamp(dt*7,0,1));
+    // --- character anim ----------------------------------------------------
+    S.wing = lerp(S.wing, gliding?1:0, clamp(dt*8,0,1));
+    S.grapple = lerp(S.grapple, boosting?1:0, clamp(dt*(boosting?16:8),0,1));
+    S.runPhase += dt * (6 + S.speed*0.9);
+    S.bob = Math.sin(S.runPhase*2)*1.2*(1-S.wing);
+    S.floatY = lerp(S.floatY, gliding? -9 : boosting? -2 : 0, clamp(dt*7,0,1));
+  } else if (S.mode==="walk"){
+    // --- walking on a balcony deck (own camera-swing sub-mode) -------------
+    updateWalk(dt);
+  } else {
+    // --- vertical shaft: FALL free-drift / CLIMB pipe-hop ------------------
+    updateShaftPlayer(dt);
+  }
 
   // --- combo decay ---------------------------------------------------------
   if (S.comboTimer>0){ S.comboTimer-=dt; if(S.comboTimer<=0) S.combo=0; }
@@ -716,7 +829,7 @@ function update(dt){
   S.flash[3] *= Math.pow(0.008, dt);
 
   // --- spawn / rungs / dust / objects ---------------------------------------
-  stepTunnelWorld(dt);
+  if (S.mode==="flat") stepTunnelWorld(dt); else stepShaftWorld(dt);
 
   // --- particles -----------------------------------------------------------
   stepParticles(dt);
@@ -757,8 +870,10 @@ function stepTunnelWorld(dt){
 
     if (!o.resolved && prevZ > Z_HIT && o.z <= Z_HIT){
       o.resolved = true;
+      // organic (positional) collisions now that movement is analog, not laned
+      const near = Math.abs(o.x - S.playerX);
       if (o.type==="shard"){
-        if (o.lane===S.laneTarget){
+        if (near < LANE_W*0.9){
           S.combo++; S.comboTimer=2.6;
           const gain = Math.round(10 * (1+S.combo*0.1));
           S.score += gain; sfxCollect(S.combo);
@@ -767,17 +882,17 @@ function stepTunnelWorld(dt){
           objs.splice(i,1); continue;
         }
       } else if (o.type==="block"){
-        if (o.lane===S.laneTarget){
+        if (near < LANE_W*0.72){
           S.combo=0; S.comboTimer=0;
           S.speed*=0.55; S.shake=Math.min(S.shake+5,8);
           S.flash=[255,70,60,0.4]; sfxHit();
           burst(projX(o.x,Z_HIT), projY(o.h*0.6,Z_HIT), [255,90,70], 18);
           objs.splice(i,1); continue;
-        } else if (Math.abs(o.lane-S.laneTarget)===1){
+        } else if (near < LANE_W*1.5){
           S.score += 4; blip(880,0.05,"triangle",0.08);   // near-miss tick
         }
       } else if (o.type==="ring"){
-        if (Math.abs(S.playerX - o.x) < LANE_W*0.55){
+        if (Math.abs(S.playerX - o.x) < LANE_W*0.7){
           S.combo++; S.comboTimer=2.6;
           S.score += Math.round(25*(1+S.combo*0.1)); sfxRing();
           sparkleRing(projX(o.x,Z_HIT), projY(o.h,Z_HIT), o.hue);
@@ -790,6 +905,167 @@ function stepTunnelWorld(dt){
   // far → near so nearer objects paint on top
   objs.sort((a,b)=> b.z - a.z);
 }
+
+// ---- vertical shaft world -------------------------------------------------
+// The shaft is a ROUND cylinder (radius TUN_R). Balconies are big hexagonal
+// platforms that jut inward from the wall at an angle `ang`, reaching to inner
+// radius `rin` — modelled on the concept art (interlocking triangular masses).
+// They stream toward the camera by depth `d`. The diver moves freely anywhere
+// in the circular cross-section (shaftA/shaftB); reaching a balcony's inner
+// nose auto-latches it for score. Hugging the wall near a pipe = climbing.
+// the inner nose of a balcony — the point the diver reaches to grab it
+function balconyAnchor(o){
+  const [a,b] = polar(o.ang, o.rin*0.82);
+  return { a, b };
+}
+// 1–3 hexagonal balconies at one level, spread around the tube so they
+// interlock (never more than 3), with organic angle/size jitter
+function spawnBalconyLevel(z){
+  const n = rint(1,3);
+  const base = rand(0, 6.283);
+  for (let i=0;i<n;i++){
+    const ang = base + i*(6.283/n) + rand(-0.28,0.28);
+    S.objects.push({ type:"balcony", d: z + rand(-0.4,0.4), ang,
+      rin: TUN_R*rand(0.3,0.44), aw: rand(0.5,0.72),
+      w: rand(0.9,1.15), grabbed:false, seed: rand(0,6.283) });
+  }
+}
+function seedShaft(){
+  S.objects.length = 0;
+  for (let k=0;k<9;k++) spawnBalconyLevel(Z_NEAR + 2 + k*BALCONY_GAP);
+  if (S.dust.length===0) for(let i=0;i<90;i++) S.dust.push(newDust(rand(Z_NEAR,Z_FAR)));
+}
+function stepShaftWorld(dt){
+  // spawn balcony levels tied to distance so density is speed-independent
+  S.balconyAcc += S.speed*dt;
+  while (S.balconyAcc > BALCONY_GAP){ S.balconyAcc -= BALCONY_GAP; spawnBalconyLevel(Z_FAR + rand(0,2)); }
+
+  // rungs (wall speed-hoops) + warp dust scroll
+  const maxZ = Math.max(...S.rungs, Z_NEAR);
+  for (let i=0;i<S.rungs.length;i++){
+    S.rungs[i] -= S.speed*dt;
+    if (S.rungs[i] < Z_NEAR) S.rungs[i] += Math.ceil((maxZ-Z_NEAR)/1.15)*1.15 + 1.15;
+  }
+  for (const du of S.dust){
+    du.z -= S.speed*dt;
+    if (du.z < Z_NEAR){ Object.assign(du, newDust(Z_FAR+rand(0,6))); }
+  }
+
+  const pa = S.shaftA, pb = S.shaftB, objs = S.objects;
+  const pr = Math.hypot(pa, pb), pang = Math.atan2(pb, pa);
+
+  // CLIMB: is a balcony blocking the pipe you're on, just above you? If so the
+  // ascent halts at its underside (update sets speed→0) until you hop pipes.
+  if (S.mode==="climb"){
+    const P = SHAFT_PIPES[S.climbPipe];
+    S.climbing = true;
+    let blocked = false;
+    for (const o of objs){
+      if (o.type!=="balcony") continue;
+      if (Math.abs(wrapAngle(o.ang - P.ang)) < o.aw + 0.12 && o.d > Z_HIT+0.4 && o.d < Z_HIT + 4.2){
+        blocked = true; break;
+      }
+    }
+    S.climbBlocked = blocked;
+  } else {
+    S.climbing = false;
+  }
+
+  // balconies: move; FALL lands on a deck you're over → walk sub-mode; cull
+  for (let i=objs.length-1;i>=0;i--){
+    const o = objs[i];
+    if (o.type!=="balcony"){ objs.splice(i,1); continue; }
+    o.d -= S.speed*dt;
+    if (S.mode==="fall" && !o.grabbed && o.d < Z_HIT+0.9 && o.d > Z_HIT-0.6){
+      // land only if the diver is actually over the deck (radius + angle)
+      if (pr > o.rin*0.7 && pr < TUN_R*1.02 && Math.abs(wrapAngle(pang - o.ang)) < o.aw){
+        o.grabbed = true;
+        enterWalk(o);
+      }
+    }
+    if (o.d < Z_NEAR) objs.splice(i,1);
+  }
+  objs.sort((a,b)=> b.d - a.d);
+}
+function updateShaftPlayer(dt){
+  if (S.modeT<1) S.modeT = Math.min(1, S.modeT + dt/0.8);   // settle the VP in
+  const gb = shaftGateBlend();
+  if (S.mode==="climb"){
+    // CLIMB: locked to a pipe. Tap L/R to hop to the angular-neighbour pipe;
+    // the cross-section eases to the pipe's wall position.
+    const N = SHAFT_PIPES.length;
+    if (S.input.rotR && !S._climbPrevR) { S.climbPipe = (S.climbPipe+1)%N; blip(760,0.05,"square",0.08); }
+    if (S.input.rotL && !S._climbPrevL) { S.climbPipe = (S.climbPipe-1+N)%N; blip(760,0.05,"square",0.08); }
+    S._climbPrevR = S.input.rotR; S._climbPrevL = S.input.rotL;
+    const P = SHAFT_PIPES[S.climbPipe];
+    const [ta,tb] = polar(P.ang, P.r*TUN_R*0.9);
+    S.shaftA = lerp(S.shaftA, ta, clamp(dt*9,0,1));
+    S.shaftB = lerp(S.shaftB, tb, clamp(dt*9,0,1));
+  } else {
+    // FALL: free 2D drift, clamped to the circular cross-section
+    const sp = 4.2;
+    if (S.input.rotL) S.shaftA -= sp*dt;
+    if (S.input.rotR) S.shaftA += sp*dt;
+    if (S.input.rotU) S.shaftB += sp*dt;
+    if (S.input.rotD) S.shaftB -= sp*dt;
+    const rr = Math.hypot(S.shaftA, S.shaftB), rmax = TUN_R*0.9;
+    if (rr > rmax){ S.shaftA *= rmax/rr; S.shaftB *= rmax/rr; }
+  }
+  // camera follows the diver but is CLAMPED to PAN_MAX so the tube edge never
+  // leaves the screen (no void). Past the clamp the diver slides off-centre
+  // toward the wall/pipe. Un-pans (rec) as an intersection nears for the handoff.
+  const rec = 1-gb;
+  let ca = S.shaftA*rec, cb = S.shaftB*rec;
+  const cm = Math.hypot(ca, cb);
+  if (cm > PAN_MAX){ ca *= PAN_MAX/cm; cb *= PAN_MAX/cm; }
+  S.shaftCamA = lerp(S.shaftCamA, ca, clamp(dt*6,0,1));
+  S.shaftCamB = lerp(S.shaftCamB, cb, clamp(dt*6,0,1));
+  // pose: FALL flies with wings open; CLIMB reaches up (grapple-ready)
+  S.wing = lerp(S.wing, S.mode==="fall"?1:0, clamp(dt*8,0,1));
+  S.grapple = lerp(S.grapple, S.mode==="climb"?0.55:0, clamp(dt*6,0,1));
+  S.runPhase += dt*3;
+  S.bob = Math.sin(S.runPhase*2)*0.6;
+  S.floatY = lerp(S.floatY, 0, clamp(dt*6,0,1));
+  S.lean = lerp(S.lean, clamp((S.shaftA - S.shaftCamA)*-2.0, -1, 1), clamp(dt*8,0,1));
+}
+
+// ---- balcony walk sub-mode: land on a deck while falling, the camera swings
+// from looking-down-the-tube to a flat horizon view; walk across; step off the
+// far (inner) edge and the camera swings back down and you resume falling. The
+// swing is the walkT crossfade between the frozen shaft and the deck view.
+const DECK_LEN = 8.0;    // forward extent of a balcony deck (world units)
+const DECK_HW  = 3.4;    // half-width of the deck
+function enterWalk(o){
+  S.mode = "walk"; S.onBalcony = o; S.walkExiting = false;
+  S.walkT = 0; S.walkX = 0; S.walkZ = 0.8;
+  S.speed = 0; S.wing = 0; S.grapple = 0;
+  o.d = Z_HIT;             // pin the balcony at the player plane
+  S.flash=[255,235,170,0.18]; blip(300,0.14,"sine",0.18);
+}
+function updateWalk(dt){
+  if (S.walkExiting){
+    S.walkT = Math.max(0, S.walkT - dt/0.5);        // swing back down to the tube
+    S.walkZ += 5*dt;                                 // keep stepping off
+    if (S.walkT <= 0){                               // ...then resume falling
+      const o = S.onBalcony;
+      S.mode="fall"; S.modeT=1; S.onBalcony=null; S.walkExiting=false;
+      if (o){ const [a,b]=polar(o.ang, o.rin*0.65); S.shaftA=a; S.shaftB=b; }
+      S.shaftCamA=0; S.shaftCamB=0; S.speed=BASE_SPEED*0.36;
+    }
+    return;
+  }
+  S.walkT = Math.min(1, S.walkT + dt/0.55);          // swing up to the horizon
+  const fwd = (S.input.rotU?1:0) - (S.input.rotD?1:0);
+  const str = (S.input.rotR?1:0) - (S.input.rotL?1:0);
+  S.walkZ = Math.max(0, S.walkZ + fwd*3.4*dt);
+  S.walkX = clamp(S.walkX + str*3.4*dt, -DECK_HW*0.92, DECK_HW*0.92);
+  S.lean = lerp(S.lean, str*0.5, clamp(dt*9,0,1));
+  S.runPhase += dt*(5 + Math.abs(fwd)*7);
+  S.bob = Math.sin(S.runPhase*2)*1.1*Math.abs(fwd);
+  S.wing = lerp(S.wing, 0, clamp(dt*8,0,1));
+  if (S.walkZ > DECK_LEN) S.walkExiting = true;       // stepped off the far edge
+}
+
 function stepParticles(dt){
   for (let i=S.parts.length-1;i>=0;i--){
     const p=S.parts[i];
@@ -804,7 +1080,7 @@ function stepParticles(dt){
 // ============================================================================
 function updateGate(dt){
   if (!S.gate){
-    if (S.distance >= S.nextGateDist) S.gate = { z: Z_FAR + 6, exits: rollExitVariants() };
+    if (S.distance >= S.nextGateDist) S.gate = { z: Z_FAR + 6, exits: rollExitVariants(), types: rollExitTypes(S.mode) };
     return;
   }
   S.gate.z -= S.speed*dt;
@@ -832,9 +1108,12 @@ function enterHub(){
   S.ix.enterT = 0; S.ix.entryK = 0;
   S.ix.entryZ0 = S.gate ? S.gate.z : GATE_TRIGGER_Z;   // glide start depth
   S.ix.fovAtEnter = S.fov;                             // lens handoff start
-  S.ix.charX0 = CX + (S.playerX - S.cameraX) * scaleAt(Z_CHAR);
+  S.ix.charX0 = (S.mode==="flat") ? CX + (S.playerX - S.cameraX) * scaleAt(Z_CHAR)
+                                  : sprojX(S.shaftA, Z_CHAR);
   S.ix.tubeVariants = (S.gate && S.gate.exits) ? S.gate.exits.slice() : rollExitVariants();
   S.ix.entryVariant = S.variant;                       // the tunnel behind you
+  S.ix.tubeTypes = (S.gate && S.gate.types) ? S.gate.types.slice() : rollExitTypes(S.mode);
+  S.ix.entryMode = S.mode;                              // the tube type behind you
   S.objects.length = 0;                                // room must be empty
   S.input.rotL = S.input.rotR = S.input.rotU = S.input.rotD = false;
   S.wing = 0; S.boostT = 0; S.boostCd = 0; S.shake = 0;
@@ -913,7 +1192,8 @@ function updateCommit(dt){
   S.fovKick = lerp(S.fovKick, 70, clamp(dt*6,0,1));
   S.fov = FOV_BASE + S.fovKick;
   S.distance += S.speed*dt; S.score += S.speed*dt*0.35;
-  stepTunnelWorld(dt);
+  if (S.mode==="flat"){ stepTunnelWorld(dt); }
+  else { stepShaftWorld(dt); if (S.modeT<1) S.modeT = Math.min(1, S.modeT + dt/0.8); }
   stepParticles(dt);
 
   if (t>=1) finishCommit();
@@ -958,6 +1238,8 @@ function restartRun(){
   S.gate=null; S.nextGateDist=S.distance+rand(150,190);
   S.intersectionsCleared=0;
   S.variant=0; S.ix.tubeVariants=[0,1,2,3,0]; S.ix.entryVariant=0;
+  S.mode="flat"; S.modeT=1; S.shaftA=0; S.shaftB=0; S.shaftCamA=0; S.shaftCamB=0; S.balconyAcc=0;
+  S.ix.tubeTypes=["flat","climb","fall","flat","flat"]; S.ix.entryMode="flat";
   S.ix.locked=-1; S.ix.lockT=0; S.ix.entryK=1; S.ix.commitBack=0;
   resetWorld();
 }
@@ -1029,16 +1311,39 @@ function render(){
 }
 
 function renderTunnelScene(){
-  drawTunnel();
-  drawGrid();
-  drawDust();
-  for (const o of S.objects){
-    if (o.type==="pillar") drawPillar(o);
-    else if (o.type==="ring") drawRing(o);
-    else if (o.type==="block") drawBlock(o);
-    else drawShard(o);
+  if (S.mode==="flat"){
+    drawTunnel();
+    drawGrid();
+    drawDust();
+    for (const o of S.objects){
+      if (o.type==="pillar") drawPillar(o);
+      else if (o.type==="ring") drawRing(o);
+      else if (o.type==="block") drawBlock(o);
+      else drawShard(o);
+    }
+    if (S.phase!=="hub") drawCharacter("tunnel");
+  } else if (S.mode==="walk"){
+    // camera swing: the frozen tube (walkT→0) crossfades to the deck (walkT→1)
+    if (S.walkT < 0.999){
+      ctx.save(); ctx.globalAlpha = clamp(1-S.walkT*1.3,0,1);
+      drawShaft(); drawShaftDust();
+      for (const o of S.objects) if (o.type==="balcony") drawBalcony(o);
+      drawCharacter("shaft");
+      ctx.restore();
+    }
+    if (S.walkT > 0.001){
+      ctx.save(); ctx.globalAlpha = clamp(S.walkT*1.3,0,1);
+      drawBalconyWalk();
+      drawCharacter("walk");
+      ctx.restore();
+    }
+  } else {
+    // vertical CLIMB / FALL shaft — same scene, re-skinned
+    drawShaft();
+    drawShaftDust();
+    for (const o of S.objects) if (o.type==="balcony") drawBalcony(o);
+    if (S.phase!=="hub") drawCharacter("shaft");
   }
-  if (S.phase!=="hub") drawCharacter("tunnel");   // hub-entry underlay: char lives in the hub render
   drawParticles();
 }
 
@@ -1185,6 +1490,15 @@ function drawChamber(gz){
     }
     return out;
   };
+  // a point at depth dd INTO the tube on face n, at cross-section (cu,cv)
+  const facePt = (n, dd, cu, cv) => {
+    const [u,v] = faceBasis(n);
+    const px = n[0]*(R+dd) + u[0]*cu + v[0]*cv;
+    const py = n[1]*(R+dd) + u[1]*cu + v[1]*cv;
+    const pz = n[2]*(R+dd) + u[2]*cu + v[2]*cv + zc;
+    if (pz < 0.14) return null;
+    return [projX(px,pz), projY(py,pz)];
+  };
   const tracePoly = p => {
     ctx.beginPath(); ctx.moveTo(p[0][0],p[0][1]);
     for(let k=1;k<4;k++) ctx.lineTo(p[k][0],p[k][1]);
@@ -1261,11 +1575,29 @@ function drawChamber(gz){
     }
   }
   // side / vertical doorways: dark opening + destination-variant glow
+  const ext = S.gate && S.gate.types ? S.gate.types : ["flat","flat","flat","flat","flat"];
   for (const [n, ei] of [[[-1,0,0],3],[[1,0,0],4],[[0,1,0],1],[[0,-1,0],2]]){
     const p = mouthCorners(n);
     if (!p) continue;
     const Vx = VARIANTS[exv[ei]];
     mouthHole(p, Vx);
+    // vertical shaft exits get a few balcony-lip hints inside the mouth so the
+    // approach reads as a tube too (the hub shows the full trompe-l'œil)
+    if (ext[ei]==="climb" || ext[ei]==="fall"){
+      // hexagonal balcony-rail hints jutting from the wall (angular), so the
+      // approach reads as a round balcony-shaft (the hub shows the full render)
+      const Rp = TUN_HW*0.9, rin = Rp*0.42, baw = 0.55;
+      const hints = [ {d:0.9,ang:2.3},{d:2.2,ang:0.3},{d:3.6,ang:4.0},{d:5.2,ang:1.4} ];
+      for (const B of hints){
+        const inner = [[rin,B.ang+baw*0.5],[rin*0.8,B.ang],[rin,B.ang-baw*0.5]]
+          .map(([rad,ang])=> facePt(n, B.d, Math.cos(ang)*rad, Math.sin(ang)*rad));
+        if (inner.some(q=>!q)) continue;
+        ctx.strokeStyle = rgb(Vx.grid, 0.6*(0.4+0.6*anticip));
+        ctx.lineWidth = 1.3;
+        ctx.beginPath(); ctx.moveTo(inner[0][0],inner[0][1]);
+        ctx.lineTo(inner[1][0],inner[1][1]); ctx.lineTo(inner[2][0],inner[2][1]); ctx.stroke();
+      }
+    }
     mouthGlow(p, Vx.sig, 0.85);
   }
 
@@ -1284,6 +1616,255 @@ function drawChamber(gz){
     const l=projX(-R,zFarW), r=projX(R,zFarW), t=projY(R,zFarW), b=projY(-R,zFarW);
     ctx.strokeRect(l,t,r-l,b-t);
   }
+}
+
+// ============================================================================
+//  SHAFT — the corridor re-skinned as a vertical CLIMB / FALL tube. Same four
+//  converging surfaces as drawTunnel, projected through the shaft camera
+//  (vanishing point shifted up/down, cross-section pan), dressed with balconies
+//  instead of a lane grid. Opens into the chamber at a gate exactly like the
+//  corridor, so the shaft → intersection approach reuses all the gate machinery.
+// ============================================================================
+function drawShaft(){
+  const V = VARIANTS[S.variant];
+  const gz = S.gate ? S.gate.z : Infinity;
+  const hasChamber = S.gate && gz < Z_FAR;
+  // safety base so the screen corners are never void (the pan clamp is the
+  // primary fix; this just guarantees you never see "outside" the tube)
+  if (!hasChamber){ ctx.fillStyle = rgb(tunShade(V, V.bright.wall*0.85, 0.35)); ctx.fillRect(0,0,VW,VH); }
+  if (hasChamber) drawChamber(gz);                // chamber paints under the mouth
+  const zEnd = Math.min(gz, Z_FAR);
+  if (zEnd <= Z_NEAR + 0.01) return;
+  const farZ = Math.min(zEnd, Z_FAR);
+  // circle (radius rad) of the tube at depth z, centered on the panned axis
+  const ringAt = z => ({ cx:sprojX(0,z), cy:sprojY(0,z), rad:Math.max(TUN_R*scaleAt(z),0.5) });
+
+  // ---- tube wall as a radial funnel: filled discs near → far, each farther
+  // (smaller, darker) disc overpainting the center → a round tube to the VP ---
+  const NB = 18;
+  for (let i=0;i<NB;i++){
+    const z = Z_NEAR * Math.pow(farZ/Z_NEAR, i/(NB-1));
+    if (z > zEnd+0.01) break;
+    const r = ringAt(z), fog = fogF(z);
+    const seg = 0.92 + 0.08*Math.sin(i*0.9);            // faint segment banding
+    ctx.fillStyle = rgb(tunShade(V, V.bright.wall*seg, fog));
+    ctx.beginPath(); ctx.arc(r.cx, r.cy, r.rad, 0, 6.283); ctx.fill();
+  }
+  { const r = ringAt(farZ); ctx.fillStyle = rgb(V.dark);   // deep far cap
+    ctx.beginPath(); ctx.arc(r.cx, r.cy, Math.max(r.rad*0.55,0.5), 0, 6.283); ctx.fill(); }
+
+  // ---- circumferential ring seams streaming past (speed cue) ----
+  for (const z of S.rungs){
+    if (z >= zEnd || z > 44) continue;
+    const r = ringAt(z);
+    ctx.strokeStyle = rgb(lerpC(V.wall,[255,255,255],0.14), clamp((1-fogF(z))*0.3,0.03,0.3));
+    ctx.lineWidth = clamp(scaleAt(z)*0.006, 0.5, 1.4);
+    ctx.beginPath(); ctx.arc(r.cx, r.cy, r.rad, 0, 6.283); ctx.stroke();
+  }
+
+  // ---- conduits: the climbable pipes running the length of the wall ----
+  const pang = Math.atan2(S.shaftB, S.shaftA);
+  for (const P of SHAFT_PIPES){
+    const [a,b] = polar(P.ang, P.r*TUN_R);
+    const zN = Z_NEAR+0.05;
+    const pN = { x:sprojX(a,zN), y:sprojY(b,zN) }, pF = { x:sprojX(a,farZ), y:sprojY(b,farZ) };
+    const base = P.warm ? PIPE_WARM : PIPE_COOL;
+    const climbed = S.climbing && Math.abs(wrapAngle(pang-P.ang)) < 0.3;
+    ctx.strokeStyle = rgb(lerpC(base,[0,0,0],0.5), 0.85);          // dark casing
+    ctx.lineWidth = clamp(scaleAt(zN)*P.w, 1, 11);
+    ctx.beginPath(); ctx.moveTo(pN.x,pN.y); ctx.lineTo(pF.x,pF.y); ctx.stroke();
+    ctx.strokeStyle = rgb(climbed ? lerpC(base,[255,255,255],0.55) : base, 0.92);  // lit face
+    ctx.lineWidth = clamp(scaleAt(zN)*P.w*0.45, 0.6, 6);
+    ctx.beginPath(); ctx.moveTo(pN.x,pN.y); ctx.lineTo(pF.x,pF.y); ctx.stroke();
+    if (climbed){                                                  // climb highlight
+      ctx.globalCompositeOperation="lighter";
+      ctx.strokeStyle = rgb(lerpC(base,[255,255,255],0.7), 0.5);
+      ctx.lineWidth = clamp(scaleAt(zN)*P.w*0.25, 0.5, 3);
+      ctx.beginPath(); ctx.moveTo(pN.x,pN.y); ctx.lineTo(pF.x,pF.y); ctx.stroke();
+      ctx.globalCompositeOperation="source-over";
+    }
+    // clamp brackets along the pipe at ring depths (the conduit's fixings)
+    for (const z of S.rungs){
+      if (z>=farZ || z<zN) continue;
+      const [ba,bb]=polar(P.ang,(P.r+0.05)*TUN_R), [ba2,bb2]=polar(P.ang,(P.r-0.09)*TUN_R);
+      ctx.strokeStyle = rgb(lerpC(base,[0,0,0],0.3), clamp((1-fogF(z))*0.55,0.04,0.55));
+      ctx.lineWidth = clamp(scaleAt(z)*0.02, 0.5, 2.5);
+      ctx.beginPath(); ctx.moveTo(sprojX(ba,z),sprojY(bb,z)); ctx.lineTo(sprojX(ba2,z),sprojY(bb2,z)); ctx.stroke();
+    }
+  }
+
+  // ---- wall panels (circuit / sensor arrays) between the pipes ----
+  for (const z of S.rungs){
+    if (z>=farZ || z<Z_NEAR || z>26) continue;
+    const idx = Math.round(z*1.7);
+    for (const pa2 of [0.05 + (idx%3)*2.1, 1.75 + (idx%2)*2.0]){
+      const aw2 = 0.28, r0=0.99*TUN_R, dz=0.55;
+      const c0=polar(pa2-aw2,r0), c1=polar(pa2+aw2,r0);
+      const q0={x:sprojX(c0[0],z),y:sprojY(c0[1],z)}, q1={x:sprojX(c1[0],z),y:sprojY(c1[1],z)};
+      const q2={x:sprojX(c1[0],z+dz),y:sprojY(c1[1],z+dz)}, q3={x:sprojX(c0[0],z+dz),y:sprojY(c0[1],z+dz)};
+      const fog=fogF(z);
+      ctx.fillStyle = rgb(lerpC(lerpC(V.wall,[0,0,0],0.25), V.dark, fog), clamp(1-fog,0.1,1));
+      ctx.beginPath(); ctx.moveTo(q0.x,q0.y); ctx.lineTo(q1.x,q1.y); ctx.lineTo(q2.x,q2.y); ctx.lineTo(q3.x,q3.y); ctx.closePath(); ctx.fill();
+      ctx.globalCompositeOperation="lighter";                     // panel readout LEDs
+      ctx.fillStyle = rgb(V.grid, clamp((1-fog)*0.5,0,0.5)*(0.6+0.4*Math.sin(S.time*4+idx)));
+      ctx.fillRect((q0.x+q2.x)/2-1,(q0.y+q2.y)/2-1,2,2);
+      ctx.globalCompositeOperation="source-over";
+    }
+  }
+
+  // ---- the light at the end of the shaft (glow at the vanishing point) ----
+  if (zEnd >= Z_FAR*0.4){
+    const r = ringAt(farZ), rad=Math.max(r.rad*1.4, 8);
+    ctx.globalCompositeOperation="lighter";
+    const g=ctx.createRadialGradient(r.cx,r.cy,1, r.cx,r.cy,rad);
+    g.addColorStop(0, rgb(V.sig, 0.2)); g.addColorStop(1, rgb(V.sig, 0));
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(r.cx,r.cy,rad,0,6.283); ctx.fill();
+    ctx.globalCompositeOperation="source-over";
+  }
+}
+
+// one balcony — a big hexagonal platform jutting inward from the tube wall
+// (the concept's "interlocking triangular mass"). A slab with an extruded
+// edge, a panelled deck, a bright inner rail (the grab edge), tiny figures for
+// scale, and a signature-color flare when latched.
+function drawBalcony(o){
+  const d = o.d;
+  if (d < Z_NEAR+0.05) return;
+  const V = VARIANTS[S.variant];
+  const fog = fogF(d), s = scaleAt(d);
+  const R=TUN_R, rin=o.rin, aw=o.aw;
+  // hex floor: two wall-attach corners + a 3-point inner edge with a nose
+  const ring = [
+    [R, o.ang-aw], [R, o.ang+aw],
+    [rin, o.ang+aw*0.5], [rin*0.8, o.ang], [rin, o.ang-aw*0.5]
+  ];
+  const pj = (rad,ang,dd)=>{ const [a,b]=polar(ang,rad); return { x:sprojX(a,dd), y:sprojY(b,dd) }; };
+  const thick = 0.55;
+  const top = ring.map(([rad,ang])=> pj(rad,ang,d));
+  const bot = ring.map(([rad,ang])=> pj(rad,ang,d+thick));
+  const traceP = pts=>{ ctx.beginPath(); ctx.moveTo(pts[0].x,pts[0].y); for(let k=1;k<pts.length;k++) ctx.lineTo(pts[k].x,pts[k].y); ctx.closePath(); };
+  // extruded slab sides (thickness) — darker
+  ctx.fillStyle = rgb(lerpC([V.wall[0]*0.5,V.wall[1]*0.5,V.wall[2]*0.5], V.dark, fog));
+  for (let k=0;k<top.length;k++){ const k2=(k+1)%top.length;
+    ctx.beginPath(); ctx.moveTo(top[k].x,top[k].y); ctx.lineTo(top[k2].x,top[k2].y);
+    ctx.lineTo(bot[k2].x,bot[k2].y); ctx.lineTo(bot[k].x,bot[k].y); ctx.closePath(); ctx.fill();
+  }
+  // top deck
+  const face = lerpC([V.wall[0]*1.02,V.wall[1]*1.02,V.wall[2]*1.02], V.dark, fog*0.8);
+  ctx.fillStyle = rgb(o.grabbed ? lerpC(face, V.sig, 0.35) : face);
+  traceP(top); ctx.fill();
+  ctx.strokeStyle = rgb(lerpC(V.wall,[0,0,0],0.45), clamp((1-fog)*0.55,0.05,0.55));
+  ctx.lineWidth = 1; traceP(top); ctx.stroke();
+  // deck seam lines (panelling)
+  if (s>7 && fog<0.75){
+    ctx.strokeStyle = rgb(lerpC(V.wall,[0,0,0],0.35), clamp((1-fog)*0.35,0.03,0.35));
+    ctx.beginPath();
+    ctx.moveTo(top[0].x,top[0].y); ctx.lineTo(top[3].x,top[3].y);
+    ctx.moveTo(top[1].x,top[1].y); ctx.lineTo(top[3].x,top[3].y);
+    ctx.stroke();
+  }
+  // bright inner rail (grab edge: the inner arc, pts 2-3-4)
+  const gcol = o.grabbed ? V.sig : V.grid;
+  ctx.globalCompositeOperation="lighter";
+  ctx.strokeStyle = rgb(gcol, clamp((1-fog)*0.95,0.12,0.95));
+  ctx.lineWidth = clamp(s*0.012, 1, 3);
+  ctx.beginPath(); ctx.moveTo(top[2].x,top[2].y); ctx.lineTo(top[3].x,top[3].y); ctx.lineTo(top[4].x,top[4].y); ctx.stroke();
+  if (o.grabbed){
+    const n=top[3], rad=Math.max(s*0.45,4);
+    const g=ctx.createRadialGradient(n.x,n.y,1,n.x,n.y,rad);
+    g.addColorStop(0,rgb(V.sig,0.5)); g.addColorStop(1,rgb(V.sig,0));
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(n.x,n.y,rad,0,6.283); ctx.fill();
+  }
+  ctx.globalCompositeOperation="source-over";
+  // tiny figures standing on the deck, for scale (as in the concept art)
+  if (s>7 && fog<0.68){
+    const nf = 1 + (((o.seed*7)|0)%3);
+    for (let f=0; f<nf; f++){
+      const fa = o.ang + (f-(nf-1)/2)*0.15;
+      const fr = rin + (R-rin)*(0.45+0.12*f);
+      const p = pj(fr, fa, d);
+      const hh = clamp(s*0.055, 1.5, 7);
+      ctx.fillStyle = rgb(lerpC([26,28,36], V.dark, fog));
+      ctx.fillRect(p.x-hh*0.2, p.y-hh, hh*0.4, hh);
+      ctx.fillStyle = rgb(lerpC([64,68,82], V.dark, fog));
+      ctx.fillRect(p.x-hh*0.2, p.y-hh, hh*0.4, hh*0.32);
+    }
+  }
+}
+
+function drawShaftDust(){
+  ctx.globalCompositeOperation="lighter";
+  const streak = 0.25 + S.gridBoost*1.4;
+  for (const du of S.dust){
+    const s = scaleAt(du.z);
+    const x1=sprojX(du.x,du.z), y1=sprojY(du.y,du.z);
+    const z2 = du.z + (0.15 + streak);
+    const x2=sprojX(du.x,z2), y2=sprojY(du.y,z2);
+    const a = clamp((1-fogF(du.z))*0.5, 0, 0.7) * (0.5 + S.gridBoost*0.5);
+    ctx.strokeStyle = rgb(lerpC([180,235,255],[255,255,255],S.gridBoost), a);
+    ctx.lineWidth = clamp(s*0.006, 0.4, 2);
+    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+  }
+  ctx.globalCompositeOperation="source-over";
+}
+
+// the balcony deck seen in the horizon (flat-tunnel-style) camera you swing to
+// after landing. A bounded platform floor receding to a far rail (the drop back
+// into the tube); the tube interior is the backdrop. Uses a local flat camera.
+function drawBalconyWalk(){
+  const V = VARIANTS[S.variant];
+  // backdrop: you're inside the tube — a soft round wall wrapping behind
+  const bg = ctx.createRadialGradient(CX, HORIZON, 20, CX, VH*0.5, VW*0.85);
+  bg.addColorStop(0, rgb(tunShade(V, V.bright.wall*0.95, 0.3)));
+  bg.addColorStop(1, rgb(tunShade(V, V.bright.wall*0.45, 0.72)));
+  ctx.fillStyle = bg; ctx.fillRect(0,0,VW,VH);
+
+  const cam = S.walkX*0.55;                       // camera lags the strafe
+  const px = (x,z)=> CX + (x - cam) * S.fov / z;
+  const py = (y,z)=> HORIZON - y * S.fov / z;
+  const ahead = clamp(DECK_LEN - S.walkZ, 0.5, DECK_LEN);
+  const nZ = Z_NEAR, fZ = Z_NEAR + ahead, HWd = DECK_HW;
+
+  // ---- deck floor, fog-banded near → far ----
+  const NB=7;
+  for (let i=NB-1;i>=0;i--){
+    const z0 = nZ + (fZ-nZ)*i/NB, z1 = nZ + (fZ-nZ)*(i+1)/NB;
+    const fog = clamp((z0-nZ)/DECK_LEN,0,1)*0.5;
+    const l0=px(-HWd,z0), r0=px(HWd,z0), b0=py(-CAM_Y,z0);
+    const l1=px(-HWd,z1), r1=px(HWd,z1), b1=py(-CAM_Y,z1);
+    ctx.fillStyle = rgb(tunShade(V, V.bright.floor*1.1, fog));
+    ctx.beginPath(); ctx.moveTo(l0,b0); ctx.lineTo(r0,b0); ctx.lineTo(r1,b1); ctx.lineTo(l1,b1); ctx.closePath(); ctx.fill();
+  }
+  // deck panel grid
+  for (const x of [-HWd,-HWd*0.5,0,HWd*0.5,HWd]){
+    ctx.strokeStyle = rgb(V.grid, 0.55);
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(px(x,nZ),py(-CAM_Y,nZ)); ctx.lineTo(px(x,fZ),py(-CAM_Y,fZ)); ctx.stroke();
+  }
+  for (let k=1;k<=8;k++){ const z=nZ + (fZ-nZ)*k/8;
+    ctx.strokeStyle=rgb(V.grid, clamp(0.55*(1-k/9),0.06,0.55));
+    ctx.beginPath(); ctx.moveTo(px(-HWd,z),py(-CAM_Y,z)); ctx.lineTo(px(HWd,z),py(-CAM_Y,z)); ctx.stroke();
+  }
+  // ---- side rails (posts + top rail) ----
+  for (const x of [-HWd,HWd]){
+    const topN=py(-CAM_Y+0.6,nZ), botN=py(-CAM_Y,nZ), topF=py(-CAM_Y+0.6,fZ), botF=py(-CAM_Y,fZ);
+    ctx.strokeStyle = rgb(lerpC(V.wall,[0,0,0],0.3), 0.85);
+    ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(px(x,nZ),topN); ctx.lineTo(px(x,fZ),topF); ctx.stroke();  // top rail
+    for (let k=0;k<=6;k++){ const z=nZ+(fZ-nZ)*k/6;
+      ctx.lineWidth=clamp(scaleAt(z)*0.015,0.5,2.5);
+      ctx.beginPath(); ctx.moveTo(px(x,z),py(-CAM_Y,z)); ctx.lineTo(px(x,z),py(-CAM_Y+0.6,z)); ctx.stroke();  // posts
+    }
+  }
+  // ---- far rail = the drop edge back into the tube (bright, in sig color) ----
+  ctx.globalCompositeOperation="lighter";
+  ctx.strokeStyle = rgb(V.sig, 0.75+0.2*Math.sin(S.time*4)); ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(px(-HWd,fZ),py(-CAM_Y,fZ)); ctx.lineTo(px(HWd,fZ),py(-CAM_Y,fZ)); ctx.stroke();
+  ctx.globalCompositeOperation="source-over";
+  // a hint of the shaft dropping away beyond the far edge
+  ctx.fillStyle = rgb(V.dark, 0.5);
+  const fy=py(-CAM_Y,fZ);
+  ctx.fillRect(px(-HWd,fZ), fy-8, px(HWd,fZ)-px(-HWd,fZ), 8);
 }
 
 function drawGrid(){
@@ -1579,13 +2160,107 @@ const TUBE_LAMPS = [
   { d:9.8,  side:-1, y: 0.60, len:1.0 },
   { d:15.5, side: 1, y: 0.20, len:0.9 },
 ];
+// deterministic preview balconies for CLIMB/FALL exit tubes — the trompe-l'œil
+// tell that this exit is a vertical shaft, not a flat corridor. Big hexagonal
+// platforms at angle `ang` around the tube, matching drawBalcony (some paired
+// at one depth so they interlock, as in the concept art).
+const TUBE_BALCONIES = [
+  { d:1.6, ang:2.3 }, { d:3.3, ang:0.4 }, { d:3.3, ang:4.1 },
+  { d:5.6, ang:1.5 }, { d:8.2, ang:3.4 }, { d:8.2, ang:5.7 },
+  { d:12, ang:0.9 }, { d:17, ang:3.9 },
+];
 
-// draws one tube: variant walls/grid/strip/lamps + aim UI (frame/label/glow).
+// draws one tube: variant walls/strip/lamps + floor grid (flat) OR balconies
+// (climb/fall) + aim UI (frame/label/glow).
 //   aim     – EXITS entry for the wayfinding frame+label, or null (entry tube)
 //   rungOff – d = rungZ + rungOff maps S.rungs into tube depths (world-locked
 //             floor grid, see drawHubPortals); null = static rungs
 //   te      – commit progress for this tube (chosen only): streaks + lamp fade
-function drawHubTube(dir, aim, locked, dim, vIdx, rungOff, te){
+//   type    – "flat" | "climb" | "fall": which cross-section content to draw
+// a CLIMB/FALL exit rendered as the real ROUND balcony-tube it leads into:
+// circular mouth, cylindrical funnel wall, conduits, and hex balconies — the
+// honest trompe-l'œil (matches drawShaft), so you see the shaft before you go.
+function drawHubShaftTube(dir, aim, locked, dim, vIdx, type){
+  const V = VARIANTS[vIdx];
+  const R = GATE_CHAMBER_R, RT = TUN_R, END = 26, NSEG = 20;
+  const [u,v] = faceBasis(dir);
+  const pt = (d, uu, vv)=> projHub([
+    dir[0]*(R+d)+u[0]*uu+v[0]*vv, dir[1]*(R+d)+u[1]*uu+v[1]*vv, dir[2]*(R+d)+u[2]*uu+v[2]*vv ]);
+  const dimC = c => dim>=1 ? c : lerpC([4,4,6], c, dim);
+  const lit = locked ? 1.0 : 0.85;
+  const circle = (d, rad)=>{ const out=[]; for(let i=0;i<NSEG;i++){ const th=i/NSEG*6.283;
+    const p=pt(d, Math.cos(th)*rad, Math.sin(th)*rad); if(!p) return null; out.push(p);} return out; };
+  const traceP = pts=>{ ctx.beginPath(); ctx.moveTo(pts[0].x,pts[0].y); for(let k=1;k<pts.length;k++) ctx.lineTo(pts[k].x,pts[k].y); ctx.closePath(); };
+
+  const mouth = circle(0.05, RT);
+  const mOK = mouth && !mouth.some(p=>!p);
+  if (mOK){ ctx.fillStyle = rgb(dimC(V.dark)); traceP(mouth); ctx.fill(); }
+
+  // funnel wall: filled circles near → far, darker toward the far end
+  const BANDS = [0.05,0.9,1.9,3.2,5,7.5,11,16,21,END];
+  for (const d of BANDS){
+    const c = circle(d, RT); if (!c) continue;
+    ctx.fillStyle = rgb(dimC(tunShade(V, V.bright.wall*lit*(0.95+0.05*Math.sin(d)), fogF(d)*0.92)));
+    traceP(c); ctx.fill();
+  }
+  { const c=circle(END, RT*0.5); if(c){ ctx.fillStyle=rgb(dimC(V.dark)); traceP(c); ctx.fill(); } }
+
+  // conduits (the climbable pipes)
+  for (const P of SHAFT_PIPES){
+    const [a,b]=polar(P.ang, P.r*RT);
+    const p0=pt(0.1,a,b), p1=pt(END,a,b);
+    if(!p0||!p1) continue;
+    const base = P.warm?PIPE_WARM:PIPE_COOL;
+    ctx.strokeStyle = rgb(dimC(lerpC(base,[0,0,0],0.45)), 0.85*dim);
+    ctx.lineWidth = clamp(p0.s*P.w, 0.8, 7);
+    ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.stroke();
+    ctx.strokeStyle = rgb(dimC(base), 0.9*dim);
+    ctx.lineWidth = clamp(p0.s*P.w*0.5, 0.5, 4);
+    ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.stroke();
+  }
+
+  // hexagonal balconies jutting inward from the wall
+  const rin = RT*0.4, baw = 0.6;
+  for (const B of TUBE_BALCONIES){
+    if (B.d > END) continue;
+    const ringc = [[RT,B.ang-baw],[RT,B.ang+baw],[rin,B.ang+baw*0.5],[rin*0.8,B.ang],[rin,B.ang-baw*0.5]];
+    const Q = ringc.map(([rad,ang])=> pt(B.d, Math.cos(ang)*rad, Math.sin(ang)*rad));
+    if (Q.some(p=>!p)) continue;
+    const fog = fogF(B.d);
+    ctx.fillStyle = rgb(dimC(lerpC(V.wall, V.dark, fog*0.8)));
+    traceP(Q); ctx.fill();
+    ctx.strokeStyle = rgb(lerpC(V.wall,[0,0,0],0.45), clamp((1-fog)*0.5,0.05,0.5)*dim);
+    ctx.lineWidth = 1; traceP(Q); ctx.stroke();
+    ctx.strokeStyle = rgb(V.grid, clamp((1-fog)*0.9,0.1,0.92)*dim);
+    ctx.lineWidth = clamp(Q[3].s*0.012, 0.8, 2.4);
+    ctx.beginPath(); ctx.moveTo(Q[2].x,Q[2].y); ctx.lineTo(Q[3].x,Q[3].y); ctx.lineTo(Q[4].x,Q[4].y); ctx.stroke();
+  }
+
+  if (!mOK) return;
+  // mouth breath + circular frame + label
+  let mcx=0,mcy=0; for(const p of mouth){ mcx+=p.x; mcy+=p.y; } mcx/=mouth.length; mcy/=mouth.length;
+  let mr=0; for(const p of mouth) mr=Math.max(mr, Math.hypot(p.x-mcx,p.y-mcy));
+  ctx.globalCompositeOperation="lighter";
+  const g=ctx.createRadialGradient(mcx,mcy,1,mcx,mcy,Math.max(mr,2));
+  g.addColorStop(0, rgb(lerpC(V.sig,[255,255,255],0.3), (locked?0.2:0.07)*dim));
+  g.addColorStop(1, rgb(V.sig,0));
+  ctx.fillStyle=g; traceP(mouth); ctx.fill();
+  ctx.globalCompositeOperation="source-over";
+  ctx.strokeStyle = aim ? rgb(aim.col,(locked?0.9:0.4)*dim) : rgb([150,155,168],0.25*dim);
+  ctx.lineWidth = locked?1.6:1; traceP(mouth); ctx.stroke();
+  if (aim && dim>0.15){
+    const ty = mcy - mr;
+    ctx.textAlign="center"; ctx.font="7px monospace";
+    ctx.fillStyle = locked ? rgb(aim.col,dim) : `rgba(255,255,255,${0.6*dim})`;
+    ctx.fillText(aim.label, mcx, ty+9);
+    ctx.font="6px monospace"; ctx.fillStyle = rgb(V.sig,(locked?0.95:0.65)*dim);
+    ctx.fillText(V.name+(type==="climb"?" ▲ CLIMB":" ▼ FALL"), mcx, ty+17);
+  }
+}
+
+function drawHubTube(dir, aim, locked, dim, vIdx, rungOff, te, type){
+  // CLIMB/FALL exits render a real ROUND balcony-tube (not the box corridor)
+  if (type==="climb" || type==="fall"){ drawHubShaftTube(dir, aim, locked, dim, vIdx, type); return; }
   const V = VARIANTS[vIdx];
   const R = GATE_CHAMBER_R;
   const [u,v] = faceBasis(dir);
@@ -1643,32 +2318,64 @@ function drawHubTube(dir, aim, locked, dim, vIdx, rungOff, te){
     ctx.stroke();
   }
 
-  // ---- the destination's lane grid on the tube floor ----
+  // ---- cross-section content: flat corridor = lane grid; shaft = balconies -
   const gA = clamp((locked?1:0.66)*lit*dim, 0, 1);
-  for (const x of [-1.5,-0.5,0.5,1.5].map(m=>m*LANE_W).concat([-TUN_HW,TUN_HW])){
-    const isEdge = Math.abs(Math.abs(x)-TUN_HW)<1e-6;
-    const p0 = pt(0.05, x, CAM_Y), p1 = pt(TUBE_END, x, CAM_Y);
-    if (!p0||!p1) continue;
-    ctx.strokeStyle = rgb(V.grid, (isEdge?0.95:0.7)*gA);
-    ctx.lineWidth = isEdge?1.2:1;
-    ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.stroke();
-  }
-  // rungs (world-locked when rungOff is set) + matching wall hoop seams
   const pulse = 0.5 + 0.5*Math.sin(S.time*3);
+  const shaft = type==="climb" || type==="fall";
+  if (!shaft){
+    // the destination's lane grid on the tube floor
+    for (const x of [-1.5,-0.5,0.5,1.5].map(m=>m*LANE_W).concat([-TUN_HW,TUN_HW])){
+      const isEdge = Math.abs(Math.abs(x)-TUN_HW)<1e-6;
+      const p0 = pt(0.05, x, CAM_Y), p1 = pt(TUBE_END, x, CAM_Y);
+      if (!p0||!p1) continue;
+      ctx.strokeStyle = rgb(V.grid, (isEdge?0.95:0.7)*gA);
+      ctx.lineWidth = isEdge?1.2:1;
+      ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.stroke();
+    }
+  } else {
+    // preview: big hexagonal balconies jutting inward from the wall — the shaft
+    // tell. Same hex construction as drawBalcony, in tube-local (uu,vv) placed
+    // radially (uu=cos, vv=sin) so the exit reads as a round balcony-shaft.
+    const Rp = TUN_HW*0.96, rin = Rp*0.4, baw = 0.6;
+    for (const B of TUBE_BALCONIES){
+      if (B.d > TUBE_END) continue;
+      const ringc = [
+        [Rp,B.ang-baw],[Rp,B.ang+baw],[rin,B.ang+baw*0.5],[rin*0.8,B.ang],[rin,B.ang-baw*0.5]
+      ];
+      const Q = ringc.map(([rad,ang])=> pt(B.d, Math.cos(ang)*rad, Math.sin(ang)*rad));
+      if (Q.some(p=>!p)) continue;
+      const fog = fogF(B.d);
+      ctx.fillStyle = rgb(dimC(lerpC([V.wall[0]*1.02,V.wall[1]*1.02,V.wall[2]*1.02], V.dark, fog*0.82)));
+      ctx.beginPath(); ctx.moveTo(Q[0].x,Q[0].y); for(let k=1;k<Q.length;k++) ctx.lineTo(Q[k].x,Q[k].y); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = rgb(lerpC(V.wall,[0,0,0],0.45), clamp((1-fog)*0.5,0.05,0.5)*dim);
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(Q[0].x,Q[0].y); for(let k=1;k<Q.length;k++) ctx.lineTo(Q[k].x,Q[k].y); ctx.closePath(); ctx.stroke();
+      ctx.strokeStyle = rgb(V.grid, clamp((1-fog)*0.9,0.1,0.92)*gA);   // inner rail
+      ctx.lineWidth = clamp(Q[3].s*0.012, 0.8, 2.4);
+      ctx.beginPath(); ctx.moveTo(Q[2].x,Q[2].y); ctx.lineTo(Q[3].x,Q[3].y); ctx.lineTo(Q[4].x,Q[4].y); ctx.stroke();
+    }
+  }
+  // rungs / ring seams (world-locked when rungOff is set) — the speed cue
   const ds = [];
   if (rungOff===null){ for(let k=0;k<24;k++){ const d=0.45+k*1.15; if(d<TUBE_END) ds.push(d); } }
   else for (const z of S.rungs){ const d=z+rungOff; if (d>0.06 && d<TUBE_END) ds.push(d); }
   for (const d of ds){
     const pL = pt(d,-TUN_HW,CAM_Y), pR = pt(d,TUN_HW,CAM_Y);
-    if (!pL||!pR) continue;
-    ctx.strokeStyle = rgb(V.grid, clamp((1-fogF(d))*0.9,0.06,0.9)*(0.7+0.3*pulse)*gA);
-    ctx.lineWidth = clamp(pL.s*0.012, 0.5, 2);
-    ctx.beginPath(); ctx.moveTo(pL.x,pL.y); ctx.lineTo(pR.x,pR.y); ctx.stroke();
     const tL = pt(d,-TUN_HW,-TUN_CEIL), tR = pt(d,TUN_HW,-TUN_CEIL);
-    if (!tL||!tR) continue;
-    ctx.strokeStyle = rgb(dimC(lerpC(V.wall,[255,255,255],0.18)), clamp((1-fogF(d))*0.30,0.03,0.30)*dim);
-    ctx.lineWidth = clamp(pL.s*0.008, 0.5, 1.4);
-    ctx.beginPath(); ctx.moveTo(pL.x,pL.y); ctx.lineTo(tL.x,tL.y); ctx.lineTo(tR.x,tR.y); ctx.lineTo(pR.x,pR.y); ctx.stroke();
+    if (!pL||!pR||!tL||!tR) continue;
+    if (!shaft){
+      ctx.strokeStyle = rgb(V.grid, clamp((1-fogF(d))*0.9,0.06,0.9)*(0.7+0.3*pulse)*gA);
+      ctx.lineWidth = clamp(pL.s*0.012, 0.5, 2);
+      ctx.beginPath(); ctx.moveTo(pL.x,pL.y); ctx.lineTo(pR.x,pR.y); ctx.stroke();
+      ctx.strokeStyle = rgb(dimC(lerpC(V.wall,[255,255,255],0.18)), clamp((1-fogF(d))*0.30,0.03,0.30)*dim);
+      ctx.lineWidth = clamp(pL.s*0.008, 0.5, 1.4);
+      ctx.beginPath(); ctx.moveTo(pL.x,pL.y); ctx.lineTo(tL.x,tL.y); ctx.lineTo(tR.x,tR.y); ctx.lineTo(pR.x,pR.y); ctx.stroke();
+    } else {
+      // uniform 4-wall ring seam (no bright floor line — it's a vertical tube)
+      ctx.strokeStyle = rgb(V.grid, clamp((1-fogF(d))*0.34,0.03,0.34)*(0.7+0.3*pulse)*gA);
+      ctx.lineWidth = clamp(pL.s*0.009, 0.5, 1.5);
+      ctx.beginPath(); ctx.moveTo(pL.x,pL.y); ctx.lineTo(tL.x,tL.y); ctx.lineTo(tR.x,tR.y); ctx.lineTo(pR.x,pR.y); ctx.closePath(); ctx.stroke();
+    }
   }
 
   // ---- ceiling light strip ----
@@ -1754,7 +2461,10 @@ function drawHubTube(dir, aim, locked, dim, vIdx, rungOff, te){
     ctx.fillText(aim.label, tx, ty + 10);
     ctx.font="6px monospace";
     ctx.fillStyle = rgb(V.sig, (locked?0.95:0.65)*dim);
-    ctx.fillText(V.name, tx, ty + 18);
+    const tag = type==="climb" ? V.name+" ▲ CLIMB"   // ▲ up shaft
+              : type==="fall"  ? V.name+" ▼ FALL"    // ▼ down shaft
+              : V.name;
+    ctx.fillText(tag, tx, ty + 18);
   }
 }
 
@@ -1763,13 +2473,13 @@ function drawHubPortals(){
   const chosen = committing ? S.ix.chosenExit : -1;
   const te = committing ? 1-Math.pow(1-clamp(S.ix.commitT/COMMIT_DUR,0,1),3) : 0;
   const R = GATE_CHAMBER_R;
-  const pushOff = te*(R+1.8);
+  const pushOff = te*(R+3.8);
 
   // the entry tube first (under the exits): the tunnel you came in through,
   // in its own variant. Skipped while the camera is still gliding IN through
   // it — its opaque mouth-punch would black out the whole view.
   if (!(S.phase==="hub" && S.ix.entryK < 0.95)){
-    drawHubTube([0,0,-1], null, false, 0.55, S.ix.entryVariant, null, 0);
+    drawHubTube([0,0,-1], null, false, 0.55, S.ix.entryVariant, null, 0, S.ix.entryMode);
   }
 
   // chosen exit draws last so the launch flies into it, over everything else
@@ -1789,7 +2499,7 @@ function drawHubPortals(){
     if (S.phase==="hub" && S.gate && i===0) rungOff = -(S.gate.z + 2*R);
     if (isChosen) rungOff = pushOff - R;
     drawHubTube(EXITS[i].dir, EXITS[i], locked, dim, S.ix.tubeVariants[i],
-                rungOff, isChosen ? te : 0);
+                rungOff, isChosen ? te : 0, S.ix.tubeTypes[i]);
   }
 }
 
@@ -1814,6 +2524,7 @@ function drawHubReticle(){
 function drawCharacter(forceMode){
   const inHub = forceMode ? forceMode==="hub"
     : (S.phase==="hub" || S.phase==="commit" || S.phase==="crash" || S.phase==="gameover");
+  const inShaft = forceMode==="shaft";
   const u = inHub ? 2.7 : 3.3 * (S.fov/FOV_BASE);    // px per sprite-pixel
   let csx, feetY, rotZ;
   if (inHub){
@@ -1833,12 +2544,25 @@ function drawCharacter(forceMode){
       feetY = lerp(feetY, VH*0.855, te);
       rotZ *= (1-te);
     }
+  } else if (inShaft){
+    // floating in the shaft, projected at the diver's cross-section position;
+    // offset so the body straddles that point rather than hanging below it
+    csx = sprojX(S.shaftA, Z_CHAR);
+    feetY = sprojY(S.shaftB, Z_CHAR) + 10*u + S.bob;
+    rotZ = S.lean * 0.1;
+  } else if (forceMode==="walk"){
+    // standing/walking on a balcony deck (horizon camera); strafe moves the
+    // diver across, camera lags a touch for parallax
+    const z = 1.6;
+    csx = CX + (S.walkX - S.walkX*0.55) * (S.fov/z);
+    feetY = HORIZON + CAM_Y*(S.fov/z) + S.bob;
+    rotZ = S.lean * 0.1;
   } else {
     csx = CX + (S.playerX - S.cameraX) * scaleAt(Z_CHAR);
     feetY = VH*0.855 + S.bob + S.floatY;
     rotZ = S.lean * 0.12;
   }
-  const boosting = S.boostT>0 && !inHub;
+  const boosting = S.boostT>0 && !inHub && !inShaft && forceMode!=="walk";
 
   // ---- grapple line first (behind everything reads odd; draw to VP over sky but under body) ----
   if (inHub){
@@ -1855,14 +2579,18 @@ function drawCharacter(forceMode){
       }
     }
   } else if (S.grapple>0.02){
+    // flat: grapple to the vanishing point. shaft (CLIMB): grapple UP the tube
+    // toward its vanishing point, selling the "pull yourself up" reach.
     const handY = feetY - 15*u/3.3;
+    const ax = inShaft ? sprojX(0,Z_FAR) : CX;
+    const ay = inShaft ? sprojY(0,Z_FAR) : HORIZON;
     ctx.globalCompositeOperation="lighter";
     ctx.strokeStyle = rgb(P.grap, 0.6*S.grapple);
     ctx.lineWidth = 1.6;
-    ctx.beginPath(); ctx.moveTo(csx + 6, handY); ctx.lineTo(CX + rand(-1,1), HORIZON + rand(-1,1)); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(csx + 6, handY); ctx.lineTo(ax + rand(-1,1), ay + rand(-1,1)); ctx.stroke();
     // anchor spark
     ctx.fillStyle = rgb([255,255,255], 0.8*S.grapple);
-    ctx.fillRect(CX-2, HORIZON-2, 4, 4);
+    ctx.fillRect(ax-2, ay-2, 4, 4);
     ctx.globalCompositeOperation="source-over";
   }
 
