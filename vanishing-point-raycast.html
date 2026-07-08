@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Vanishing Point — Raycast Engine</title>
+<style>
+  :root{ --ink:#dfeeff; --sig:#7fd8e8; }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ height:100%; background:radial-gradient(120% 80% at 50% -10%,#12151f 0%,#05070a 70%);
+      color:var(--ink); font-family:'Segoe UI',system-ui,monospace; overflow:hidden; }
+  #wrap{ position:fixed; inset:0; display:grid; place-items:center; }
+  #frame{ position:relative; width:min(96vw,calc(96vh*16/9)); aspect-ratio:16/9;
+      border-radius:12px; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,.6),
+      0 0 0 1px rgba(120,180,220,.08), inset 0 0 0 8px #000; background:#000; }
+  canvas#game{ position:absolute; inset:0; width:100%; height:100%;
+      image-rendering:pixelated; display:block; }
+  #frame::after{ content:""; position:absolute; inset:0; pointer-events:none;
+      background:radial-gradient(120% 120% at 50% 50%,transparent 58%,rgba(0,0,0,.5) 100%);
+      mix-blend-mode:multiply; }
+  #hud{ position:absolute; left:10px; top:8px; font:11px/1.4 monospace; color:#9fc2d8;
+      text-shadow:0 1px 2px #000; pointer-events:none; opacity:.85; }
+  #hud b{ color:var(--sig); }
+  #cross{ position:absolute; left:50%; top:50%; width:10px; height:10px; transform:translate(-50%,-50%); pointer-events:none; opacity:.5; }
+  #cross::before,#cross::after{ content:""; position:absolute; background:#bfe8f0; }
+  #cross::before{ left:50%; top:0; width:1px; height:100%; transform:translateX(-50%); }
+  #cross::after{ top:50%; left:0; height:1px; width:100%; transform:translateY(-50%); }
+  #mini{ position:absolute; right:10px; top:10px; image-rendering:pixelated;
+      border:1px solid rgba(140,190,220,.25); border-radius:4px; opacity:.8; }
+  #intro{ position:absolute; inset:0; display:grid; place-items:center; text-align:center;
+      background:rgba(4,6,10,.72); backdrop-filter:blur(2px); cursor:pointer; z-index:5; }
+  #intro h1{ font-size:clamp(28px,6vw,64px); letter-spacing:.06em; font-weight:800;
+      background:linear-gradient(180deg,#eaf6ff,#7fb9cf); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  #intro .sig{ color:var(--sig); letter-spacing:.35em; font-size:clamp(11px,2vw,15px); margin-top:6px; text-transform:uppercase; }
+  #intro p{ max-width:46ch; margin:16px auto 0; color:#9fbccd; font-size:13px; line-height:1.6; }
+  #intro .keys{ margin-top:14px; color:#7fa0b4; font:12px/1.9 monospace; }
+  #intro .keys kbd{ background:#141a24; border:1px solid #2a3644; border-bottom-width:2px; border-radius:4px; padding:1px 6px; color:#cfe6ff; }
+  #intro .go{ margin-top:20px; color:var(--sig); font-size:12px; letter-spacing:.2em; animation:pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse{ 0%,100%{opacity:.4} 50%{opacity:1} }
+</style>
+</head>
+<body>
+<div id="wrap"><div id="frame">
+  <canvas id="game"></canvas>
+  <div id="hud"></div>
+  <div id="cross"></div>
+  <canvas id="mini" width="132" height="132"></canvas>
+  <div id="intro"><div>
+    <h1>VANISHING POINT</h1>
+    <div class="sig">Height-Field Raycast Engine</div>
+    <p>A multi-level world raycast in real time: climb staircases into higher halls, drop through sunken corridors, jump, and crane the camera all the way up to an open sky. A gallery of hand-built polygon assets — and a monumental walk-through Roman temple under the stars.</p>
+    <div class="keys">
+      <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Space</kbd> jump ·
+      <kbd>←</kbd><kbd>→</kbd> turn · <kbd>↑</kbd><kbd>↓</kbd>/<kbd>Mouse</kbd> look ·
+      <kbd>Q</kbd><kbd>E</kbd> roll · <kbd>R</kbd> reset · <kbd>Shift</kbd> run · <kbd>M</kbd> map
+    </div>
+    <div class="go">CLICK TO ENTER</div>
+  </div></div>
+</div></div>
+
+<script>
+(() => {
+"use strict";
+
+// ============================================================================
+//  Vanishing Point — HEIGHT-FIELD Raycast Engine
+//  Every map cell has a floor height F and a ceiling height C (SKY = open air).
+//  Walls, stairs, ramps, columns and sunken floors are all just floor-height
+//  steps. Per column we march the grid near→far, casting each cell's floor and
+//  ceiling (Mode-7) and drawing a textured riser wall wherever the floor rises.
+//  Then Z-buffered billboards, depth-sorted 3D polygon meshes, and depth fog.
+//  Pixels: Uint32Array over ImageData → 0xAABBGGRR (little-endian).
+// ============================================================================
+
+const TEX = 64;
+const FOG = [26, 33, 50];      // night-blue haze (distance fades to sky-ish, not black)
+const SKY = 1000;              // ceiling sentinel: open to the sky
+const WALL = 6;               // floor height of a solid wall (short enough to see sky above)
+const EYE_OFF = 0.55;         // eye height above the feet
+const STEP_UP = 0.36;         // max walkable step
+const GRAV = 15, JUMP = 5.4;  // jump physics
+
+// ---- procedural textures ---------------------------------------------------
+function makeTexture(draw){
+  const c=document.createElement("canvas"); c.width=TEX; c.height=TEX;
+  const g=c.getContext("2d"); draw(g,TEX);
+  return { width:TEX, height:TEX, data:g.getImageData(0,0,TEX,TEX).data };
+}
+const rnd=(a,b)=>a+Math.random()*(b-a);
+
+function texBrick(base,mortar,accent){
+  return makeTexture((g,N)=>{
+    g.fillStyle=`rgb(${mortar})`; g.fillRect(0,0,N,N);
+    const rows=4,bh=N/rows;
+    for(let r=0;r<rows;r++){ const off=(r%2)?bh:0;
+      for(let bx=-1;bx<4;bx++){ const x=bx*bh+off+1.5,y=r*bh+1.5,w=bh-3,h=bh-3,v=rnd(-16,16);
+        g.fillStyle=`rgb(${base[0]+v},${base[1]+v},${base[2]+v})`; g.fillRect(x,y,w,h);
+        for(let s=0;s<8;s++){ g.fillStyle=`rgba(0,0,0,${rnd(0.04,0.15)})`; g.fillRect(x+rnd(0,w),y+rnd(0,h),rnd(1,3),rnd(1,4)); }
+        if(Math.random()<0.2){ g.fillStyle=`rgba(${accent[0]},${accent[1]},${accent[2]},${rnd(0.15,0.4)})`; g.fillRect(x+rnd(0,w*0.6),y+rnd(0,h*0.6),rnd(2,5),rnd(2,5)); }
+      }
+    }
+  });
+}
+function texFloorTiles(base,grout){
+  return makeTexture((g,N)=>{
+    g.fillStyle=`rgb(${grout})`; g.fillRect(0,0,N,N);
+    for(let gy=0;gy<4;gy++)for(let gx=0;gx<4;gx++){ const x=gx*16+rnd(1,3),y=gy*16+rnd(1,3),s=16-rnd(3,6),v=rnd(-14,14);
+      g.fillStyle=`rgb(${base[0]+v},${base[1]+v},${base[2]+v})`;
+      g.beginPath(); g.moveTo(x+2,y); g.lineTo(x+s,y+1); g.lineTo(x+s-1,y+s); g.lineTo(x,y+s-2); g.closePath(); g.fill();
+      g.fillStyle=`rgba(120,150,160,${rnd(0.03,0.09)})`; g.fillRect(x+2,y+1,rnd(2,5),1);
+    }
+  });
+}
+function texCeiling(base){
+  return makeTexture((g,N)=>{
+    g.fillStyle=`rgb(${base})`; g.fillRect(0,0,N,N);
+    for(let i=0;i<70;i++){ g.fillStyle=`rgba(0,0,0,${rnd(0.05,0.18)})`; g.fillRect(rnd(0,N),rnd(0,N),rnd(1,3),rnd(1,3)); }
+    g.strokeStyle="rgba(30,38,44,0.9)"; g.lineWidth=6; g.beginPath(); g.moveTo(0,20); g.lineTo(N,20); g.stroke();
+    for(let x=6;x<N;x+=14){ g.fillStyle="rgba(140,160,168,0.4)"; g.fillRect(x,44,2,2); }
+  });
+}
+// marble — pale stone with faint veins (temple floor / steps)
+function texMarble(){
+  return makeTexture((g,N)=>{
+    g.fillStyle="#d9d6cc"; g.fillRect(0,0,N,N);
+    for(let i=0;i<40;i++){ g.fillStyle=`rgba(190,186,175,${rnd(0.1,0.3)})`; g.fillRect(rnd(0,N),rnd(0,N),rnd(2,10),rnd(1,2)); }
+    g.strokeStyle="rgba(150,148,140,0.35)"; g.lineWidth=1;
+    for(let i=0;i<5;i++){ g.beginPath(); let x=rnd(0,N),y=0; g.moveTo(x,y); for(;y<N;y+=6){ x+=rnd(-5,5); g.lineTo(x,y);} g.stroke(); }
+    g.fillStyle="rgba(0,0,0,0.06)"; for(let x=0;x<N;x+=16){ g.fillRect(x,0,1,N); }
+  });
+}
+// fluted marble column
+function texColumn(){
+  return makeTexture((g,N)=>{
+    const flutes=7, fw=N/flutes;
+    for(let i=0;i<flutes;i++){ const t=i/flutes;
+      const lg=g.createLinearGradient(i*fw,0,(i+1)*fw,0);
+      lg.addColorStop(0,"#b9b6ac"); lg.addColorStop(0.5,"#eeece2"); lg.addColorStop(1,"#b9b6ac");
+      g.fillStyle=lg; g.fillRect(i*fw,0,fw+1,N);
+      g.fillStyle="rgba(60,58,52,0.5)"; g.fillRect((i+1)*fw-0.5,0,1,N);
+    }
+    for(let i=0;i<12;i++){ g.fillStyle=`rgba(120,116,108,${rnd(0.05,0.15)})`; g.fillRect(rnd(0,N),rnd(0,N),rnd(2,6),1); }
+  });
+}
+// flagstone courtyard
+function texStone(){
+  return makeTexture((g,N)=>{
+    g.fillStyle="#6f7570"; g.fillRect(0,0,N,N);
+    for(let gy=0;gy<3;gy++)for(let gx=0;gx<3;gx++){ const s=Math.floor(N/3),x=gx*s+1,y=gy*s+1,v=rnd(-18,10);
+      g.fillStyle=`rgb(${118+v},${122+v},${116+v})`; g.fillRect(x,y,s-2,s-2);
+      for(let k=0;k<6;k++){ g.fillStyle=`rgba(0,0,0,${rnd(0.05,0.14)})`; g.fillRect(x+rnd(0,s),y+rnd(0,s),rnd(1,3),rnd(1,3)); }
+    }
+  });
+}
+// still water — deep blue with pale ripple highlights (organic-wave displaced)
+function texWater(){
+  return makeTexture((g,N)=>{
+    const lg=g.createLinearGradient(0,0,0,N);
+    lg.addColorStop(0,"#1a3550"); lg.addColorStop(1,"#0f2438"); g.fillStyle=lg; g.fillRect(0,0,N,N);
+    for(let i=0;i<26;i++){ g.strokeStyle=`rgba(150,195,225,${rnd(0.05,0.16)})`; g.lineWidth=1;
+      g.beginPath(); let x=0,y=rnd(0,N); g.moveTo(x,y); for(;x<N;x+=6){ y+=rnd(-2,2); g.lineTo(x,y);} g.stroke(); }
+    for(let i=0;i<20;i++){ g.fillStyle=`rgba(200,225,245,${rnd(0.08,0.2)})`; g.fillRect(rnd(0,N),rnd(0,N),rnd(1,3),1); }
+  });
+}
+// glowing brazier sprite (transparent bg)
+function sprBrazier(){
+  return makeTexture((g,N)=>{
+    g.clearRect(0,0,N,N);
+    g.fillStyle="#3a3630"; g.fillRect(N/2-3,40,6,20); g.fillRect(N/2-10,58,20,4);   // stand
+    g.fillStyle="#55504a"; g.beginPath(); g.moveTo(N/2-12,40); g.lineTo(N/2+12,40); g.lineTo(N/2+8,50); g.lineTo(N/2-8,50); g.closePath(); g.fill();
+    const gr=g.createRadialGradient(N/2,32,1,N/2,32,20);
+    gr.addColorStop(0,"rgba(255,246,200,1)"); gr.addColorStop(0.45,"rgba(255,170,60,0.95)"); gr.addColorStop(1,"rgba(255,110,30,0)");
+    g.fillStyle=gr; g.beginPath(); g.arc(N/2,32,20,0,7); g.fill();
+    g.fillStyle="rgba(255,235,150,1)"; g.beginPath(); g.moveTo(N/2,14); g.quadraticCurveTo(N/2+8,30,N/2,40); g.quadraticCurveTo(N/2-8,30,N/2,14); g.fill();
+  });
+}
+
+// texture table (index → texture). 0 brick,1 brick2,2 column,3 marble
+const TEXTURES = {
+  wall:  [ texBrick([56,74,60],[22,28,24],[90,220,150]),
+           texBrick([70,80,96],[26,30,38],[120,190,230]),
+           texColumn(),
+           texMarble() ],
+  floor: [ texFloorTiles([46,54,52],[18,22,22]),   // 0 sewer cobble
+           texMarble(),                            // 1 marble
+           texStone(),                             // 2 courtyard flagstone
+           texWater() ],                           // 3 water (organic-wave displaced)
+  ceil:  texCeiling([26,30,36]),
+};
+
+// ============================================================================
+//  3D MESH primitives + assets
+// ============================================================================
+function eulerMat(x,y,z){
+  const cx=Math.cos(x),sx=Math.sin(x),cy=Math.cos(y),sy=Math.sin(y),cz=Math.cos(z),sz=Math.sin(z);
+  return [cy*cz,-cy*sz,sy, cx*sz+sx*sy*cz,cx*cz-sx*sy*sz,-sx*cy, sx*sz-cx*sy*cz,sx*cz+cx*sy*sz,cx*cy];
+}
+// axis-aligned box centred at (cx,cy,cz) with sizes; cols = 6 face colours or 1
+function box(cx,cy,cz,sx,sy,sz,cols){
+  const hx=sx/2,hy=sy/2,hz=sz/2;
+  const v=[[cx-hx,cy-hy,cz-hz],[cx+hx,cy-hy,cz-hz],[cx+hx,cy+hy,cz-hz],[cx-hx,cy+hy,cz-hz],
+           [cx-hx,cy-hy,cz+hz],[cx+hx,cy-hy,cz+hz],[cx+hx,cy+hy,cz+hz],[cx-hx,cy+hy,cz+hz]];
+  const C = Array.isArray(cols[0]) ? cols : [cols,cols,cols,cols,cols,cols];
+  const f=[ {i:[0,3,2,1],c:C[0]},{i:[4,5,6,7],c:C[1]},{i:[0,1,5,4],c:C[2]},
+            {i:[3,7,6,2],c:C[3]},{i:[0,4,7,3],c:C[4]},{i:[1,2,6,5],c:C[5]} ];
+  return {v,f};
+}
+// merge sub-parts into one {verts,faces}
+function merge(parts){
+  const verts=[], faces=[];
+  for(const p of parts){ const off=verts.length;
+    for(const vv of p.v) verts.push(vv);
+    for(const ff of p.f) faces.push({i:ff.i.map(k=>k+off), c:ff.c});
+  }
+  return {verts,faces};
+}
+function makeMesh(build, opt){
+  const m=build(); return Object.assign({ verts:m.verts, faces:m.faces, pos:[0,0,0],
+    scale:1, rot:[0,0,0], spin:[0,0,0], wire:null, cull:true }, opt);
+}
+// ---- gallery assets --------------------------------------------------------
+// classical statue on a plinth (stone greys)
+function assetStatue(){
+  const s1=[150,148,140], s2=[126,124,116], stone=[176,174,166];
+  return merge([
+    box(0,0,-0.9,1.1,1.1,0.4,[s2,s2,s2,s2,s2,s2]),      // plinth base
+    box(0,0,-0.62,0.9,0.9,0.2,s1),                       // plinth top
+    box(0,0,0.05,0.42,0.3,1.1,stone),                    // torso
+    box(0,0,0.72,0.34,0.34,0.34,stone),                  // head
+    box(-0.34,0,0.2,0.16,0.16,0.7,s1),                   // arm L
+    box(0.34,0.05,0.15,0.16,0.16,0.62,s1),               // arm R
+    box(-0.13,0,-0.5,0.18,0.2,0.65,stone),               // leg L
+    box(0.13,0,-0.5,0.18,0.2,0.65,stone),                // leg R
+  ]);
+}
+// a clean low-poly car — solid body, cabin flush on top, wheels tucked at the
+// corners. Origin at the wheel contact plane (z=0 sits on the floor).
+function assetCar(){
+  const body=[202,68,58], bodyD=[158,50,44], belt=[120,32,30], cab=[70,84,116], glass=[158,208,228],
+        tyre=[24,24,28], hub=[205,205,215], light=[255,240,190], tail=[220,60,54], grille=[38,38,44];
+  const parts=[
+    box(0, 0, 0.34, 2.0, 0.9, 0.34, [bodyD,bodyD,body,body,bodyD,bodyD]),     // main body
+    box(0, 0, 0.51, 2.02, 0.92, 0.05, belt),                                  // belt line
+    box(-0.15, 0, 0.64, 1.05, 0.78, 0.3, [glass,glass,glass,cab,glass,glass]),// cabin (glass sides+ends)
+    box(-0.15, 0, 0.80, 1.08, 0.82, 0.05, cab),                               // roof
+    box(0.99, 0, 0.32, 0.05, 0.66, 0.22, grille),                             // grille
+    box(0.99, 0.28, 0.36, 0.05, 0.16, 0.12, light),                           // headlights
+    box(0.99, -0.28, 0.36, 0.05, 0.16, 0.12, light),
+    box(-0.99, 0.3, 0.38, 0.05, 0.14, 0.1, tail),                             // tail lights
+    box(-0.99, -0.3, 0.38, 0.05, 0.14, 0.1, tail),
+  ];
+  for(const wx of [0.66,-0.66]) for(const wy of [0.45,-0.45]){
+    parts.push(box(wx, wy, 0.2, 0.52, 0.2, 0.4, tyre));                        // tyre (peeks below body)
+    parts.push(box(wx, wy+(wy>0?0.09:-0.09), 0.2, 0.54, 0.04, 0.18, hub));     // hubcap facing out
+  }
+  return merge(parts);
+}
+// an ornate table with a vase
+function assetTable(){
+  const wood=[120,78,42], woodD=[92,58,30], gold=[210,170,70], vase=[70,150,170], vaseD=[52,120,140];
+  const parts=[ box(0,0,0.5,1.3,0.9,0.12,[woodD,woodD,wood,wood,woodD,woodD]) ];
+  for(const lx of [0.55,-0.55]) for(const ly of [0.35,-0.35]) parts.push(box(lx,ly,0.22,0.12,0.12,0.56,woodD));
+  parts.push(box(0,0,0.66,0.34,0.34,0.22,vaseD));    // vase base
+  parts.push(box(0,0,0.9,0.26,0.26,0.3,vase));        // vase body
+  parts.push(box(0,0,1.08,0.3,0.3,0.14,gold));        // gold rim (thicker, no sliver)
+  return merge(parts);
+}
+
+// ============================================================================
+//  WORLD — height field (F=floor, C=ceiling), plus per-cell wall/floor texture
+// ============================================================================
+const GW=52, GH=52;
+const F  = Array.from({length:GH},()=>new Float32Array(GW).fill(WALL));   // solid by default
+const C  = Array.from({length:GH},()=>new Float32Array(GW).fill(WALL));
+const WT = Array.from({length:GH},()=>new Uint8Array(GW).fill(0));        // wall tex id
+const FT = Array.from({length:GH},()=>new Uint8Array(GW).fill(0));        // floor tex id
+
+function carve(x0,y0,x1,y1, f, c, ft, wt){
+  for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++){
+    if(x<0||y<0||x>=GW||y>=GH) continue;
+    F[y][x]=f; C[y][x]=c; if(ft!==undefined) FT[y][x]=ft; if(wt!==undefined) WT[y][x]=wt;
+  }
+}
+function setCell(x,y,f,c,ft,wt){ if(x<0||y<0||x>=GW||y>=GH)return; F[y][x]=f;C[y][x]=c; if(ft!==undefined)FT[y][x]=ft; if(wt!==undefined)WT[y][x]=wt; }
+
+// --- start room (enclosed, sewer) ---
+carve(2,2,10,11, 0, 3.2, 0, 0);
+// --- east staircase up to the gallery ---
+let f=0; for(let x=11;x<=16;x++){ f+=0.28; carve(x,5,x,8, f, f+3.0, 1, 3); }
+// --- gallery (higher, enclosed) ---
+carve(17,3,27,12, 1.7, 5.2, 1, 1);
+// --- south corridor from start room: a dip DOWN then back up to the plaza ---
+carve(5,12,8,12, 0,    3.2, 0, 0);
+carve(5,13,8,13, -0.3, 2.9, 0, 0);
+carve(5,14,8,14, -0.6, 2.6, 0, 0);   // bottom of the sunken dip
+carve(5,15,8,15, -0.3, 2.9, 0, 0);   // back up toward the plaza
+// --- great open-air courtyard / plaza (open to the sky), big grand approach ---
+carve(2,16,50,50, 0, SKY, 2, 0);
+
+// ---- Roman temple, built into the courtyard --------------------------------
+const meshes = [];
+const COL_TOP = 5.2;              // column height
+function buildTemple(cx, cy){
+  const halfX=7, halfY=8;         // temple footprint (in cells)
+  const x0=cx-halfX, x1=cx+halfX, y0=cy-halfY, y1=cy+halfY;
+  // stylobate: 3 marble steps up (front is +? use concentric rings)
+  for(let s=0;s<3;s++){ const h=0.3+s*0.3;
+    carve(x0-2+s, y0-2+s, x1+2-s, y1+2-s, h, SKY, 1, 3);
+  }
+  const base=1.2;                              // temple platform height
+  carve(x0, y0, x1, y1, base, SKY, 1, 3);      // stylobate top
+  // peristyle: tall fluted columns (C=SKY so you see the sky ABOVE them)
+  const colH = base + COL_TOP;
+  for(let x=x0;x<=x1;x+=2){ setCell(x,y0,colH,SKY,1,2); setCell(x,y1,colH,SKY,1,2); }
+  for(let y=y0;y<=y1;y+=2){ setCell(x0,y,colH,SKY,1,2); setCell(x1,y,colH,SKY,1,2); }
+  // cella (inner sanctum): walls + roofed room
+  const cx0=x0+3,cx1=x1-3,cy0=y0+3,cy1=y1-3;
+  carve(cx0,cy0,cx1,cy1, base, base+4.2, 1, 3);         // cella interior (roofed)
+  const wallH=base+4.6;
+  for(let x=cx0-1;x<=cx1+1;x++){ setCell(x,cy0-1,wallH,SKY,1,3); setCell(x,cy1+1,wallH,SKY,1,3); }
+  for(let y=cy0-1;y<=cy1+1;y++){ setCell(cx0-1,y,wallH,SKY,1,3); setCell(cx1+1,y,wallH,SKY,1,3); }
+  carve(cx0, y1-1, cx1, y1, base, base+4.2, 1, 3);      // doorway gap on the front (south) face
+  for(let x=cx0;x<=cx1;x++) setCell(x, cy1+1, base, base+4.2, 1, 3);
+  // --- overhead 3D meshes: architrave + pediment + roof (marble) ---
+  const wx=cx+0.0, top=base+COL_TOP;
+  const worldHX=(halfX+0.5), worldHY=(halfY+0.5);
+  const marble=[236,232,220], marbleD=[198,194,180], marbleS=[218,214,200];
+  // full entablature ring (4 beams) + pediment (front) + roof
+  meshes.push(makeMesh(()=>{
+    const parts=[];
+    const bx=worldHX, by=worldHY, bz=top+0.45, bt=0.85;
+    parts.push(box(0,-by,bz, bx*2+1.2,0.7,bt,[marbleD,marbleD,marbleS,marble,marbleS,marbleS])); // front
+    parts.push(box(0, by,bz, bx*2+1.2,0.7,bt,[marbleD,marbleD,marbleS,marble,marbleS,marbleS])); // back
+    parts.push(box(-bx,0,bz, 0.7,by*2+1.2,bt,[marbleS,marbleS,marbleS,marble,marbleD,marbleD])); // left
+    parts.push(box( bx,0,bz, 0.7,by*2+1.2,bt,[marbleS,marbleS,marbleS,marble,marbleD,marbleD])); // right
+    // pediment: triangular gable on the front (south, -y) and back (+y)
+    const pz=bz+bt/2, ph=2.2;
+    for(const sy of [-by-0.35, by+0.35]){
+      const nz=(sy<0)?[0,-1,0]:[0,1,0];
+      const apex=[0,sy,pz+ph], l=[-bx-0.6,sy,pz], r=[bx+0.6,sy,pz];
+      const col=(sy<0)?marble:marbleD;
+      parts.push({v:[apex,l,r], f:[{i:(sy<0)?[0,1,2]:[0,2,1],c:col}]});
+    }
+    // roof: two sloped marble planes meeting at a ridge
+    const rz=pz, rApex=pz+ph;
+    parts.push({v:[[-bx-0.6,-by-0.35,rz],[-bx-0.6,by+0.35,rz],[0,by+0.35,rApex],[0,-by-0.35,rApex]],
+                f:[{i:[0,1,2,3],c:[196,120,86]}]});     // left roof plane (terracotta)
+    parts.push({v:[[bx+0.6,-by-0.35,rz],[0,-by-0.35,rApex],[0,by+0.35,rApex],[bx+0.6,by+0.35,rz]],
+                f:[{i:[0,1,2,3],c:[176,104,72]}]});      // right roof plane
+    return merge(parts);
+  }, { pos:[cx+0.5, cy+0.5, 0] }));
+}
+buildTemple(26, 40);
+// a long reflecting pool on the temple approach (rippled via organic wave displacement)
+carve(23, 19, 29, 28, -0.18, SKY, 3, 0);
+
+// gallery assets, placed so each rests ON the gallery floor (z 1.7).
+// (meshes draw over the floor with no floor-depth test, so geometry must not
+//  dip below the floor or it appears to float.)
+meshes.push(makeMesh(assetStatue, { pos:[19.5, 5.5, 2.80], scale:1.0 }));   // base bottom local −1.1
+meshes.push(makeMesh(assetCar,    { pos:[24.0, 6.5, 1.70], scale:1.0, rot:[0,0,0.4] }));  // wheels at local 0
+meshes.push(makeMesh(assetTable,  { pos:[22.0, 10.0, 1.76], scale:1.0 }));  // legs bottom local −0.06
+
+// sprites: floor-anchored glowing braziers
+const sprBraz = sprBrazier();
+const sprites = [];
+function addBrazier(x,y){ sprites.push({ x, y, z:F[y|0][x|0], h:1.4, tex:sprBraz }); }
+addBrazier(4.5,4.5); addBrazier(9.5,9.5);
+addBrazier(16.5,20.5); addBrazier(36.5,20.5); addBrazier(6.5,46.5); addBrazier(46.5,46.5);
+
+// ---- RAY-TRACED SHADOW MAP (adapted from the blueprint) --------------------
+// A low directional moon casts long shadows: for each ground cell, march a 2D
+// ray toward the light; if a taller cell blocks it, the ground is in shadow.
+// Precomputed once into a grid → a cheap per-pixel lookup at render time (the
+// blueprint's per-pixel DDA would be far too slow at 400×225).
+const LIGHT = (()=>{ const v=[0.55,0.42]; const l=Math.hypot(v[0],v[1]); return [v[0]/l,v[1]/l]; })();
+const LIGHT_SLOPE = 0.42;      // vertical rise per step — low = long dramatic shadows
+const SHADOW = (()=>{
+  const S=Array.from({length:GH},()=>new Float32Array(GW).fill(1));
+  for(let y=0;y<GH;y++) for(let x=0;x<GW;x++){
+    const fh=F[y][x]; if(fh>=WALL){ S[y][x]=1; continue; }
+    let rx=x+0.5, ry=y+0.5, h=fh+0.12, lit=1.0;
+    for(let s=0;s<26;s++){
+      rx+=LIGHT[0]; ry+=LIGHT[1]; h+=LIGHT_SLOPE;
+      const cx=rx|0, cy=ry|0;
+      if(cx<0||cy<0||cx>=GW||cy>=GH) break;
+      if(F[cy][cx] > h+0.05){ lit=0.5; break; }   // blocked → shadow
+    }
+    S[y][x]=lit;
+  }
+  return S;
+})();
+const shadowAt=(x,y)=>{ const cx=x|0,cy=y|0; if(cx<0||cy<0||cx>=GW||cy>=GH) return 1; return SHADOW[cy][cx]; };
+
+// ============================================================================
+//  ENGINE
+// ============================================================================
+const canvas=document.getElementById("game");
+const RES_W=400, RES_H=225;
+canvas.width=RES_W; canvas.height=RES_H;
+
+class Engine {
+  constructor(){
+    this.ctx=canvas.getContext("2d",{alpha:false}); this.ctx.imageSmoothingEnabled=false;
+    this.W=RES_W; this.H=RES_H; this.HH=RES_H>>1;
+    this.buf=document.createElement("canvas"); this.buf.width=RES_W; this.buf.height=RES_H;
+    this.bufCtx=this.buf.getContext("2d");
+    this.img=this.ctx.createImageData(RES_W,RES_H);
+    this.px=new Uint32Array(this.img.data.buffer);
+    this.zbuf=new Float32Array(RES_W);            // per-column wall depth (sprites/meshes)
+    this.mdepth=new Float32Array(RES_W*RES_H);    // per-pixel depth for the 3D mesh pass
+    this.fov=Math.PI/3; this.T=Math.tan(this.fov/2);
+    this.player={ x:6.0, y:6.0, z:0, vz:0, grounded:true, angle:1.1, pitch:0, roll:0 };
+    this.meshes=meshes; this.sprites=sprites;
+  }
+  get horizon(){ return this.HH + this.player.pitch; }
+  get eyeZ(){ return this.player.z + EYE_OFF; }
+
+  render(){
+    this.time = performance.now()*0.001;    // for organic wave displacement
+    this.renderColumns();
+    this.renderSprites();
+    this.renderMeshes();
+    this.bufCtx.putImageData(this.img,0,0);
+    this.blit();
+  }
+  blit(){
+    const ctx=this.ctx,W=this.W,H=this.H,roll=this.player.roll||0;
+    ctx.fillStyle="#000"; ctx.fillRect(0,0,W,H);
+    if(!roll){ ctx.drawImage(this.buf,0,0); return; }
+    ctx.save(); ctx.translate(W/2,H/2); ctx.rotate(roll);
+    const c=Math.abs(Math.cos(roll)),s=Math.abs(Math.sin(roll));
+    const cv=Math.max((W*c+H*s)/W,(W*s+H*c)/H); ctx.scale(cv,cv);
+    ctx.drawImage(this.buf,-W/2,-H/2); ctx.restore();
+  }
+
+  // ---- height-field column march ------------------------------------------
+  renderColumns(){
+    const p=this.player, W=this.W, H=this.H, hor=this.horizon, eyeZ=this.eyeZ;
+    const cosA=Math.cos(p.angle), sinA=Math.sin(p.angle), T=this.T;
+    const flr=TEXTURES.floor, ceilT=TEXTURES.ceil, wallT=TEXTURES.wall, pxA=this.px;
+    const clampRow=v=> v<0?0 : v>H?H : (v|0);
+    const FOGPX=0xFF000000|(FOG[2]<<16)|(FOG[1]<<8)|FOG[0];
+
+    for(let x=0;x<W;x++){
+      const camX=2*x/W-1, rdx=cosA-sinA*T*camX, rdy=sinA+cosA*T*camX;
+      let mapX=p.x|0, mapY=p.y|0;
+      const ddx=Math.abs(1/rdx), ddy=Math.abs(1/rdy);
+      let sdx,sdy,stx,sty;
+      if(rdx<0){stx=-1; sdx=(p.x-mapX)*ddx;} else {stx=1; sdx=(mapX+1-p.x)*ddx;}
+      if(rdy<0){sty=-1; sdy=(p.y-mapY)*ddy;} else {sty=1; sdy=(mapY+1-p.y)*ddy;}
+
+      let curF=F[mapY][mapX], curC=C[mapY][mapX], curFT=FT[mapY][mapX];
+      let floorLimit=H, ceilLimit=0, sawSky=(curC>=SKY);
+      this.zbuf[x]=1e9;
+      const rayAng=Math.atan2(rdy,rdx);
+      let prevDist=0;   // distance to the near edge of the current cell (0 at the camera)
+
+      for(let step=0; step<80 && floorLimit>ceilLimit; step++){
+        let dist, side;
+        if(sdx<sdy){ dist=sdx; sdx+=ddx; mapX+=stx; side=0; } else { dist=sdy; sdy+=ddy; mapY+=sty; side=1; }
+        const oob=(mapX<0||mapX>=GW||mapY<0||mapY>=GH);
+        const nF=oob?WALL:F[mapY][mapX], nC=oob?WALL:C[mapY][mapX], nWT=oob?0:WT[mapY][mapX];
+
+        // --- floor of current segment (curF) ---
+        if(curF<eyeZ){
+          const yFar=clampRow(hor + (eyeZ-curF)*H/dist);   // = screenY(curF,dist), below horizon
+          const ftex=flr[curFT];
+          const water=(curFT===3);
+          for(let y=floorLimit-1; y>=yFar; y--){
+            const rd=(eyeZ-curF)*H/(y-hor);
+            let wx=p.x+rdx*rd, wy=p.y+rdy*rd;
+            if(water){ const t=this.time; wx+=Math.sin(wy*3.5+t*1.6)*0.05; wy+=Math.cos(wx*3.5+t*1.6)*0.05; }  // organic wave
+            let c=this.tap(ftex,(wx*TEX|0)&(TEX-1),(wy*TEX|0)&(TEX-1));
+            const sh=shadowAt(wx,wy); if(sh<1) c=this.shade(c,sh);   // ray-traced ground shadow
+            pxA[y*W+x]=this.fog(c, rd);
+          }
+          if(yFar<floorLimit) floorLimit=yFar;
+        }
+        // --- ceiling of current segment (curC) unless open sky ---
+        // Paint from the ceiling's true NEAR edge (its screen row at prevDist)
+        // down to floorLimit. A low ceiling hidden behind a taller wall/column
+        // then paints nothing instead of flooding the open sky above it — the
+        // old code filled from ceilLimit(=0, the zenith) with no floor clamp, so
+        // an occluded cella ceiling leaked dark ceiling texture across the sky.
+        if(curC<SKY && curC>eyeZ){
+          const yFar=clampRow(hor - (curC-eyeZ)*H/dist);          // far edge (this dist)
+          const yNear=clampRow(hor - (curC-eyeZ)*H/prevDist);     // near edge (entry dist)
+          const bot=Math.min(yFar,floorLimit);
+          if(yNear>ceilLimit){   // open air between the last cap and this ceiling's edge
+            const gapBot=Math.min(yNear,floorLimit);
+            for(let y=ceilLimit;y<gapBot;y++) pxA[y*W+x]= sawSky ? this.skyPix(rayAng,y,hor) : FOGPX;
+            if(gapBot>ceilLimit) ceilLimit=gapBot;
+          }
+          for(let y=ceilLimit; y<bot; y++){
+            const rd=(curC-eyeZ)*H/(hor-y);
+            const wx=p.x+rdx*rd, wy=p.y+rdy*rd;
+            pxA[y*W+x]=this.fog(this.shade(this.tap(ceilT,(wx*TEX|0)&(TEX-1),(wy*TEX|0)&(TEX-1)),0.8), rd);
+          }
+          if(bot>ceilLimit) ceilLimit=bot;
+        }
+
+        // --- floor RISER (step up) → a wall face from curF to nF ---
+        if(nF>curF){
+          const yTop=clampRow(hor - (nF-eyeZ)*H/dist);
+          const yBot=clampRow(hor + (eyeZ-curF)*H/dist);
+          const a=Math.max(yTop,ceilLimit), b=Math.min(yBot,floorLimit);
+          if(b>a){
+            let wcoord=(side===0)?(p.y+dist*rdy):(p.x+dist*rdx); wcoord-=Math.floor(wcoord);
+            const texX=(wcoord*TEX)|0, wtex=wallT[nWT], shd=(side===1)?0.74:1.0, invH=dist/H;
+            for(let y=a;y<b;y++){
+              const z=eyeZ+(hor-y)*invH; const ty=(Math.floor(z*TEX)&(TEX-1));
+              let c=this.tap(wtex,texX,ty); if(shd!==1)c=this.shade(c,shd);
+              pxA[y*W+x]=this.fog(c,dist);
+            }
+            if(a<floorLimit) floorLimit=a;
+            if(this.zbuf[x]>1e8 && (nF>=nC || nF-eyeZ>0.7)) this.zbuf[x]=dist;
+          }
+        }
+        // --- ceiling RISER (step down) → soffit facing you ---
+        if(curC<SKY && nC<curC){
+          const yTop=clampRow(hor - (curC-eyeZ)*H/dist);
+          const yBot=clampRow(hor - (nC-eyeZ)*H/dist);
+          const a=Math.max(yTop,ceilLimit), b=Math.min(yBot,floorLimit);
+          if(b>a){
+            let wcoord=(side===0)?(p.y+dist*rdy):(p.x+dist*rdx); wcoord-=Math.floor(wcoord);
+            const texX=(wcoord*TEX)|0, invH=dist/H;
+            for(let y=a;y<b;y++){
+              const z=eyeZ+(hor-y)*invH; const ty=(Math.floor(z*TEX)&(TEX-1));
+              pxA[y*W+x]=this.fog(this.shade(this.tap(wallT[0],texX,ty),0.6),dist);
+            }
+            if(b>ceilLimit) ceilLimit=b;
+          }
+        }
+
+        curF=nF; curC=nC; curFT=oob?0:FT[mapY][mapX]; if(curC>=SKY) sawSky=true;
+        prevDist=dist;
+        if(oob || nF>=nC){ if(this.zbuf[x]>1e8) this.zbuf[x]=dist; break; }   // solid wall
+      }
+      // --- fill the still-open band: sky if the ray crossed open air, else fog ---
+      if(floorLimit>ceilLimit){
+        if(sawSky){ for(let y=ceilLimit;y<floorLimit;y++) pxA[y*W+x]=this.skyPix(rayAng,y,hor); }
+        else { const c=0xFF000000|(FOG[2]<<16)|(FOG[1]<<8)|FOG[0]; for(let y=ceilLimit;y<floorLimit;y++) pxA[y*W+x]=c; }
+      }
+    }
+  }
+  skyPix(ang,y,hor){
+    const t=hor>0?Math.max(0,Math.min(1,y/hor)):0;   // 0 = zenith (top), 1 = horizon
+    // twilight gradient: indigo zenith → violet → warm glow at the horizon
+    let r,g,b;
+    if(t<0.55){ const k=t/0.55; r=48+(96-48)*k; g=60+(120-60)*k; b=110+(168-110)*k; }
+    else { const k=(t-0.55)/0.45; r=96+(232-96)*k; g=120+(168-120)*k; b=168+(120-168)*k; }
+    const af=((ang/6.2832)+1)%1;
+    const h=(((af*1500)|0)*73856093 ^ (y*19349663))>>>0;
+    if(t<0.5 && (h%823)<2){ const s=200+(h%56); r=s;g=s;b=255; }   // stars
+    return 0xFF000000|((b|0)<<16)|((g|0)<<8)|(r|0);
+  }
+
+  // ---- billboard sprites (floor-anchored, z-tested) -----------------------
+  renderSprites(){
+    const p=this.player, W=this.W, H=this.H, hor=this.horizon, eyeZ=this.eyeZ, T=this.T;
+    const dirX=Math.cos(p.angle),dirY=Math.sin(p.angle), pxX=-Math.sin(p.angle)*T, pxY=Math.cos(p.angle)*T;
+    const invDet=1/(pxX*dirY-dirX*pxY);
+    this.sprites.sort((a,b)=>((p.x-b.x)**2+(p.y-b.y)**2)-((p.x-a.x)**2+(p.y-a.y)**2));
+    for(const s of this.sprites){
+      const dx=s.x-p.x, dy=s.y-p.y;
+      const tX=invDet*(dirY*dx-dirX*dy), tY=invDet*(-pxY*dx+pxX*dy);
+      if(tY<=0.15) continue;
+      const sx=((W/2)*(1+tX/tY))|0;
+      const botY=hor+(eyeZ-s.z)*H/tY, topY=hor+(eyeZ-(s.z+s.h))*H/tY;
+      const size=botY-topY; if(size<1) continue;
+      const half=size/2, left=sx-half, invS=TEX/size;
+      const x0=Math.max(0,left|0), x1=Math.min(W,(sx+half)|0), y0=Math.max(0,topY|0), y1=Math.min(H,botY|0);
+      for(let stripe=x0;stripe<x1;stripe++){
+        if(tY>=this.zbuf[stripe]) continue;
+        const texX=((stripe-left)*invS)|0; if(texX<0||texX>=TEX) continue;
+        for(let y=y0;y<y1;y++){ const texY=((y-topY)*invS)|0; if(texY<0||texY>=TEX) continue;
+          const c=this.tap(s.tex,texX,texY); if((c&0xFF000000)===0) continue;
+          this.px[y*W+stripe]=this.fog(c,tY);
+        }
+      }
+    }
+  }
+
+  // ---- 3D polygon meshes (gathered, depth-sorted, wall-occluded) ----------
+  renderMeshes(){
+    this.mdepth.fill(1e30);    // reset per-pixel mesh depth so faces occlude each other correctly
+    const p=this.player, W=this.W, H=this.H, hor=this.horizon, eyeZ=this.eyeZ, T=this.T;
+    const dirX=Math.cos(p.angle),dirY=Math.sin(p.angle);
+    const LX=0.35,LY=0.28,LZ=0.9, LL=Math.hypot(LX,LY,LZ);
+    const tris=[];
+    for(const m of this.meshes){
+      const R=eulerMat(m.rot[0],m.rot[1],m.rot[2]);
+      const V=m.verts.map(v=>{
+        const lx=v[0]*m.scale,ly=v[1]*m.scale,lz=v[2]*m.scale;
+        const wx=m.pos[0]+R[0]*lx+R[1]*ly+R[2]*lz;
+        const wy=m.pos[1]+R[3]*lx+R[4]*ly+R[5]*lz;
+        const wz=m.pos[2]+R[6]*lx+R[7]*ly+R[8]*lz;
+        const dx=wx-p.x, dy=wy-p.y, depth=dx*dirX+dy*dirY, right=-dx*dirY+dy*dirX;
+        return { wx,wy,wz, depth, sx:W/2*(1+right/(T*depth)), sy:hor-(wz-eyeZ)/depth*H };
+      });
+      for(const fc of m.faces){
+        // near-plane clip: reject the face if ANY of its vertices are too close
+        // to / behind the camera. Faces can have 4+ verts (box quads); checking
+        // only the first 3 let a 4th clipped vertex slip into the fan-triangle
+        // unclipped, sending its depth toward 0 and blowing up 1/depth into the
+        // rainbow-static garbage seen when standing close to a large flat mesh.
+        let nearClipped=false;
+        for(const ii of fc.i){ if(V[ii].depth<=0.25){ nearClipped=true; break; } }
+        if(nearClipped) continue;
+        const a=V[fc.i[0]],b=V[fc.i[1]],c=V[fc.i[2]];
+        const nx=(b.wy-a.wy)*(c.wz-a.wz)-(b.wz-a.wz)*(c.wy-a.wy);
+        const ny=(b.wz-a.wz)*(c.wx-a.wx)-(b.wx-a.wx)*(c.wz-a.wz);
+        const nz=(b.wx-a.wx)*(c.wy-a.wy)-(b.wy-a.wy)*(c.wx-a.wx);
+        const mx=(a.wx+b.wx+c.wx)/3,my=(a.wy+b.wy+c.wy)/3,mz=(a.wz+b.wz+c.wz)/3;
+        if(m.cull && nx*(mx-p.x)+ny*(my-p.y)+nz*(mz-eyeZ)>0) continue;
+        const nl=Math.hypot(nx,ny,nz)||1;
+        const lit=0.64+0.36*Math.max(0,(nx*LX+ny*LY+nz*LZ)/(nl*LL));
+        const col=[fc.c[0]*lit,fc.c[1]*lit,fc.c[2]*lit];
+        const pts=fc.i.map(k=>V[k]);
+        const depth=pts.reduce((s,q)=>s+q.depth,0)/pts.length;
+        for(let t=1;t<pts.length-1;t++) tris.push({a:pts[0],b:pts[t],c:pts[t+1],col,depth});
+      }
+    }
+    tris.sort((u,v)=>v.depth-u.depth);
+    for(const t of tris) this.fillTri(t.a,t.b,t.c,t.col);
+  }
+  fillTri(a,b,c,col){
+    const W=this.W,H=this.H;
+    const minX=Math.max(0,Math.floor(Math.min(a.sx,b.sx,c.sx))), maxX=Math.min(W-1,Math.ceil(Math.max(a.sx,b.sx,c.sx)));
+    const minY=Math.max(0,Math.floor(Math.min(a.sy,b.sy,c.sy))), maxY=Math.min(H-1,Math.ceil(Math.max(a.sy,b.sy,c.sy)));
+    const area=(b.sx-a.sx)*(c.sy-a.sy)-(b.sy-a.sy)*(c.sx-a.sx); if(Math.abs(area)<1e-6) return;
+    const inv=1/area, iza=1/a.depth,izb=1/b.depth,izc=1/c.depth;
+    for(let y=minY;y<=maxY;y++) for(let x=minX;x<=maxX;x++){
+      const fx=x+0.5,fy=y+0.5;
+      const w0=((b.sx-fx)*(c.sy-fy)-(b.sy-fy)*(c.sx-fx))*inv;
+      const w1=((c.sx-fx)*(a.sy-fy)-(c.sy-fy)*(a.sx-fx))*inv;
+      const w2=1-w0-w1; if(w0<0||w1<0||w2<0) continue;
+      const z=1/(w0*iza+w1*izb+w2*izc);
+      if(!(z>0) || z>=this.zbuf[x]) continue;    // occluded by a wall / bad depth
+      const idx=y*W+x;
+      if(z>=this.mdepth[idx]) continue;          // occluded by a nearer mesh face
+      this.mdepth[idx]=z;
+      this.px[idx]=this.fog2(col,z);
+    }
+  }
+
+  // ---- pixel helpers (0xAABBGGRR) -----------------------------------------
+  tap(t,x,y){ const i=((y&(TEX-1))*TEX+(x&(TEX-1)))*4,d=t.data; return (d[i+3]<<24)|(d[i+2]<<16)|(d[i+1]<<8)|d[i]; }
+  // clamp8: any stray huge/NaN value (e.g. from a degenerate depth upstream)
+  // gets pinned into a valid byte instead of `|0` truncation wrapping it into
+  // arbitrary bits — that wraparound was the rainbow-static bug's last step
+  clamp8(v){ return v!==v ? 0 : v<0 ? 0 : v>255 ? 255 : v|0; }
+  fog(c,dist){ const f=Math.exp(-Math.max(0,dist)*0.04); const r=c&0xFF,g=(c>>8)&0xFF,b=(c>>16)&0xFF,a=c&0xFF000000;
+    return a|(this.clamp8(b*f+FOG[2]*(1-f))<<16)|(this.clamp8(g*f+FOG[1]*(1-f))<<8)|this.clamp8(r*f+FOG[0]*(1-f)); }
+  fog2(rgb,dist){ const f=Math.exp(-Math.max(0,dist)*0.04);
+    return 0xFF000000|(this.clamp8(rgb[2]*f+FOG[2]*(1-f))<<16)|(this.clamp8(rgb[1]*f+FOG[1]*(1-f))<<8)|this.clamp8(rgb[0]*f+FOG[0]*(1-f)); }
+  shade(c,f){ return (c&0xFF000000)|((((c>>16&0xFF)*f)|0)<<16)|((((c>>8&0xFF)*f)|0)<<8)|(((c&0xFF)*f)|0); }
+}
+const engine=new Engine();
+window.__ray=engine;
+
+// ============================================================================
+//  INPUT · PHYSICS · LOOP
+// ============================================================================
+const keys={};
+addEventListener("keydown",e=>{ keys[e.key.toLowerCase()]=true;
+  if(e.key.toLowerCase()==="m") showMini=!showMini;
+  if([" ","arrowup","arrowdown","arrowleft","arrowright"].includes(e.key.toLowerCase())) e.preventDefault();
+});
+addEventListener("keyup",e=>{ keys[e.key.toLowerCase()]=false; });
+addEventListener("blur",()=>{ for(const k in keys) keys[k]=false; });
+
+const PITCH_MAX=RES_H*0.95;
+let pointerLocked=false;
+canvas.addEventListener("click",()=>canvas.requestPointerLock&&canvas.requestPointerLock());
+document.addEventListener("pointerlockchange",()=>pointerLocked=(document.pointerLockElement===canvas));
+addEventListener("mousemove",e=>{ if(!pointerLocked)return; const p=engine.player;
+  p.angle+=e.movementX*0.0025; p.pitch=Math.max(-PITCH_MAX,Math.min(PITCH_MAX,p.pitch-e.movementY*1.5)); });
+
+const intro=document.getElementById("intro");
+let started=false;
+intro.addEventListener("pointerdown",()=>{ intro.style.display="none"; started=true; canvas.requestPointerLock&&canvas.requestPointerLock(); });
+
+const cellF=(x,y)=>{ const cx=x|0,cy=y|0; if(cx<0||cy<0||cx>=GW||cy>=GH) return WALL; return F[cy][cx]; };
+const cellC=(x,y)=>{ const cx=x|0,cy=y|0; if(cx<0||cy<0||cx>=GW||cy>=GH) return WALL; return C[cy][cx]; };
+function canEnter(nx,ny, standF, pz){
+  const nf=cellF(nx,ny), nc=cellC(nx,ny);
+  if(nf>=nc) return false;                       // solid
+  if(nc-nf<1.5) return false;                    // too low to fit
+  if(nf<=standF+STEP_UP) return true;            // walkable step
+  if(pz>=nf-0.05) return true;                   // jumping/falling in from above
+  return false;
+}
+function update(dt){
+  const p=engine.player;
+  const run=keys["shift"]?1.9:1.0, spd=3.0*run*dt, turn=2.4*dt;
+  const cos=Math.cos(p.angle),sin=Math.sin(p.angle);
+  let mx=0,my=0;
+  if(keys["w"]){mx+=cos*spd;my+=sin*spd;} if(keys["s"]){mx-=cos*spd;my-=sin*spd;}
+  if(keys["a"]){mx+=sin*spd;my-=cos*spd;} if(keys["d"]){mx-=sin*spd;my+=cos*spd;}
+  if(keys["arrowleft"])p.angle-=turn; if(keys["arrowright"])p.angle+=turn;
+  const ps=170*dt, rs=2.0*dt;
+  if(keys["arrowup"])p.pitch=Math.min(PITCH_MAX,p.pitch+ps);
+  if(keys["arrowdown"])p.pitch=Math.max(-PITCH_MAX,p.pitch-ps);
+  if(keys["q"])p.roll-=rs; if(keys["e"])p.roll+=rs; if(keys["r"]){p.pitch=0;p.roll=0;}
+
+  const standF=p.grounded?cellF(p.x,p.y):p.z;
+  if(mx||my){
+    if(canEnter(p.x+mx,p.y,standF,p.z)) p.x+=mx;
+    if(canEnter(p.x,p.y+my,standF,p.z)) p.y+=my;
+  }
+  // jump + gravity
+  if((keys[" "]||keys["spacebar"]) && p.grounded){ p.vz=JUMP; p.grounded=false; }
+  p.vz-=GRAV*dt; p.z+=p.vz*dt;
+  const gz=cellF(p.x,p.y);
+  if(p.z<=gz){ p.z=gz; p.vz=0; p.grounded=true; } else p.grounded=false;
+
+  for(const m of engine.meshes){ if(m.spin){ m.rot[0]+=m.spin[0]*dt; m.rot[1]+=m.spin[1]*dt; m.rot[2]+=m.spin[2]*dt; } }
+}
+
+// ---- minimap ---------------------------------------------------------------
+const mini=document.getElementById("mini"), mg=mini.getContext("2d");
+let showMini=true;
+function drawMini(){
+  mini.style.display=showMini?"block":"none"; if(!showMini) return;
+  const cs=mini.width/GW;
+  mg.fillStyle="#0a0e12"; mg.fillRect(0,0,mini.width,mini.height);
+  for(let y=0;y<GH;y++)for(let x=0;x<GW;x++){ const f=F[y][x],c=C[y][x];
+    if(f>=c){ mg.fillStyle="#2b3a34"; }                         // wall/column
+    else if(c>=SKY){ mg.fillStyle="#20364a"; }                  // open-air
+    else { const t=Math.max(0,Math.min(1,(f+1)/3)); mg.fillStyle=`rgb(${30+t*40|0},${40+t*50|0},${44+t*44|0})`; }
+    mg.fillRect(x*cs,y*cs,cs+0.5,cs+0.5);
+  }
+  const p=engine.player;
+  mg.fillStyle="#ffd35a"; mg.beginPath(); mg.arc(p.x*cs,p.y*cs,2,0,7); mg.fill();
+  mg.strokeStyle="#ffd35a"; mg.beginPath(); mg.moveTo(p.x*cs,p.y*cs);
+  mg.lineTo((p.x+Math.cos(p.angle)*1.6)*cs,(p.y+Math.sin(p.angle)*1.6)*cs); mg.stroke();
+}
+
+// ---- main loop -------------------------------------------------------------
+const hud=document.getElementById("hud");
+let last=performance.now(), fpsT=0, frames=0, fps=0;
+function frame(now){
+  let dt=(now-last)/1000; last=now; dt=Math.min(dt,0.05);
+  if(started) update(dt);
+  engine.render(); drawMini();
+  frames++; fpsT+=dt; if(fpsT>=0.5){ fps=Math.round(frames/fpsT); frames=0; fpsT=0; }
+  const p=engine.player;
+  hud.innerHTML=`<b>HEIGHT-FIELD</b> · ${fps} fps · ${RES_W}×${RES_H}<br>`+
+    `x ${p.x.toFixed(1)} y ${p.y.toFixed(1)} z ${p.z.toFixed(2)} · yaw ${(p.angle*57.3|0)}° pitch ${(p.pitch/PITCH_MAX*90|0)}° roll ${(p.roll*57.3|0)}°`;
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
