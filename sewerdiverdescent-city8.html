@@ -1208,8 +1208,12 @@ const INVULN=64, DASH=3.2, DASHCD=30, DROWN=90;
 const PRESSURE=[1.0,1.5,2.1,2.8];
 function pressureAt(t){return t<4?PRESSURE[t]:2.8+(t-3)*0.5;}   // keeps climbing past the base 4 tiers
 const BASE_POLL=0.5, BASE_THERM=0.62, RES_SCALE=14;
-const AMBIENT=[0,2.1,4.0,6.0];
-function ambientAt(t){return t<4?AMBIENT[t]:6.0+(t-3)*1.4;}     // ambient pollution scales with depth
+// ambient pollution is keyed on the ENVIRONMENT, not the layer: the whole first
+// environment (env 0) is pollution-free; damage begins at the 2nd environment and
+// steps up once more with every environment descended after that.
+const AMBIENT_BASE=2.5, AMBIENT_STEP=2.0;
+function envOfTier(t){const d=(typeof SCHED!=='undefined'&&SCHED&&SCHED[t]);return (d&&d.env!=null)?d.env:Math.max(0,Math.floor(t/4));}
+function ambientAt(t){const e=envOfTier(t);return e<=0?0:AMBIENT_BASE+(e-1)*AMBIENT_STEP;}
 const ROPE_DEF=96, ROPE_STEP=36, ROPE_MAX=264, REGEN_T=2.4, DOCK_R=36;
 const GRAB_R=26, MINE_PAD=7;
 const SCRAP=[
@@ -2587,15 +2591,30 @@ class SewerMissionDirector {
             let strategyFilteredPool = [];
             switch (strategy) {
                 case "STAY":
+                    // continue the current archetype's own state-chain (its loop tasks)
                     strategyFilteredPool = structuralMatches.filter(t => t.archetype === currentArchetype && t.isLoop);
+                    if (strategyFilteredPool.length === 0) strategyFilteredPool = structuralMatches.filter(t => t.archetype === currentArchetype);
                     break;
                 case "WILDCARD":
-                    strategyFilteredPool = structuralMatches.filter(t => t.archetype !== currentArchetype && t.isWildcard);
+                    // jump into a DIFFERENT archetype's wildcard task, so a layer mixes machine types.
+                    // cross-archetype state-inputs never equal the last output, so we draw from the whole
+                    // remaining pool here rather than structuralMatches (which only ever holds same-archetype tasks).
+                    strategyFilteredPool = pool.filter(t => t.archetype !== currentArchetype && t.isWildcard);
                     break;
                 case "BRIDGE":
-                    strategyFilteredPool = structuralMatches.filter(t => t.isBridge);
+                    // follow a bridge into another archetype: prefer the target the current archetype's
+                    // bridge tasks point at, then fall back to any other-archetype bridge task.
+                    {
+                        const bridgeTargets = pool.filter(t => t.archetype === currentArchetype && t.isBridge).map(t => t.target);
+                        if (bridgeTargets.length) {
+                            const tgt = bridgeTargets[Math.floor(Math.random() * bridgeTargets.length)];
+                            strategyFilteredPool = pool.filter(t => t.archetype === tgt);
+                        }
+                        if (strategyFilteredPool.length === 0) strategyFilteredPool = pool.filter(t => t.archetype !== currentArchetype);
+                    }
                     break;
             }
+            // last resort: keep the structural (same-archetype) chain rather than fail to place a step
             if (strategyFilteredPool.length === 0) strategyFilteredPool = structuralMatches;
             let chosenNode = strategyFilteredPool[Math.floor(Math.random() * strategyFilteredPool.length)];
             pool = pool.filter(task => task.id !== chosenNode.id);
@@ -2669,12 +2688,28 @@ function spawnMissionLayer(i){
     }}
   if(i<SCHED.length-1)spawnControlUnit(i);   // the city's final layer uses the transit gate instead
 }
-// the control unit sits on the floor beside the layer's sealed bulkhead
+// The control unit rests on the TOP face of the layer's sealed bulkhead (row `bot`, directly
+// above the BULK seal at bot+1..bot+2) so the diver can always swim down to it. It may sit
+// anywhere along the barrier's width — NOT locked to the centre — but never inside the central
+// sludge basin (the acid pool at rows bot-2..bot), so it is always safe to reach.
 function spawnControlUnit(i){
-  const bot=tierBot[i];let lx=(MW/2)|0;
-  for(let dx=0;dx<((MW/2)|0)-4;dx++){const x=((MW/2)|0)+((dx%2)?-((dx+1)>>1):(dx>>1));
-    if(map[bot][x]===EMPTY||map[bot][x]===SLUDGE){lx=x;break;}}
-  if(map[bot][lx]===SLUDGE)map[bot][lx]=EMPTY;
+  const bot=tierBot[i];
+  const slw=(TIERS[i]&&TIERS[i].haz&&TIERS[i].haz.sl)||0;
+  const sx=((MW/2)-(slw/2))|0, se=sx+slw;                 // central sludge-basin x-span
+  const inSludge=(x)=>slw>0&&x>=sx-1&&x<se+1;             // basin footprint + 1-cell safety margin
+  const clearOre=(x,y)=>{if(map[y]&&map[y][x]===ORE){const oi=oreCells.findIndex(o=>o.x===x&&o.y===y);if(oi>=0)oreCells.splice(oi,1);}};
+  const ideal=[], usable=[];
+  for(let x=3;x<=MW-4;x++){
+    if(inSludge(x)||map[bot][x]===SLUDGE)continue;         // never on / beside an acid cell
+    if(map[bot][x]===WALL)continue;                        // outside the carved interior
+    usable.push(x);
+    if(map[bot][x]===EMPTY&&map[bot-1]&&map[bot-1][x]===EMPTY)ideal.push(x); // clear seat + open water above
+  }
+  const pick=ideal.length?ideal:usable;
+  const lx=pick.length?pick[(Math.random()*pick.length)|0]:(MW/2)|0;
+  clearOre(lx,bot);clearOre(lx,bot-1);                     // carve a reachable pocket on the barrier top
+  map[bot][lx]=EMPTY;
+  if(map[bot-1]&&map[bot-1][lx]!==WALL)map[bot-1][lx]=EMPTY;
   missionObjs.push({type:'gate',step:-1,tier:i,x:lx*TS+8,y:bot*TS+8,face:'up',ph:0,done:false});
 }
 // a layer's quest is generated the moment the layer itself is carved (and re-asserted when the
@@ -2751,7 +2786,7 @@ function finishBulkAnim(i){
 function missionInteract(o){
   const m=layerMissions[o.tier];
   if(o.type==='gate'){
-    if(!m.complete){const st=m.steps[m.progress];showMsg('control unit offline — task pending: '+(st?st.title:'?'));sfx.deny();return;}
+    if(!m.complete){openObjectives(o.tier);return;}   // briefing screen: every task in this layer
     const d=SCHED[o.tier];
     if(d&&d.layerInEnv===3&&gearLevel<=o.tier){const g=TIERS[o.tier]&&TIERS[o.tier].gear;
       showMsg('new environment below — fabricate the '+(g?g.name:'next dive suit')+' first');sfx.deny();return;}
@@ -3481,7 +3516,7 @@ function bindBtn(id,fn){const el=document.getElementById(id);if(!el)return;
   el.addEventListener('pointerdown',e=>{e.preventDefault();audioInit();fn();el.classList.add('on');});
   const up=e=>{if(e)e.preventDefault();el.classList.remove('on');};
   el.addEventListener('pointerup',up);el.addEventListener('pointerleave',up);el.addEventListener('pointercancel',up);}
-bindBtn('minebtn',()=>{if(state.mode==='craft'||state.mode==='inv')menuConfirm();else if(state.mode==='play'||state.mode==='mine')mineEdge=true;});
+bindBtn('minebtn',()=>{if(state.mode==='craft'||state.mode==='inv')menuConfirm();else if(state.mode==='play'||state.mode==='mine')mineEdge=true;else if(state.mode==='objectives')closeObjectives();});
 bindBtn('clipbtn',()=>{if(state.mode==='play')clipEdge=true;});
 bindBtn('ropebtn',()=>{queueCraft=true;});
 // menu/minigame cluster: confirm activates (dig in the mine), back & the red EXIT pill both bail out
@@ -3538,6 +3573,10 @@ window.addEventListener('keydown',e=>{audioInit();
     if(e.code==='Space'||e.code==='Enter'||e.code==='KeyF'||e.code==='KeyE'){cityMapConfirm();e.preventDefault();return;}
     if(e.code==='Escape'){closeCityMap();e.preventDefault();return;}
     return;
+  }
+  if(state.mode==='objectives'){   // read-only briefing: any confirm/back key closes it (ignore auto-repeat)
+    if(!e.repeat&&(e.code==='Escape'||e.code==='Space'||e.code==='Enter'||e.code==='KeyF'||e.code==='KeyE'))closeObjectives();
+    e.preventDefault();return;
   }
   const inMenu=(state.mode==='craft'||state.mode==='inv');
   if(keymap[e.code]){if(inMenu){menuMove(keymap[e.code]);e.preventDefault();return;}input[keymap[e.code]]=true;e.preventDefault();return;}
@@ -4055,7 +4094,7 @@ const TITLE_HTML=`
       <li>You breathe through an <b>air line</b> clipped to the <b>base</b> on each level. <b>X</b> clips/unclips it. On the line: air is endless and you slowly heal. Unclip and it <b>stays where you drop it</b> — swim back to that spot (or to the base) to clip on again.</li>
       <li>Off the line your tank drains. Ore within reach of the line can be dug <b>while clipped on</b> — the air keeps flowing, no breath-hold. But to reach far veins you must <b>detach</b>, and then your tank drains the whole time you're out, <b>including while you dig</b>. Read the gas (don't pop a pocket), grab <b>mixer canisters</b> and <b>glinting scrap</b>, and haul it back before your air runs out.</li>
       <li>At the base, <b>E</b> opens the workshop: <b>refine</b> 2 raw + 1 mixer → a part, <b>fabricate</b> your suit, <b>extend the air line</b>, and <b>sell salvage</b> for coin to buy spare tanks &amp; filters.</li>
-      <li>Building a suit <b>opens the bulkhead</b>. Every level below the first is thick with <b>pollution</b> — the suit cuts it ~85%, never fully. Each new base starts <b>dead</b>: haul parts down and <b>power it on</b> (X) for air and crafting. Levels without a suit line release their bulkhead the moment their base powers on.</li>
+      <li>Building a suit <b>opens the bulkhead</b>. The first environment runs clean, but from the <b>second environment</b> down the water thickens with <b>pollution</b> that bites harder the deeper you go — the suit cuts it ~85%, never fully. Each new base starts <b>dead</b>: haul parts down and <b>power it on</b> (X) for air and crafting. Levels without a suit line release their bulkhead the moment their base powers on.</li>
       <li><b>THE CITY UPDATE:</b> each city is a stack of environments, every environment with its own suit line. At the bottom of the final layer waits the <b>transit gate</b> — swim in, pick your next city on the <b>grid map</b>, and dive again, one environment deeper each time.</li>
       <li><b>SECTOR OBJECTIVES</b> gate the last level of every environment. The pink readout under your depth names the current task and its machine, all worked with <b>F</b>: <b>HACK</b> glowing wall terminals (press F as the sweep crosses the gold band — a miss zaps your air), <b>STRIKE</b> pulsing spore pods (hit, dodge the toxin cloud, hit again), <b>CRANK</b> pressure valves (tap F while the gauge reads green — the vents scald). Clear the chain, then throw the <b>AIRLOCK</b> lever beside the sealed bulkhead — or ride the transit gate on a city's finale.</li>
       <li><b>The dark deceives.</b> Eels coil on ledges, anglers and fungus fake the glow of treasure and ore, and "stranded divers" aren't. Craft <b>patch kits</b> (auto-saves you once if you'd die, or <b>Q</b> to top up), and in the <b>SHOP</b> tab sell salvage for coin to buy parts and build machines — even a <b>scrappy robot</b> that grabs loot for you.</li>
@@ -4091,13 +4130,13 @@ function setMode(m){state.mode=m;
   const bl=document.getElementById('backLbl');if(bl){bl.textContent=(m==='mine')?'ABORT':'back';bl.classList.toggle('abortlbl',m==='mine');}
   const bb=document.getElementById('backbtn');if(bb){if(m==='mine'){if(!bb.dataset.def)bb.dataset.def=bb.innerHTML;bb.innerHTML=ABORT_SVG;bb.classList.add('abortbtn');}else{if(bb.dataset.def)bb.innerHTML=bb.dataset.def;bb.classList.remove('abortbtn');}}
   const crt=document.getElementById('crt');if(crt)crt.style.display=(m==='play'||m==='mine')?'none':'';   // CRT on menu screens only
-  overlayEl.classList.toggle('hidden',!(m==='title'||m==='win'||m==='lose'||m==='pause'));
+  overlayEl.classList.toggle('hidden',!(m==='title'||m==='win'||m==='lose'||m==='pause'||m==='objectives'));
   mineEl.classList.toggle('hidden',m!=='mine');
   if(m!=='craft')craftEl.classList.add('hidden');
   if(m!=='inv')invEl.classList.add('hidden');
   {const cme=document.getElementById('citymap');if(cme)cme.classList.toggle('hidden',m!=='citymap');}
   const pb=document.getElementById('pausebtn');if(pb)pb.classList.toggle('hidden',m!=='play');
-  if(m==='title')overlayEl.innerHTML=TITLE_HTML;else if(m==='win')overlayEl.innerHTML=winHTML();else if(m==='lose')overlayEl.innerHTML=loseHTML();else if(m==='pause')overlayEl.innerHTML=pauseHTML();
+  if(m==='title')overlayEl.innerHTML=TITLE_HTML;else if(m==='win')overlayEl.innerHTML=winHTML();else if(m==='lose')overlayEl.innerHTML=loseHTML();else if(m==='pause')overlayEl.innerHTML=pauseHTML();else if(m==='objectives')overlayEl.innerHTML=objectivesHTML();
   if(m==='win'||m==='lose')clearSave();}
 
 // ============ PAUSE + SAVE/RESUME (close the tab and pick back up later) ============
@@ -4162,6 +4201,45 @@ function pauseGame(){if(state.mode!=='play')return;saveGame();setMode('pause');s
 function resumeGame(){if(state.mode!=='pause')return;setMode('play');sfx.uiopen();}
 function abandonDive(){clearSave();startGame();}
 window.__sdAbandon=abandonDive;
+
+// ============ OBJECTIVES SCREEN (control-unit briefing) ============
+// Tripping a layer's control unit before its quest is done opens this read-only briefing
+// listing every task in the layer — cleared, current and still-locked — so the diver can see
+// the whole chain ahead. The current task also stays pinned to the HUD readout as always.
+let objectivesTier=0;
+function openObjectives(tier){if(state.mode!=='play')return;objectivesTier=tier;setMode('objectives');sfx.uiopen();}
+function closeObjectives(){if(state.mode!=='objectives')return;setMode('play');sfx.back();}
+window.__sdCloseObjectives=closeObjectives;
+overlayEl.addEventListener('click',e=>{if(state.mode==='objectives'&&!e.target.closest('button'))closeObjectives();});
+const _objKindLabel={term:'HACK TERMINAL',pod:'BURST SPORE POD',valve:'VENT PRESSURE VALVE'};
+const _objKindCol={term:'#7fe6ff',pod:'#c2ff5f',valve:'#ff9a5c'};
+function objectivesHTML(){
+  const tier=objectivesTier,m=layerMissions[tier];
+  if(!m||!SCHED[tier])return '<div style="display:contents"><div class="title">OBJECTIVES</div><div class="prompt">press space to close</div></div>';
+  let rows='';
+  for(let k=0;k<m.steps.length;k++){
+    const st=m.steps[k],isDone=k<m.progress,isCur=k===m.progress;
+    const doneCt=isDone?st.count:(isCur?missionStepDone(tier,k):0);
+    const mark=isDone?'<b style="color:#5dff8a">✓</b>':isCur?'<b style="color:#ffd23c">▶</b>':'<span style="color:#3a4a58">•</span>';
+    const titleCol=isDone?'#6f93a6':isCur?'#ffffff':'#8fb6c2';
+    const nameCss=isDone?'text-decoration:line-through;opacity:.7':'';
+    rows+='<li style="margin:5px 0;'+(isCur?'text-shadow:0 0 6px rgba(255,210,60,.3)':'')+'">'
+      +mark+' <b style="color:'+titleCol+';'+nameCss+'">'+st.title+'</b>'
+      +'<span style="color:'+(_objKindCol[st.kind]||'#8fb6c2')+';font-size:10px;letter-spacing:1px"> · '+(_objKindLabel[st.kind]||'')+(st.count>1?' ×'+st.count:'')+'</span>'
+      +' <span style="color:#6f93a6;font-size:10px">'+doneCt+'/'+st.count+'</span></li>';
+  }
+  const exitTitle=(m.exit&&m.exit.title)?m.exit.title:'AIRLOCK',allDone=m.complete;
+  return '<div style="display:contents">'
+   +'<div class="title" style="font-size:clamp(19px,4.6vw,32px);color:var(--cyan)">SECTOR OBJECTIVES</div>'
+   +'<div class="sub">'+CITY_NAME+' · CITY '+CITY+' · LAYER '+(tier+1)+'/'+SCHED.length+' · '+TIERS[tier].name+'</div>'
+   +'<div class="panel" style="max-width:560px"><h3>tasks in this layer</h3>'
+   +'<ul class="obj">'+rows+'</ul>'
+   +'<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--line);font-size:11px;letter-spacing:1px;color:'+(allDone?'#ffd23c':'#6f93a6')+';text-transform:uppercase">'
+   +(allDone?'◆ all tasks done — throw the '+exitTitle+' lever to release the bulkhead':'◇ '+exitTitle+' — locked until every task above is cleared')+'</div></div>'
+   +'<div class="legend"><span><b style="color:#7fe6ff">HACK</b> terminal</span><span><b style="color:#c2ff5f">BURST</b> spore pod</span><span><b style="color:#ff9a5c">VENT</b> valve</span></div>'
+   +'<div class="prompt">press F / space / esc to close</div>'
+   +'<div class="pause-actions"><button class="pause-abandon" onclick="window.__sdCloseObjectives()">close panel</button></div></div>';
+}
 
 function startGame(){
   CITY=1;CITY_ID=0;CITY_NAME='OLD MIRE';cityExit=null;   // a fresh dive starts back at the founding city
@@ -4366,11 +4444,13 @@ function update(dt){
     else p.drown=0;}
 
   // elemental exposure — only when off the air line.
-  // every tier below the first has continuous ambient pollution; the suit cuts it ~85%+ but never to zero.
+  // the first environment is clean; from the 2nd environment down there is continuous
+  // ambient pollution (rising per environment). the suit cuts it ~85%+ but never to zero.
   let dps=0,tcol='';
   if(!p.attached){
     const presR=p.pollutionR+(p.filterBonus||0)+((p.seals&&p.seals[tier])?SEAL_R:0);
-    if(tier>=1){dps+=ambientAt(tier)/(1+presR*RES_SCALE);tcol='80,255,60';}
+    const amb=ambientAt(tier);
+    if(amb>0){dps+=amb/(1+presR*RES_SCALE);tcol='80,255,60';}
     const tt=tileTypePx(cx,cy);
     if(tt===SLUDGE){dps+=BASE_POLL/(1+presR*RES_SCALE);tcol='80,255,60';}
     if(tt===THERMAL){dps+=BASE_THERM/(1+p.thermalR*RES_SCALE);tcol='255,120,40';}
@@ -5066,7 +5146,7 @@ function drawHUD(tier){
   px(ctx,bx+bw+7,by+1,3,3,onLine?'#46d0ff':'#ffcc2e');px(ctx,bx+bw+11,by+1,1,4,onLine?'#7fe6ff':'#ffe27a');
   const show=(state.mode==='play'||state.mode==='craft'||state.mode==='inv');
   readout.style.display=show?'block':'none';
-  if(show){const poll=(!player.attached&&tier>=1);
+  if(show){const poll=(!player.attached&&ambientAt(tier)>0);
     readout.innerHTML='<div style="color:#ffd23c;font-size:13px;letter-spacing:2px;font-weight:bold;text-shadow:0 0 6px rgba(255,210,60,.4)">'+depthM(player.y)+'M</div>'+
     '<div style="color:#9fe8c0;font-size:8px;letter-spacing:1.5px;text-transform:uppercase;text-shadow:0 0 5px rgba(125,255,192,.35)">'+CITY_NAME+' · CITY '+CITY+'</div>'+
     '<div style="color:#7fd0ee;font-size:8px;letter-spacing:2px;text-transform:uppercase">L'+(tier+1)+'/'+SCHED.length+' · '+TIERS[tier].name+'</div>'+
