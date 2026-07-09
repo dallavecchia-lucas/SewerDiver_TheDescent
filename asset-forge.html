@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Asset Forge — Vanishing Point</title>
+<style>
+  :root{ --ink:#dfeeff; --sig:#7fd8e8; --panel:#0d1119; --line:rgba(140,190,220,.18); }
+  *{ box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
+  html,body{ height:100%; background:radial-gradient(120% 80% at 50% -10%,#12151f 0%,#05070a 70%);
+      color:var(--ink); font-family:'Segoe UI',system-ui,monospace; overflow:hidden; touch-action:none; }
+  #app{ position:fixed; inset:0; display:flex; flex-direction:column; }
+  header{ display:flex; align-items:center; gap:14px; padding:8px 14px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header h1{ font-size:15px; letter-spacing:.12em; color:var(--sig); font-weight:800; }
+  header .sub{ font:10px monospace; color:#7fa0b4; letter-spacing:.2em; text-transform:uppercase; }
+  button, select{ background:#141a24; border:1px solid #2a3644; border-bottom-width:2px; border-radius:6px;
+      color:#cfe6ff; font:12px monospace; padding:5px 10px; cursor:pointer; }
+  button:hover{ border-color:#3f5468; }
+  button.on{ background:#1d3340; border-color:var(--sig); color:var(--sig); }
+  main{ flex:1; display:flex; min-height:0; }
+  /* -------- editor side -------- */
+  #editor{ flex:1; display:flex; flex-direction:column; min-width:0; }
+  #tabs{ display:flex; gap:4px; padding:8px 10px 0; flex-wrap:wrap; }
+  #tabs button{ border-radius:6px 6px 0 0; border-bottom:none; padding:5px 12px; }
+  #tabs button .dot{ display:inline-block; width:6px; height:6px; border-radius:50%; background:#2a3644; margin-left:6px; vertical-align:middle; }
+  #tabs button.drawn .dot{ background:#7fe89a; }
+  #gridWrap{ flex:1; display:grid; place-items:center; min-height:0; padding:8px; }
+  #gridBox{ position:relative; }
+  canvas.layer{ position:absolute; inset:0; width:100%; height:100%; image-rendering:pixelated; }
+  #gridCv{ position:relative; image-rendering:pixelated; background:
+      repeating-conic-gradient(#11151d 0% 25%, #0b0e14 0% 50%) 0 0/12.5% 12.5%;
+      border:1px solid var(--line); border-radius:4px; cursor:crosshair; touch-action:none; }
+  #axisHint{ text-align:center; font:10px monospace; color:#6f8ba0; padding:2px 0 6px; letter-spacing:.08em; }
+  #toolbar{ display:flex; align-items:center; gap:10px; padding:6px 12px; border-top:1px solid var(--line); flex-wrap:wrap; }
+  #palette{ display:flex; gap:3px; flex-wrap:wrap; max-width:420px; }
+  .sw{ width:20px; height:20px; border-radius:4px; border:1px solid rgba(0,0,0,.5); cursor:pointer; }
+  .sw.sel{ outline:2px solid var(--sig); outline-offset:1px; }
+  .sw.erase{ background:repeating-conic-gradient(#2a2f3a 0% 25%, #12151d 0% 50%) 0 0/50% 50%; }
+  label.ctl{ font:11px monospace; color:#9fc2d8; display:flex; align-items:center; gap:6px; }
+  input[type=range]{ width:90px; accent-color:var(--sig); }
+  /* -------- preview side -------- */
+  #previewPane{ width:44%; min-width:280px; border-left:1px solid var(--line); display:flex; flex-direction:column; background:#05070c; }
+  #previewPane .bar{ display:flex; align-items:center; gap:8px; padding:6px 10px; border-bottom:1px solid var(--line); font:11px monospace; color:#9fc2d8; flex-wrap:wrap; }
+  #view3d{ flex:1; width:100%; min-height:0; cursor:grab; touch-action:none; image-rendering:pixelated; }
+  #view3d:active{ cursor:grabbing; }
+  #stats{ font:10px monospace; color:#6f8ba0; margin-left:auto; }
+  /* mobile: stack */
+  @media (max-width:760px){
+    main{ flex-direction:column; }
+    #previewPane{ width:100%; min-width:0; height:44%; border-left:none; border-top:1px solid var(--line); }
+  }
+  #toast{ position:fixed; left:50%; bottom:18px; transform:translateX(-50%); background:#142230; border:1px solid var(--sig);
+      color:var(--sig); font:12px monospace; padding:8px 16px; border-radius:8px; opacity:0; transition:opacity .3s; pointer-events:none; z-index:9; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div><h1>ASSET FORGE</h1><div class="sub">six-view voxel builder</div></div>
+    <button id="btnFill">fill: off</button>
+    <button id="btnMirror">mirror-X: off</button>
+    <button id="btnClear">clear view</button>
+    <button id="btnClearAll">clear all</button>
+    <button id="btnJson">export json</button>
+    <button id="btnJs">export engine js</button>
+    <button id="btnLoad">import json</button>
+    <input type="file" id="fileIn" accept=".json" style="display:none">
+  </header>
+  <main>
+    <div id="editor">
+      <div id="tabs"></div>
+      <div id="gridWrap"><div id="gridBox">
+        <canvas class="layer" id="onionCv"></canvas>
+        <canvas id="gridCv"></canvas>
+      </div></div>
+      <div id="axisHint"></div>
+      <div id="toolbar">
+        <div id="palette"></div>
+        <label class="ctl">ghost
+          <select id="onionSel"><option value="-1">none</option></select>
+        </label>
+        <label class="ctl">opacity <input type="range" id="onionOp" min="5" max="80" value="35"></label>
+      </div>
+    </div>
+    <div id="previewPane">
+      <div class="bar">
+        <b style="color:var(--sig)">PREVIEW</b>
+        <span>drag = rotate · two fingers / wheel = zoom · double-tap = reset</span>
+        <button id="btnSpin">auto-spin: on</button>
+        <span id="stats"></span>
+      </div>
+      <canvas id="view3d"></canvas>
+    </div>
+  </main>
+</div>
+<div id="toast"></div>
+
+<script>
+(() => {
+"use strict";
+
+// ============================================================================
+//  ASSET FORGE — draw an asset's 6 orthographic views on a pixel grid, then
+//  carve a voxel model from the silhouettes and colour its faces from the
+//  matching view. Preview uses the same flat-shaded triangle renderer style
+//  as the Vanishing Point engine, so the export drops straight in.
+//
+//  World axes match the engine: x right, y depth (away from front viewer),
+//  z up. View → projection mapping (u = grid column, v = grid row, row 0 top):
+//    front  (viewer at -y):  x = u          z = N-1-v
+//    back   (viewer at +y):  x = N-1-u      z = N-1-v
+//    right  (viewer at +x):  y = u          z = N-1-v
+//    left   (viewer at -x):  y = N-1-u      z = N-1-v
+//    top    (viewer at +z):  x = u          y = N-1-v
+//    bottom (viewer at -z):  x = N-1-u      y = N-1-v
+//  A voxel exists where every NON-EMPTY view is painted at its projection
+//  (empty views are ignored so you get feedback from the very first stroke).
+// ============================================================================
+
+const N = 16;                      // voxels per side
+const VIEWS = [
+  { id:"front",  hint:"FRONT — left/right = world X · up/down = world Z" },
+  { id:"back",   hint:"BACK — mirrored X (as if you walked behind it)" },
+  { id:"left",   hint:"LEFT — left/right = world Y (front of asset at LEFT edge)" },
+  { id:"right",  hint:"RIGHT — left/right = world Y (front of asset at RIGHT edge)" },
+  { id:"top",    hint:"TOP — up = back of asset, down = front" },
+  { id:"bottom", hint:"BOTTOM — mirrored X · up = back of asset" },
+];
+const OPPOSITE = { front:"back", back:"front", left:"right", right:"left", top:"bottom", bottom:"top" };
+
+// basic palette (index 0.. ; -1 = empty). Rows: greys, warm, cool, nature.
+const PALETTE = [
+  "#f4f4f0","#c9c9c2","#8f8f88","#5a5a54","#2c2c28","#101010",
+  "#ffd24a","#ff9c33","#e2543c","#a8322e","#7a2050","#3d1030",
+  "#9fe0ff","#5ab4e0","#3a6fb0","#28407a","#1a2450","#c95bd4",
+  "#8cf07a","#3fae52","#1f7038","#8a6a3a","#5e4426","#3a2a18",
+];
+const RGB = PALETTE.map(h=>[parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)]);
+
+// grids[viewIdx] = Int8Array(N*N) of palette index, -1 = empty
+const grids = VIEWS.map(()=>new Int8Array(N*N).fill(-1));
+
+// ---- view ↔ voxel mapping ---------------------------------------------------
+// returns [x,y,z-ish] projection lookup: for a voxel (x,y,z), the grid cell
+// (u,v) it projects to in view i.
+function projUV(view, x, y, z){
+  switch(view){
+    case 0: return [x,       N-1-z];           // front
+    case 1: return [N-1-x,   N-1-z];           // back
+    case 2: return [N-1-y,   N-1-z];           // left
+    case 3: return [y,       N-1-z];           // right
+    case 4: return [x,       N-1-y];           // top
+    case 5: return [N-1-x,   N-1-y];           // bottom
+  }
+}
+
+// ============================================================================
+//  EDITOR
+// ============================================================================
+const gridCv = document.getElementById("gridCv"), gctx = gridCv.getContext("2d");
+const onionCv = document.getElementById("onionCv"), octx = onionCv.getContext("2d");
+const tabsEl = document.getElementById("tabs"), palEl = document.getElementById("palette");
+const onionSel = document.getElementById("onionSel"), onionOp = document.getElementById("onionOp");
+const axisHint = document.getElementById("axisHint");
+
+let curView = 0, curColor = 6 /* amber */, fillMode = false, mirrorX = false, onionRef = -1;
+
+// tabs
+VIEWS.forEach((v,i)=>{
+  const b=document.createElement("button"); b.innerHTML = v.id + '<span class="dot"></span>';
+  b.onclick=()=>{ curView=i; refreshTabs(); redrawGrid(); };
+  tabsEl.appendChild(b);
+  const o=document.createElement("option"); o.value=i; o.textContent=v.id; onionSel.appendChild(o);
+});
+function refreshTabs(){
+  [...tabsEl.children].forEach((b,i)=>{
+    b.classList.toggle("on", i===curView);
+    b.classList.toggle("drawn", grids[i].some(v=>v>=0));
+  });
+  axisHint.textContent = VIEWS[curView].hint;
+}
+
+// palette swatches (+ eraser)
+{
+  const er=document.createElement("div"); er.className="sw erase"; er.title="eraser";
+  er.onclick=()=>{ curColor=-1; refreshPal(); }; palEl.appendChild(er);
+  PALETTE.forEach((h,i)=>{ const d=document.createElement("div"); d.className="sw"; d.style.background=h;
+    d.onclick=()=>{ curColor=i; refreshPal(); }; palEl.appendChild(d); });
+}
+function refreshPal(){ [...palEl.children].forEach((d,i)=>d.classList.toggle("sel", i-1===curColor || (i===0&&curColor===-1))); }
+refreshPal();
+
+// sizing — square grid that fits the pane
+function sizeGrid(){
+  const wrap=document.getElementById("gridWrap");
+  const s=Math.max(160, Math.min(wrap.clientWidth, wrap.clientHeight)-16);
+  for(const cv of [gridCv,onionCv]){ cv.width=N; cv.height=N; cv.style.width=s+"px"; cv.style.height=s+"px"; }
+  document.getElementById("gridBox").style.width=s+"px";
+  document.getElementById("gridBox").style.height=s+"px";
+  redrawGrid();
+}
+addEventListener("resize", sizeGrid);
+
+function redrawGrid(){
+  const g=grids[curView];
+  gctx.clearRect(0,0,N,N);
+  for(let v=0;v<N;v++)for(let u=0;u<N;u++){ const c=g[v*N+u]; if(c>=0){ gctx.fillStyle=PALETTE[c]; gctx.fillRect(u,v,1,1); } }
+  // onion skin — opposite views get mirrored so silhouettes line up
+  octx.clearRect(0,0,N,N);
+  if(onionRef>=0 && onionRef!==curView){
+    const r=grids[onionRef];
+    const mirror = VIEWS[onionRef].id === OPPOSITE[VIEWS[curView].id];
+    octx.globalAlpha = onionOp.value/100;
+    for(let v=0;v<N;v++)for(let u=0;u<N;u++){ const c=r[v*N+u]; if(c>=0){
+      octx.fillStyle=PALETTE[c]; octx.fillRect(mirror?N-1-u:u, v, 1, 1); } }
+    octx.globalAlpha = 1;
+  }
+  refreshTabs();
+}
+onionSel.onchange=()=>{ onionRef=+onionSel.value; redrawGrid(); };
+onionOp.oninput=redrawGrid;
+
+// painting
+let painting=false, paintVal=0;
+function cellAt(e){
+  const r=gridCv.getBoundingClientRect();
+  const u=Math.floor((e.clientX-r.left)/r.width*N), v=Math.floor((e.clientY-r.top)/r.height*N);
+  return (u<0||v<0||u>=N||v>=N)?null:[u,v];
+}
+function put(u,v,val){
+  grids[curView][v*N+u]=val;
+  if(mirrorX) grids[curView][v*N+(N-1-u)]=val;
+}
+function floodFill(u,v,val){
+  const g=grids[curView], from=g[v*N+u]; if(from===val) return;
+  const st=[[u,v]];
+  while(st.length){ const [a,b]=st.pop(); if(a<0||b<0||a>=N||b>=N||g[b*N+a]!==from) continue;
+    g[b*N+a]=val; st.push([a+1,b],[a-1,b],[a,b+1],[a,b-1]); }
+}
+gridCv.addEventListener("pointerdown",e=>{
+  const c=cellAt(e); if(!c) return;
+  gridCv.setPointerCapture(e.pointerId);
+  paintVal = (e.button===2) ? -1 : curColor;
+  if(fillMode){ floodFill(c[0],c[1],paintVal); redrawGrid(); rebuildSoon(); return; }
+  painting=true; put(c[0],c[1],paintVal); redrawGrid(); rebuildSoon();
+});
+gridCv.addEventListener("pointermove",e=>{ if(!painting) return; const c=cellAt(e); if(!c) return;
+  put(c[0],c[1],paintVal); redrawGrid(); rebuildSoon(); });
+addEventListener("pointerup",()=>painting=false);
+gridCv.addEventListener("contextmenu",e=>e.preventDefault());
+
+// header buttons
+const btnFill=document.getElementById("btnFill"), btnMirror=document.getElementById("btnMirror");
+btnFill.onclick=()=>{ fillMode=!fillMode; btnFill.textContent="fill: "+(fillMode?"on":"off"); btnFill.classList.toggle("on",fillMode); };
+btnMirror.onclick=()=>{ mirrorX=!mirrorX; btnMirror.textContent="mirror-X: "+(mirrorX?"on":"off"); btnMirror.classList.toggle("on",mirrorX); };
+document.getElementById("btnClear").onclick=()=>{ grids[curView].fill(-1); redrawGrid(); rebuildSoon(); };
+document.getElementById("btnClearAll").onclick=()=>{ if(confirm("Clear ALL six views?")){ grids.forEach(g=>g.fill(-1)); redrawGrid(); rebuildSoon(); } };
+
+// ============================================================================
+//  VOXEL RECONSTRUCTION — silhouette carving from the non-empty views
+// ============================================================================
+let voxels=null;          // Int8Array(N^3) palette index of the voxel body (-1 empty)
+let faceList=[];          // exposed faces for the renderer / exporter
+
+const IDX=(x,y,z)=>(z*N+y)*N+x;
+
+function rebuild(){
+  const active=[];
+  for(let i=0;i<6;i++) if(grids[i].some(v=>v>=0)) active.push(i);
+  voxels=new Int8Array(N*N*N).fill(-1);
+  if(active.length){
+    for(let z=0;z<N;z++)for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+      let ok=true, col=-1;
+      for(const vi of active){
+        const [u,v]=projUV(vi,x,y,z), c=grids[vi][v*N+u];
+        if(c<0){ ok=false; break; }
+        if(col<0) col=c;
+      }
+      if(ok) voxels[IDX(x,y,z)]=col;
+    }
+  }
+  buildFaces();
+  updateStats();
+}
+let rebuildT=null;
+function rebuildSoon(){ clearTimeout(rebuildT); rebuildT=setTimeout(rebuild, 90); }
+
+// face directions: [dx,dy,dz, viewIdx that faces this normal]
+const DIRS=[ [0,-1,0,0],[0,1,0,1],[-1,0,0,2],[1,0,0,3],[0,0,1,4],[0,0,-1,5] ];
+
+function voxelColor(x,y,z,vi){
+  // colour from the view whose normal matches the face; walk that view's ray
+  // is overkill — sample the projection; fall back to the body colour.
+  const [u,v]=projUV(vi,x,y,z), c=grids[vi][v*N+u];
+  return c>=0 ? c : voxels[IDX(x,y,z)];
+}
+function solid(x,y,z){ return x>=0&&y>=0&&z>=0&&x<N&&y<N&&z<N && voxels[IDX(x,y,z)]>=0; }
+
+function buildFaces(){
+  faceList=[];
+  const h=0.5, c0=N/2;   // centre the model on the origin
+  for(let z=0;z<N;z++)for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    if(voxels[IDX(x,y,z)]<0) continue;
+    const cx=x+0.5-c0, cy=y+0.5-c0, cz=z+0.5-c0;
+    for(const [dx,dy,dz,vi] of DIRS){
+      if(solid(x+dx,y+dy,z+dz)) continue;                 // hidden face
+      const col=RGB[voxelColor(x,y,z,vi)];
+      // quad corners: build a unit face centred on the voxel, offset by normal
+      const n=[dx,dy,dz];
+      let a,b,c,d;
+      if(dx){ const X=cx+dx*h; a=[X,cy-h,cz-h]; b=[X,cy+h,cz-h]; c=[X,cy+h,cz+h]; d=[X,cy-h,cz+h]; if(dx<0){[b,d]=[d,b];} }
+      else if(dy){ const Y=cy+dy*h; a=[cx-h,Y,cz-h]; b=[cx+h,Y,cz-h]; c=[cx+h,Y,cz+h]; d=[cx-h,Y,cz+h]; if(dy>0){[b,d]=[d,b];} }
+      else { const Z=cz+dz*h; a=[cx-h,cy-h,Z]; b=[cx+h,cy-h,Z]; c=[cx+h,cy+h,Z]; d=[cx-h,cy+h,Z]; if(dz<0){[b,d]=[d,b];} }
+      faceList.push({ v:[a,b,c,d], n, col });
+    }
+  }
+}
+
+function updateStats(){
+  let vox=0; if(voxels) for(let i=0;i<voxels.length;i++) if(voxels[i]>=0) vox++;
+  document.getElementById("stats").textContent = vox+" voxels · "+faceList.length+" faces";
+}
+
+// ============================================================================
+//  3D PREVIEW — flat-shaded painter renderer (same style as the engine)
+// ============================================================================
+const view3d=document.getElementById("view3d"), vctx=view3d.getContext("2d");
+const cam={ yaw:0.7, pitch:-0.45, roll:0, dist:N*2.1, vyaw:0.006, vpitch:0, vroll:0 };
+let autoSpin=true;
+document.getElementById("btnSpin").onclick=function(){ autoSpin=!autoSpin; this.textContent="auto-spin: "+(autoSpin?"on":"off"); if(autoSpin)cam.vyaw=0.006; };
+
+function eulerMat(x,y,z){
+  const cx=Math.cos(x),sx=Math.sin(x),cy=Math.cos(y),sy=Math.sin(y),cz=Math.cos(z),sz=Math.sin(z);
+  return [cy*cz,-cy*sz,sy, cx*sz+sx*sy*cz,cx*cz-sx*sy*sz,-sx*cy, sx*sz-cx*sy*cz,sx*cz+cx*sy*sz,cx*cy];
+}
+function sizePreview(){
+  const r=view3d.parentElement.getBoundingClientRect();
+  const bar=view3d.previousElementSibling.getBoundingClientRect();
+  view3d.width=Math.max(100, r.width|0);
+  view3d.height=Math.max(100, (r.height-bar.height)|0);
+}
+addEventListener("resize", sizePreview);
+
+const LDIR=(()=>{ const v=[0.4,-0.5,0.75], l=Math.hypot(...v); return v.map(a=>a/l); })();
+
+function renderPreview(){
+  const W=view3d.width, H=view3d.height;
+  vctx.fillStyle="#05070c"; vctx.fillRect(0,0,W,H);
+  if(!faceList.length){
+    vctx.fillStyle="#3a4a5a"; vctx.font="12px monospace"; vctx.textAlign="center";
+    vctx.fillText("paint any view to see the asset take shape", W/2, H/2);
+    return;
+  }
+  const R=eulerMat(cam.pitch, cam.roll, cam.yaw);   // model rotation
+  const F=H*1.15;                                    // focal length
+  const tris=[];
+  for(const f of faceList){
+    // rotate normal for lighting + backface cull
+    const n=f.n, nx=R[0]*n[0]+R[1]*n[1]+R[2]*n[2],
+                 ny=R[3]*n[0]+R[4]*n[1]+R[5]*n[2],
+                 nz=R[6]*n[0]+R[7]*n[1]+R[8]*n[2];
+    if(ny>=0) continue;                              // facing away from camera (-y = toward viewer)
+    const pts=f.v.map(p=>{
+      const x=R[0]*p[0]+R[1]*p[1]+R[2]*p[2],
+            y=R[3]*p[0]+R[4]*p[1]+R[5]*p[2] + cam.dist,
+            z=R[6]*p[0]+R[7]*p[1]+R[8]*p[2];
+      return { sx:W/2 + x/y*F, sy:H/2 - z/y*F, d:y };
+    });
+    if(pts.some(p=>p.d<0.5)) continue;
+    const lit=0.55+0.45*Math.max(0, nx*LDIR[0]+ny*LDIR[1]+nz*LDIR[2]);
+    const col=`rgb(${f.col[0]*lit|0},${f.col[1]*lit|0},${f.col[2]*lit|0})`;
+    const depth=(pts[0].d+pts[1].d+pts[2].d+pts[3].d)/4;
+    tris.push({pts,col,depth});
+  }
+  tris.sort((a,b)=>b.depth-a.depth);
+  for(const t of tris){
+    vctx.fillStyle=t.col; vctx.beginPath();
+    vctx.moveTo(t.pts[0].sx,t.pts[0].sy);
+    for(let i=1;i<4;i++) vctx.lineTo(t.pts[i].sx,t.pts[i].sy);
+    vctx.closePath(); vctx.fill();
+  }
+}
+
+// ---- touch / mouse orbit with inertia ---------------------------------------
+let drag=null, lastTap=0;
+const ptrs=new Map();
+view3d.addEventListener("pointerdown",e=>{
+  view3d.setPointerCapture(e.pointerId);
+  ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(ptrs.size===1){
+    drag={x:e.clientX,y:e.clientY};
+    cam.vyaw=cam.vpitch=cam.vroll=0;
+    const now=performance.now();
+    if(now-lastTap<300){ cam.yaw=0.7; cam.pitch=-0.45; cam.roll=0; cam.dist=N*2.1; }
+    lastTap=now;
+  }
+});
+view3d.addEventListener("pointermove",e=>{
+  const prev=ptrs.get(e.pointerId); if(!prev) return;
+  if(ptrs.size===2){
+    // pinch zoom + twist roll
+    const ids=[...ptrs.keys()], a=ptrs.get(ids[0]), b=ptrs.get(ids[1]);
+    const before=Math.hypot(b.x-a.x,b.y-a.y), angBefore=Math.atan2(b.y-a.y,b.x-a.x);
+    ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    const a2=ptrs.get(ids[0]), b2=ptrs.get(ids[1]);
+    const after=Math.hypot(b2.x-a2.x,b2.y-a2.y), angAfter=Math.atan2(b2.y-a2.y,b2.x-a2.x);
+    if(before>10) cam.dist=Math.max(N*0.8, Math.min(N*6, cam.dist*before/after));
+    cam.roll+=angAfter-angBefore;
+    return;
+  }
+  ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(!drag) return;
+  const dx=e.clientX-drag.x, dy=e.clientY-drag.y; drag={x:e.clientX,y:e.clientY};
+  cam.yaw+=dx*0.008; cam.pitch+=dy*0.008;
+  cam.vyaw=dx*0.008; cam.vpitch=dy*0.008;
+});
+function endPtr(e){ ptrs.delete(e.pointerId); if(ptrs.size===0) drag=null; else if(ptrs.size===1){ const p=[...ptrs.values()][0]; drag={x:p.x,y:p.y}; } }
+view3d.addEventListener("pointerup",endPtr); view3d.addEventListener("pointercancel",endPtr);
+view3d.addEventListener("wheel",e=>{ e.preventDefault(); cam.dist=Math.max(N*0.8, Math.min(N*6, cam.dist*(e.deltaY>0?1.1:0.9))); },{passive:false});
+
+function loop(){
+  if(!drag){
+    cam.yaw+=cam.vyaw; cam.pitch+=cam.vpitch; cam.roll+=cam.vroll;
+    cam.vyaw*=0.96; cam.vpitch*=0.96; cam.vroll*=0.96;
+    if(autoSpin && Math.abs(cam.vyaw)<0.001) cam.vyaw=0.006;
+  }
+  renderPreview();
+  requestAnimationFrame(loop);
+}
+
+// ============================================================================
+//  EXPORT
+// ============================================================================
+function toast(msg){ const t=document.getElementById("toast"); t.textContent=msg; t.style.opacity=1; setTimeout(()=>t.style.opacity=0,2200); }
+function download(name, text){
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([text],{type:"text/plain"})); a.download=name; a.click();
+  URL.revokeObjectURL(a.href);
+}
+document.getElementById("btnJson").onclick=()=>{
+  download("asset.json", JSON.stringify({ n:N, palette:PALETTE, views:VIEWS.map((v,i)=>({id:v.id, data:[...grids[i]]})) }));
+  toast("asset.json downloaded");
+};
+document.getElementById("btnLoad").onclick=()=>document.getElementById("fileIn").click();
+document.getElementById("fileIn").onchange=e=>{
+  const f=e.target.files[0]; if(!f) return;
+  f.text().then(t=>{ const j=JSON.parse(t);
+    j.views.forEach((v,i)=>{ if(i<6 && v.data.length===N*N) grids[i].set(v.data); });
+    redrawGrid(); rebuild(); toast("asset loaded");
+  }).catch(()=>toast("could not read file"));
+  e.target.value="";
+};
+
+// export as an engine-ready asset function: greedy-merge voxel runs along x
+// into box(cx,cy,cz,sx,sy,sz,col) calls matching the engine's merge()/box().
+document.getElementById("btnJs").onclick=()=>{
+  if(!voxels || !faceList.length){ toast("nothing to export yet"); return; }
+  const used=new Uint8Array(N*N*N), boxes=[];
+  const S = 2.2/N;                                  // ≈ engine asset scale (~2.2 units wide)
+  for(let z=0;z<N;z++)for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    const i=IDX(x,y,z); if(voxels[i]<0||used[i]) continue;
+    const c=voxels[i];
+    let x1=x; while(x1+1<N && voxels[IDX(x1+1,y,z)]===c && !used[IDX(x1+1,y,z)]) x1++;
+    let y1=y; outer: while(y1+1<N){ for(let xx=x;xx<=x1;xx++){ const k=IDX(xx,y1+1,z); if(voxels[k]!==c||used[k]) break outer; } y1++; }
+    for(let yy=y;yy<=y1;yy++) for(let xx=x;xx<=x1;xx++) used[IDX(xx,yy,z)]=1;
+    boxes.push({x,y,z,x1,y1,c});
+  }
+  const c0=N/2;
+  const lines=boxes.map(b=>{
+    const cx=((b.x+b.x1+1)/2-c0)*S, cy=((b.y+b.y1+1)/2-c0)*S, cz=(b.z+0.5)*S;
+    const sx=(b.x1-b.x+1)*S, sy=(b.y1-b.y+1)*S;
+    const col=RGB[b.c];
+    return `    box(${cx.toFixed(3)},${cy.toFixed(3)},${cz.toFixed(3)},${sx.toFixed(3)},${sy.toFixed(3)},${S.toFixed(3)},[${col}]),`;
+  });
+  const js=`// generated by Asset Forge — ${boxes.length} boxes, origin at floor contact
+function assetCustom(){
+  return merge([
+${lines.join("\n")}
+  ]);
+}
+// place with: meshes.push(makeMesh(assetCustom, { pos:[x, y, floorZ], scale:1 }));`;
+  download("asset-custom.js", js);
+  toast(boxes.length+" boxes exported");
+};
+
+// ---- boot -------------------------------------------------------------------
+sizeGrid(); sizePreview(); rebuild(); refreshTabs(); redrawGrid();
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
