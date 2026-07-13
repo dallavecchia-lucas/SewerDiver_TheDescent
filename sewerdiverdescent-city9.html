@@ -1562,6 +1562,11 @@ let TIERS=[
         stats:{oxy:320,hp:8,acc:1.4,mv:1.4,lr:135,th:5,po:5}},
   haz:{elec:3,blob:2,sl:16}}
 ];
+// Pristine base hazard values for the 4 static tiers, snapshotted ONCE at parse time. applyCityVariant
+// applies each city's environment modifier on top of THIS, never on top of the last city's already-
+// modified numbers — otherwise sl/elec/blob accumulate every dive and the acid basin eventually swallows
+// the whole floor (and forces the bulkhead control unit to spawn inside it).
+const BASE_HAZ0=TIERS.map(t=>({elec:t.haz.elec,blob:t.haz.blob,sl:t.haz.sl}));
 
 // tier vertical bands (tile rows) — base game is 4; the arrays grow as the diver descends
 let tierTop=[3,37,71,105], tierBot=[34,68,102,136];
@@ -2446,7 +2451,10 @@ function applyCityVariant(n,d,A){
   TIERS[n].name=m.tag+' '+a.name;
   TIERS[n].water=a.water.map(w=>cvShift(w,m.hue,m.sat,m.lit));
   TIERS[n].rock=cvShift(a.rock,m.hue,Math.min(1,m.sat),m.lit);
-  const H=TIERS[n].haz;if(H){H.elec=Math.max(0,H.elec+m.haz.elec);H.blob=Math.max(0,H.blob+m.haz.blob);H.sl=Math.max(2,H.sl+m.haz.sl);}
+  // Modifier is applied to the PRISTINE base each time (idempotent), not to the running value — see
+  // BASE_HAZ0. Deep tiers (n>=4) get a fresh hazFor(n) from buildTierData, so base from there.
+  const H=TIERS[n].haz;if(H){const base=(n<BASE_HAZ0.length)?BASE_HAZ0[n]:hazFor(n);
+    H.elec=Math.max(0,base.elec+m.haz.elec);H.blob=Math.max(0,base.blob+m.haz.blob);H.sl=Math.max(2,base.sl+m.haz.sl);}
   if(d.blend){const b=A[d.blend.arch],w=d.blend.w;                 // buffer layer: pull the neighbour in
     T.pal=blendPal(T.pal,b.pal,w);
     T.blend={arch:d.blend.arch,w};                                  // consumed by bgTexDraw/drawTile/genTier
@@ -2696,7 +2704,7 @@ function spawnMissionLayer(i){
 // sludge basin (the acid pool at rows bot-2..bot), so it is always safe to reach.
 function spawnControlUnit(i){
   const bot=tierBot[i];
-  const slw=(TIERS[i]&&TIERS[i].haz&&TIERS[i].haz.sl)||0;
+  const slw=basinWidth(i);                                // SAME capped width the basin was carved with
   const sx=((MW/2)-(slw/2))|0, se=sx+slw;                 // central sludge-basin x-span
   const inSludge=(x)=>slw>0&&x>=sx-1&&x<se+1;             // basin footprint + 1-cell safety margin
   const clearOre=(x,y)=>{if(map[y]&&map[y][x]===ORE){const oi=oreCells.findIndex(o=>o.x===x&&o.y===y);if(oi>=0)oreCells.splice(oi,1);}};
@@ -2708,7 +2716,8 @@ function spawnControlUnit(i){
     if(map[bot][x]===EMPTY&&map[bot-1]&&map[bot-1][x]===EMPTY)ideal.push(x); // clear seat + open water above
   }
   const pick=ideal.length?ideal:usable;
-  const lx=pick.length?pick[(Math.random()*pick.length)|0]:(MW/2)|0;
+  // last-resort fallback lands OUTSIDE the basin (a near-edge column), never the acid-filled centre
+  const lx=pick.length?pick[(Math.random()*pick.length)|0]:(sx>MW-1-se?3:MW-4);
   clearOre(lx,bot);clearOre(lx,bot-1);                     // carve a reachable pocket on the barrier top
   map[bot][lx]=EMPTY;
   if(map[bot-1]&&map[bot-1][lx]!==WALL)map[bot-1][lx]=EMPTY;
@@ -2987,11 +2996,15 @@ function setIf(x,y,t){if(x>1&&x<MW-2&&y>0&&y<MH-1&&map[y][x]===EMPTY)map[y][x]=t
 function growRock(cx,cy,n){let x=cx,y=cy;for(let k=0;k<n;k++){setIf(x,y,ROCK);setIf(x+1,y,ROCK);x+=((Math.random()*3)|0)-1;y+=((Math.random()*3)|0)-1;x=clamp(x,3,MW-4);y=clamp(y,4,MH-5);}}
 function nearSpawn(x,y){return Math.abs(x-(MW/2))<3&&Math.abs(y-(tierTop[0]+3))<3;}
 
+// Width of the central acid basin in tiles, hard-capped so it ALWAYS leaves clear ground on both sides
+// (footing for the diver + a non-acid seat for the bulkhead control unit). Used by both genTier and
+// spawnControlUnit so the carved basin and the "avoid the basin" exclusion always agree.
+function basinWidth(i){const sl=(TIERS[i]&&TIERS[i].haz&&TIERS[i].haz.sl)||0;return Math.max(0,Math.min(sl,MW-16));}
 function genTier(i){
   const top=tierTop[i],bot=tierBot[i],T=TIERS[i];
   fillRect(2,top,MW-3,bot,EMPTY);
   // sludge basin (bottom)
-  const slw=T.haz.sl, sx=((MW/2)-(slw/2))|0;
+  const slw=basinWidth(i), sx=((MW/2)-(slw/2))|0;
   for(let y=bot-2;y<=bot;y++)for(let x=sx;x<sx+slw;x++)if(x>1&&x<MW-2)map[y][x]=SLUDGE;
   // rock + ledges
   for(let k=0;k<5;k++)growRock((3+Math.random()*(MW-7))|0,(top+3+Math.random()*(bot-top-7))|0,8+((Math.random()*10)|0));
@@ -5196,7 +5209,7 @@ function drawHUD(tier){
       if(mm.complete){const lv=missionObjs.find(q=>q.type==='gate'&&q.tier===tier&&!q.done);
         return lv?'<div style="color:#ffd23c;font-size:8px;letter-spacing:1px;text-transform:uppercase;margin-top:1px;text-shadow:0 0 5px rgba(255,210,60,.4)">◆ '+mm.exit.title+' — control unit by the bulkhead</div>':'';}
       const st=mm.steps[mm.progress];if(!st)return'';
-      const done=missionStepDone(tier,mm.progress),verb={term:'HACK',pod:'STRIKE',valve:'CRANK'}[st.kind]||'';
+      const done=missionStepDone(tier,mm.progress),verb={term:'HACK',pod:'BURN',valve:'CRANK'}[st.kind]||'';
       return '<div style="color:#ff9ad0;font-size:8px;letter-spacing:1px;text-transform:uppercase;margin-top:1px;text-shadow:0 0 5px rgba(255,154,208,.4)">◆ '+st.title+' '+done+'/'+st.count+' · '+verb+'</div>';})()+
     '<div style="color:#ffd23c;font-size:10px;letter-spacing:1px;margin-top:1px">◎ '+coins+(((player.medkits||0)>0)?'   <span style="color:#5dff8a">✚'+player.medkits+'</span>':'')+'</div>'+
     (poll?'<div style="color:#7dff4a;font-size:8px;letter-spacing:1px;text-transform:uppercase;text-shadow:0 0 5px rgba(125,255,74,.5)">⚠ pollution</div>':'');}
@@ -5706,7 +5719,7 @@ canvas.addEventListener('pointerdown',e=>{if(state.mode!=='crank')return;e.preve
 let flameObj=null;
 const flameS={slimes:[],cx:110,rimTop:70,baseBot:300,bx:46,by:104,bw:128,bh:150,
   aimX:110,aimY:180,vx:0,vy:0,rx:110,ry:180,swx:0,swy:0,nozX:110,nozY:294,
-  limit:8,time:0,killed:0,won:false,doneT:0,outcome:null,hint:3.0,flash:0,hitFlash:0,
+  limit:10,time:0,killed:0,won:false,doneT:0,outcome:null,hint:3.0,flash:0,hitFlash:0,
   firing:false,onTarget:false,swayAmp:2.4,aimAcc:0.82,aimDrag:0.86,burnRate:6.0,fx:[]};
 function openFlame(o){
   flameObj=o;const B=flameS,tier=o.tier||0,tc=Math.min(tier,3);
@@ -5715,9 +5728,12 @@ function openFlame(o){
   B.aimX=B.cx;B.aimY=Math.round(B.by+B.bh*0.5);B.vx=0;B.vy=0;B.rx=B.aimX;B.ry=B.aimY;B.swx=0;B.swy=0;
   B.nozX=B.cx;B.nozY=VH-58;
   const spots=[[0.24,0.20],[0.76,0.44],[0.42,0.82]];    // three well-separated pockets — never clustered
-  B.slimes=spots.map(s=>({x:Math.round(B.bx+B.bw*s[0]+(Math.random()-.5)*8),
-    y:Math.round(B.by+B.bh*s[1]+(Math.random()-.5)*8),r:6,burn:0,dead:false,ph:Math.random()*6.28}));
-  B.limit=8;B.time=0;B.killed=0;B.won=false;B.doneT=0;B.outcome=null;
+  B.slimes=spots.map(s=>{const r=9+((Math.random()*3)|0);   // bigger, far easier to land the reticle on
+    const nl=5+((Math.random()*2)|0),lobes=[];             // irregular pulsating-splash silhouette
+    for(let i=0;i<nl;i++)lobes.push({a:i/nl*6.283+Math.random()*0.6,d:0.42+Math.random()*0.36,r:0.42+Math.random()*0.26,ph:Math.random()*6.28});
+    return {x:Math.round(B.bx+B.bw*s[0]+(Math.random()-.5)*8),
+      y:Math.round(B.by+B.bh*s[1]+(Math.random()-.5)*8),r,burn:0,dead:false,ph:Math.random()*6.28,hitT:0,lobes};});
+  B.limit=10;B.time=0;B.killed=0;B.won=false;B.doneT=0;B.outcome=null;
   B.hint=3.0;B.flash=0;B.hitFlash=0;B.firing=false;B.onTarget=false;
   B.swayAmp=2.2+tc*0.5;B.aimAcc=0.82;B.aimDrag=0.86;B.burnRate=6.0;   // deeper sacs sway a touch harder
   B.fx.length=0;
@@ -5785,16 +5801,21 @@ function flameInput(){
   // ==== fire: thin flame + bubbles; burn the slime under the reticle ====
   const firing=(input.action||flameFire);B.firing=firing;
   let hit=null;
-  for(const s of B.slimes){if(s.dead)continue;if(Math.hypot(rx-s.x,ry-s.y)<=s.r+2){hit=s;break;}}
+  for(const s of B.slimes){if(s.dead)continue;if(Math.hypot(rx-s.x,ry-s.y)<=s.r+4){hit=s;break;}}  // generous hitbox
   B.onTarget=!!hit;
   if(firing){spawnFlameFx(rx,ry);
-    if(hit){hit.burn+=B.burnRate/60;B.hitFlash=0.2;if((t%4)===0)flameSpark(hit.x,hit.y,'#bfe9ff');
+    if(hit){hit.burn+=B.burnRate/60;B.hitFlash=0.2;hit.hitT=0.18;   // per-slime hit flash confirms registration
+      if((t%3)===0)flameSpark(hit.x,hit.y,'#bfe9ff');
+      // GREEN BLEED — droplets spray off the slime every frame the burn registers
+      for(let g=0;g<2;g++){const a=Math.random()*6.283,sp=22+Math.random()*44;
+        B.fx.push({kind:'spk',x:hit.x+Math.cos(a)*hit.r*0.6,y:hit.y+Math.sin(a)*hit.r*0.6,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp-8,life:0.24+Math.random()*0.22,max:0.46,size:1+Math.random()*1.7,col:(Math.random()<0.5?'#7dff4a':'#39c66a'),seed:0});}
       if(hit.burn>=6){hit.dead=true;hit.burn=6;B.killed++;sfx.pop();
-        for(let k=0;k<12;k++)flameSpark(hit.x,hit.y,k%2?'#c2ff5f':'#9fe0ff');
+        for(let k=0;k<18;k++){const a=Math.random()*6.283,sp=30+Math.random()*72;   // green splatter burst on kill
+          B.fx.push({kind:'spk',x:hit.x,y:hit.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:0.3+Math.random()*0.26,max:0.56,size:1+Math.random()*2,col:(k%3?'#7dff4a':'#c2ff5f'),seed:0});}
         if(B.killed>=3){flameEnd(true);return;}}}}
   // un-flamed slimes cool a touch (so drifting off-target costs a little, gently)
   for(const s of B.slimes){if(!s.dead&&!(firing&&s===hit))s.burn=Math.max(0,s.burn-0.8/60);}
-  for(const s of B.slimes)s.ph+=1/60;
+  for(const s of B.slimes){s.ph+=1/60;if(s.hitT>0)s.hitT-=1/60;}
   updateFlameFx();
   // ==== timer (checked after kills so a same-frame third kill still wins) ====
   B.time+=1/60;
@@ -5825,19 +5846,31 @@ function drawVase(cx,sv){
   {const hw=Math.round(vaseHW(knots,74));px(ctx,cx-hw,73+sv,hw*2,1,'#4d7f92');px(ctx,cx-hw,74+sv,hw*2,2,'#3a5f6f');}
   pxTextC('CONTAINMENT URN',cx,304+sv,'#2f5a6a');
 }
-function drawSlime(s,t){
-  if(s.dead){px(ctx,s.x-3,s.y-1,6,3,'#242e1a');px(ctx,s.x-2,s.y-2,4,2,'#3a2a12');px(ctx,s.x-1,s.y-3,1,1,'#5a3a14');return;}
-  const wob=Math.sin(t*0.12+s.ph)*0.18,heat=clamp(s.burn/6,0,1);
-  const r=Math.max(3,Math.round(s.r*(1+wob)-s.burn*0.35));
+// pulsating green splat (not a plain circle): a central lobe plus several breathing satellite lobes
+// (metaball splash), a dark rim, and — while it registers the flame — a bright green bleed flash.
+function drawSlime(s,t,ox,oy){
+  const X=s.x+(ox||0), Y=s.y+(oy||0), heat=clamp(s.burn/6,0,1);
+  if(s.dead){pxDisc(ctx,X,Y,3,'#2a2412');px(ctx,X-5,Y,10,2,'#242e1a');px(ctx,X-1,Y-2,2,1,'#3a2a12');px(ctx,X+2,Y-1,1,1,'#4a3414');return;}
+  const breathe=1+Math.sin(t*0.12+s.ph)*0.06-heat*0.18;        // gentle body pulse; shrinks as it chars
+  const R=Math.max(3,s.r*breathe), hitOn=s.hitT>0;
+  const gcol=heat>0.45?'150,235,220':'110,240,90';
   ctx.globalCompositeOperation='lighter';
-  radial(ctx,s.x,s.y,r+8,'rgba('+(heat>0.4?'150,230,255':'120,235,90')+','+(0.25+heat*0.2).toFixed(2)+')','rgba(0,0,0,0)');
+  radial(ctx,X,Y,R+13,'rgba('+gcol+','+(0.24+heat*0.20+(hitOn?0.28:0)).toFixed(2)+')','rgba(0,0,0,0)');
   ctx.globalCompositeOperation='source-over';
-  const base=heat>0.5?'#7fd6b0':'#5fdd3f',edge=heat>0.5?'#3a7a6a':'#2f7a1f';
-  pxDisc(ctx,s.x,s.y,r,edge);pxDisc(ctx,s.x,s.y,r-1,base);
-  px(ctx,s.x-Math.round(r*0.4),s.y-Math.round(r*0.4),2,2,'#eaffd0');
-  for(let i=0;i<Math.floor(s.burn);i++){const a=s.ph+i*1.7;px(ctx,(s.x+Math.cos(a)*r*0.5)|0,(s.y+Math.sin(a)*r*0.5)|0,1,1,'#243018');}
-  for(let i=0;i<6;i++){const a=-1.5708+i/6*6.283,on=i<Math.round(s.burn);   // 6-pip burn meter ("6 presses")
-    px(ctx,(s.x+Math.cos(a)*(r+4))|0,(s.y+Math.sin(a)*(r+4))|0,1,1,on?'#bfe9ff':'#1c3a2a');}
+  const base=heat>0.5?'#7ee0bf':'#5fdd3f', edge=heat>0.5?'#356f62':'#2f7a1f', hi=heat>0.5?'#dafff2':'#c8ff90';
+  const lobes=s.lobes||[];
+  const pos=lobes.map(L=>{const pulse=0.8+Math.sin(t*0.10+L.ph)*0.22,ang=L.a+s.ph*0.3;
+    return {x:X+Math.cos(ang)*R*L.d*pulse, y:Y+Math.sin(ang)*R*L.d*pulse, r:Math.max(2,R*L.r*pulse)};});
+  pxDisc(ctx,X,Y,R+1,edge);for(const L of pos)pxDisc(ctx,L.x,L.y,L.r+1,edge);   // dark rim pass
+  pxDisc(ctx,X,Y,R,base);  for(const L of pos)pxDisc(ctx,L.x,L.y,L.r,base);       // green fill pass
+  const hs=Math.max(2,Math.round(R*0.22));
+  px(ctx,Math.round(X-R*0.34),Math.round(Y-R*0.4),hs,hs,hi);                      // wet highlight
+  for(let i=0;i<Math.floor(s.burn);i++){const a=s.ph+i*1.7,d=R*0.5;px(ctx,(X+Math.cos(a)*d)|0,(Y+Math.sin(a)*d)|0,2,2,'#243018');}
+  if(hitOn){const k=clamp(s.hitT/0.18,0,1);                                       // HIT-REGISTERED green flash
+    ctx.globalCompositeOperation='lighter';radial(ctx,X,Y,R+7,'rgba(190,255,150,'+(0.55*k).toFixed(2)+')','rgba(0,0,0,0)');ctx.globalCompositeOperation='source-over';
+    px(ctx,Math.round(X)-1,Math.round(Y)-1,2,2,'#ffffff');}
+  for(let i=0;i<6;i++){const a=-1.5708+i/6*6.283,on=i<Math.round(s.burn);         // 6-pip burn meter ("6 presses")
+    px(ctx,(X+Math.cos(a)*(R+5))|0,(Y+Math.sin(a)*(R+5))|0,2,2,on?'#bfe9ff':'#20402e');}
 }
 function drawFlameBeam(){
   const B=flameS,nx=B.nozX,ny=B.nozY,rx=B.rx,ry=B.ry,dx=rx-nx,dy=ry-ny;
@@ -5891,7 +5924,7 @@ function renderFlame(){
    for(let i=0;i<tot;i++){const dead=i<B.killed;px(ctx,ppx+i*(pw+g),py,pw,5,dead?'#c2ff5f':'#123f28');if(dead)px(ctx,ppx+i*(pw+g),py,pw,1,'#eaffc0');}}
   // urn + slimes
   drawVase(cx,sv);
-  for(const s of B.slimes)drawSlime({x:s.x+sh,y:s.y+sv,r:s.r,burn:s.burn,dead:s.dead,ph:s.ph},t);
+  for(const s of B.slimes)drawSlime(s,t,sh,sv);
   // flame + reticle
   if(B.firing&&B.doneT<=0)drawFlameBeam();
   drawReticle(Math.round(B.rx+sh),Math.round(B.ry+sv),B.onTarget);
