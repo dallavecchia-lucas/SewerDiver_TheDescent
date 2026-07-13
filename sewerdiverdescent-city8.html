@@ -5216,9 +5216,14 @@ function resize(){const stage=document.getElementById('stage'),w=stage.clientWid
   canvas.style.width=w+'px';canvas.style.height=h+'px';}
 window.addEventListener('resize',resize);window.addEventListener('orientationchange',()=>setTimeout(resize,200));
 
-let acc=0,last=performance.now();
+let acc=0,last=performance.now(),frameAcc=0;
 function frame(now){
-  let dt=(now-last)/1000;last=now;if(dt>0.1)dt=0.1;acc+=dt;
+  // cap the sim/render cadence to ~60Hz regardless of display refresh rate — on high-refresh
+  // PC monitors (120/144/240Hz) rAF fires much more often than mobile's 60Hz, and a lot of the
+  // per-frame animation code below assumes "one call == 1/60s" rather than using real dt.
+  frameAcc+=now-last;last=now;
+  if(frameAcc<15){requestAnimationFrame(frame);return;}
+  let dt=Math.min(frameAcc,100)/1000;frameAcc=0;acc+=dt;
   if((state.mode==='title'||state.mode==='win'||state.mode==='lose')&&!TUT.active){if(actionEdge||queueCraft){actionEdge=false;queueCraft=false;startGame();}}
   else if(state.mode==='mine'){mineInput();
     if(mgOre&&!mineIntroActive){const o=mgOre,t=o.tier||0;   // no oxygen change while the mining tutorial slides are up
@@ -5842,15 +5847,19 @@ function startStudioIntro(){
     }
   }
 
-  function loop(){
+  let _loopAcc=0,_loopLast=performance.now();
+  function loop(now){
     if(!running)return;
-    phaseT++;
-    if(actionEdge){actionEdge=false;if(phase!=='power'&&phase!=='firsttime')advance();}
-    render(phaseT);
-    if(phase==='power'&&phaseT>26)advance();
-    else if(phase==='logo'&&phaseT>150)advance();
-    else if(phase==='presents'&&phaseT>90)advance();
-    else if(phase==='title'&&phaseT>170)advance();
+    _loopAcc+=now-_loopLast;_loopLast=now;
+    if(_loopAcc>=15){_loopAcc=0;
+      phaseT++;
+      if(actionEdge){actionEdge=false;if(phase!=='power'&&phase!=='firsttime')advance();}
+      render(phaseT);
+      if(phase==='power'&&phaseT>26)advance();
+      else if(phase==='logo'&&phaseT>150)advance();
+      else if(phase==='presents'&&phaseT>90)advance();
+      else if(phase==='title'&&phaseT>170)advance();
+    }
     requestAnimationFrame(loop);
   }
   requestAnimationFrame(loop);
@@ -6174,10 +6183,14 @@ function startBootTutorial(){
   const scenes=[sceneMove,sceneRope,sceneMine,sceneCraft];
 
   /* ---- main loop ---- */
-  function slideLoop(){
+  let _slideAcc=0,_slideLast=performance.now();
+  function slideLoop(now){
     if(!slideLoopOn)return;
-    tutT++; animClock++;
-    scenes[cur](ctxs[cur],cvs[cur].width,cvs[cur].height,tutT);
+    _slideAcc+=now-_slideLast;_slideLast=now;
+    if(_slideAcc>=15){_slideAcc=0;
+      tutT++; animClock++;
+      scenes[cur](ctxs[cur],cvs[cur].width,cvs[cur].height,tutT);
+    }
     requestAnimationFrame(slideLoop);
   }
   requestAnimationFrame(slideLoop);
@@ -6438,7 +6451,12 @@ function startBaseIntro(onDone){
   }
 
   let biT=0, anim=0, loopOn=true, cur=0, done=false;
-  function loop(){ if(!loopOn)return; biT++; anim++; scene(); requestAnimationFrame(loop); }
+  let _biAcc=0,_biLast=performance.now();
+  function loop(now){ if(!loopOn)return;
+    _biAcc+=now-_biLast;_biLast=now;
+    if(_biAcc>=15){_biAcc=0; biT++; anim++; scene();}
+    requestAnimationFrame(loop);
+  }
   requestAnimationFrame(loop);
 
   // ---- navigation ----
@@ -6588,7 +6606,12 @@ function startMineIntro(){
   const scenes=[sceneDetect,sceneSignals,sceneVents];
 
   let miT=0, anim=0, loopOn=true, cur=0, done=false;
-  function loop(){ if(!loopOn)return; miT++; anim++; scenes[cur](ctxs[cur],cvs[cur].width,cvs[cur].height,miT); requestAnimationFrame(loop); }
+  let _miAcc=0,_miLast=performance.now();
+  function loop(now){ if(!loopOn)return;
+    _miAcc+=now-_miLast;_miLast=now;
+    if(_miAcc>=15){_miAcc=0; miT++; anim++; scenes[cur](ctxs[cur],cvs[cur].width,cvs[cur].height,miT);}
+    requestAnimationFrame(loop);
+  }
   requestAnimationFrame(loop);
 
   const slides=Array.prototype.slice.call(mi.querySelectorAll('.bi-slide'));
