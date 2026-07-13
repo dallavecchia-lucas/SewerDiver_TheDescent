@@ -2813,10 +2813,7 @@ function missionInteract(o){
     return;
   }
   if(o.type==='valve'){
-    if((o.cyc%VALVE_CYCLE)>VALVE_CALM){hurt(1,o.x,o.y-6);showMsg('scalding vent — wait for the gauge');return;}
-    o.prog+=12;sfx.mine();o.ph+=0.9;
-    burst(o.x,o.y-6,4,60,0.3,'#c2ccd6');
-    if(o.prog>=100){bubbleBurst(o.x,o.y-4,14,40,-24,20,1.3,2);sfx.mix();completeMissionObj(o);}
+    openCrank(o);   // the pressure valve is now a focused, full-screen crank minigame (see below)
     return;
   }
 }
@@ -3516,12 +3513,12 @@ function bindBtn(id,fn){const el=document.getElementById(id);if(!el)return;
   el.addEventListener('pointerdown',e=>{e.preventDefault();audioInit();fn();el.classList.add('on');});
   const up=e=>{if(e)e.preventDefault();el.classList.remove('on');};
   el.addEventListener('pointerup',up);el.addEventListener('pointerleave',up);el.addEventListener('pointercancel',up);}
-bindBtn('minebtn',()=>{if(state.mode==='craft'||state.mode==='inv')menuConfirm();else if(state.mode==='play'||state.mode==='mine')mineEdge=true;else if(state.mode==='objectives')closeObjectives();});
+bindBtn('minebtn',()=>{if(state.mode==='craft'||state.mode==='inv')menuConfirm();else if(state.mode==='play'||state.mode==='mine'||state.mode==='crank')mineEdge=true;else if(state.mode==='objectives')closeObjectives();});
 bindBtn('clipbtn',()=>{if(state.mode==='play')clipEdge=true;});
 bindBtn('ropebtn',()=>{queueCraft=true;});
 // menu/minigame cluster: confirm activates (dig in the mine), back & the red EXIT pill both bail out
-function menuConfirmAct(){if(state.mode==='craft'||state.mode==='inv')menuConfirm();else if(state.mode==='mine')mineDigSel();}
-function menuExit(){if(state.mode==='craft')toggleCraft(false);else if(state.mode==='inv')toggleInv(false);else if(state.mode==='mine')closeMine();}
+function menuConfirmAct(){if(state.mode==='craft'||state.mode==='inv')menuConfirm();else if(state.mode==='mine')mineDigSel();else if(state.mode==='crank')crankTurn();}
+function menuExit(){if(state.mode==='craft')toggleCraft(false);else if(state.mode==='inv')toggleInv(false);else if(state.mode==='mine')closeMine();else if(state.mode==='crank')closeCrank();}
 bindBtn('confirmbtn',menuConfirmAct);
 bindBtn('backbtn',menuBack);
 bindBtn('exitbtn',menuExit);
@@ -3581,12 +3578,12 @@ window.addEventListener('keydown',e=>{audioInit();
   const inMenu=(state.mode==='craft'||state.mode==='inv');
   if(keymap[e.code]){if(inMenu){menuMove(keymap[e.code]);e.preventDefault();return;}input[keymap[e.code]]=true;e.preventDefault();return;}
   if(e.code==='Space'||e.code==='Enter'){if(inMenu){menuConfirm();}else{if(!input.action)actionEdge=true;input.action=true;}e.preventDefault();}
-  if(e.code==='KeyF'){if(inMenu)menuConfirm();else if(state.mode==='play'||state.mode==='mine')mineEdge=true;e.preventDefault();}
+  if(e.code==='KeyF'){if(inMenu)menuConfirm();else if(state.mode==='play'||state.mode==='mine'||state.mode==='crank')mineEdge=true;e.preventDefault();}
   if(e.code==='KeyX'){if(state.mode==='play')clipEdge=true;e.preventDefault();}
   if(e.code==='KeyI'){if(state.mode==='play')toggleInv(true);else if(state.mode==='inv')toggleInv(false);e.preventDefault();}
   if(e.code==='KeyC'||e.code==='KeyE'||e.code==='Tab'){queueCraft=true;e.preventDefault();}
   if(e.code==='KeyQ'){if(state.mode==='play')useMedkit();e.preventDefault();}
-  if(e.code==='Escape'){if(state.mode==='play')pauseGame();else if(state.mode==='pause')resumeGame();else if(state.mode==='mine'||state.mode==='craft'||state.mode==='inv')menuBack();e.preventDefault();}
+  if(e.code==='Escape'){if(state.mode==='play')pauseGame();else if(state.mode==='pause')resumeGame();else if(state.mode==='mine'||state.mode==='craft'||state.mode==='inv'||state.mode==='crank')menuBack();e.preventDefault();}
 });
 window.addEventListener('keyup',e=>{if(keymap[e.code]){input[keymap[e.code]]=false;e.preventDefault();}
   if(e.code==='Space'||e.code==='Enter')input.action=false;});
@@ -3860,6 +3857,7 @@ function craftConfirm(){const els=craftEls();if(!els.length)return;mIdx=clamp(mI
 function menuBack(){
  if(state.mode==='inv'){toggleInv(false);return;}
  if(state.mode==='mine'){closeMine();return;}
+ if(state.mode==='crank'){closeCrank();return;}
  if(state.mode==='craft'){if(mZone==='opt'){menuBackToGrid();return;}toggleCraft(false);return;}
 }
 
@@ -4117,19 +4115,21 @@ function setMode(m){state.mode=m;
   if(m!=='play'){input.joy=false;input.jx=0;input.jy=0;const dp=document.getElementById('dpad');if(dp)dp.classList.remove('active');}
   const dpad=document.getElementById('dpad'),mpad=document.getElementById('minepad');
   const padMenu=(m==='mine'||m==='craft'||m==='inv');   // discrete arrow pad drives mining AND menus
-  const menuOnly=(m==='craft'||m==='inv');               // true menus (not the mining minigame)
-  if(dpad)dpad.classList.toggle('hidden',padMenu);
+  const cluster=(padMenu||m==='crank');                 // uses the confirm/back cluster (crank has no arrow pad)
+  const canvasGame=(m==='mine'||m==='crank');           // a full-canvas minigame (abort button + CRT off)
+  const menuOnly=(m==='craft'||m==='inv');               // true menus (not a minigame)
+  if(dpad)dpad.classList.toggle('hidden',cluster);
   if(mpad)mpad.classList.toggle('hidden',!padMenu);
-  // right-hand cluster: 4 play buttons ↔ two action buttons. EXIT pill is for true menus only; mining uses Mine/Abort.
+  // right-hand cluster: 4 play buttons ↔ two action buttons. EXIT pill is for true menus only; minigames use Do/Abort.
   const rc=document.getElementById('right-controls'),mc=document.getElementById('menu-controls'),cc=document.getElementById('center-controls'),ctl=document.getElementById('controls');
-  if(rc)rc.classList.toggle('hidden',padMenu);
-  if(mc)mc.classList.toggle('hidden',!padMenu);
+  if(rc)rc.classList.toggle('hidden',cluster);
+  if(mc)mc.classList.toggle('hidden',!cluster);
   if(cc)cc.classList.toggle('hidden',!menuOnly);
-  if(ctl)ctl.classList.toggle('menumode',padMenu);
-  const cl=document.getElementById('confirmLbl');if(cl)cl.textContent=(m==='mine')?'mine':'select';
-  const bl=document.getElementById('backLbl');if(bl){bl.textContent=(m==='mine')?'ABORT':'back';bl.classList.toggle('abortlbl',m==='mine');}
-  const bb=document.getElementById('backbtn');if(bb){if(m==='mine'){if(!bb.dataset.def)bb.dataset.def=bb.innerHTML;bb.innerHTML=ABORT_SVG;bb.classList.add('abortbtn');}else{if(bb.dataset.def)bb.innerHTML=bb.dataset.def;bb.classList.remove('abortbtn');}}
-  const crt=document.getElementById('crt');if(crt)crt.style.display=(m==='play'||m==='mine')?'none':'';   // CRT on menu screens only
+  if(ctl)ctl.classList.toggle('menumode',cluster);
+  const cl=document.getElementById('confirmLbl');if(cl)cl.textContent=(m==='mine')?'mine':(m==='crank')?'turn':'select';
+  const bl=document.getElementById('backLbl');if(bl){bl.textContent=canvasGame?'ABORT':'back';bl.classList.toggle('abortlbl',canvasGame);}
+  const bb=document.getElementById('backbtn');if(bb){if(canvasGame){if(!bb.dataset.def)bb.dataset.def=bb.innerHTML;bb.innerHTML=ABORT_SVG;bb.classList.add('abortbtn');}else{if(bb.dataset.def)bb.innerHTML=bb.dataset.def;bb.classList.remove('abortbtn');}}
+  const crt=document.getElementById('crt');if(crt)crt.style.display=(m==='play'||canvasGame)?'none':'';   // CRT on menu screens only
   overlayEl.classList.toggle('hidden',!(m==='title'||m==='win'||m==='lose'||m==='pause'||m==='objectives'));
   mineEl.classList.toggle('hidden',m!=='mine');
   if(m!=='craft')craftEl.classList.add('hidden');
@@ -4509,6 +4509,7 @@ function gl(x,y,r,col,a){glows.push({x:Math.round(x-RCX),y:Math.round(y-RCY),r,c
 
 function render(){
   if(state.mode==='mine'){renderMine();return;}
+  if(state.mode==='crank'){renderCrank();return;}
   const sh=shake>0?(Math.random()-.5)*shake:0, sv=shake>0?(Math.random()-.5)*shake:0;
   RCX=Math.round(camera.x+sh);RCY=Math.round(camera.y+sv);glows.length=0;
   const tier=tAt(player.y), w=TIERS[tier].water;
@@ -5215,9 +5216,14 @@ function resize(){const stage=document.getElementById('stage'),w=stage.clientWid
   canvas.style.width=w+'px';canvas.style.height=h+'px';}
 window.addEventListener('resize',resize);window.addEventListener('orientationchange',()=>setTimeout(resize,200));
 
-let acc=0,last=performance.now();
+let acc=0,last=performance.now(),frameAcc=0;
 function frame(now){
-  let dt=(now-last)/1000;last=now;if(dt>0.1)dt=0.1;acc+=dt;
+  // cap the sim/render cadence to ~60Hz regardless of display refresh rate — on high-refresh
+  // PC monitors (120/144/240Hz) rAF fires much more often than mobile's 60Hz, and a lot of the
+  // per-frame animation code below assumes "one call == 1/60s" rather than using real dt.
+  frameAcc+=now-last;last=now;
+  if(frameAcc<15){requestAnimationFrame(frame);return;}
+  let dt=Math.min(frameAcc,100)/1000;frameAcc=0;acc+=dt;
   if((state.mode==='title'||state.mode==='win'||state.mode==='lose')&&!TUT.active){if(actionEdge||queueCraft){actionEdge=false;queueCraft=false;startGame();}}
   else if(state.mode==='mine'){mineInput();
     if(mgOre&&!mineIntroActive){const o=mgOre,t=o.tier||0;   // no oxygen change while the mining tutorial slides are up
@@ -5228,6 +5234,7 @@ function frame(now){
           if(player.drown>=DROWN){player.drown=0;player.hearts--;flashDmg(1,true);shake=7;sfx.hurt();
             if(player.hearts<=0){const oo=mgOre;mgOre=null;if(oo)removeOre(oo);dieOrRevive('air');}}}
         else player.drown=0;}}}
+  else if(state.mode==='crank'){crankInput();}
   else if(state.mode==='craft'){if(queueCraft){queueCraft=false;toggleCraft(false);}}
   else if(state.mode==='play'){if(queueCraft){queueCraft=false;if(nearBase&&nearBase.active)toggleCraft(true);else showMsg('dock at a powered base to craft');}}
   else if(state.mode==='inv'){if(queueCraft){queueCraft=false;toggleInv(false);}}
@@ -5443,6 +5450,152 @@ function renderMine(){
 canvas.addEventListener('pointerdown',e=>{if(state.mode!=='mine')return;e.preventDefault();audioInit();
   const r=canvas.getBoundingClientRect();mineTapPx((e.clientX-r.left)/r.width*VW,(e.clientY-r.top)/r.height*VH);});
 mineEl.addEventListener('click',e=>{const b=e.target.closest('[data-mine]');if(!b)return;const v=b.dataset.mine;if(v==='exit')closeMine();else if(v==='dig')mineDigSel();});
+
+// ============ CRANK MINIGAME (pressure valve) ============
+// Interacting with a POLLUTION pressure-valve sprite opens this focused, full-canvas panel: a big
+// bitmap valve wheel plus a live pressure gauge whose needle sweeps low<->high. TURN the wheel (F /
+// TURN / tap) while the needle sits in the GREEN band to bleed pressure off; catch it in the RED
+// band and the valve blasts scalding vapour that eats your air. Land enough clean turns and the
+// pressure is RELEASED — the valve task is done. It's the same "crank on green, back off on vent"
+// rule as before, but blown up so the timing is legible.
+let crankObj=null;
+const CRANK_GRN0=0.08,CRANK_GRN1=0.36,CRANK_RED0=0.70;   // needle position bands: safe (green) / danger (red)
+const crankS={need:7,turns:0,p:0,dir:1,speed:0.6,wheel:0,spin:0,streak:0,flash:0,hitFlash:0,doneT:0,burnT:0,steam:[],hint:0};
+function crankNeed(tier){return 6+Math.min(tier||0,3);}   // a couple more turns the deeper the layer
+function crankZone(){const p=crankS.p;if(p>=CRANK_RED0)return 'vent';if(p>=CRANK_GRN0&&p<=CRANK_GRN1)return 'turn';return 'wait';}
+function crankPuff(x,y,side){crankS.steam.push({x:x+(Math.random()-.5)*6,y:y+(Math.random()-.5)*4,
+  vx:(side?(24+Math.random()*34):(Math.random()-.5)*26),vy:-22-Math.random()*30,life:0.5+Math.random()*0.45,r:1+((Math.random()*2)|0)});}
+function openCrank(o){
+  crankObj=o;const tier=o.tier||0;
+  crankS.need=crankNeed(tier);
+  crankS.turns=clamp(o.crankTurns||0,0,crankS.need-1);   // resume any partial progress from a prior abort
+  crankS.p=0;crankS.dir=1;crankS.speed=0.58+tier*0.03;
+  crankS.wheel=o.ph||0;crankS.spin=0;crankS.streak=0;
+  crankS.flash=0;crankS.hitFlash=0;crankS.doneT=0;crankS.burnT=0;crankS.hint=2.6;crankS.steam.length=0;
+  mineEdge=false;actionEdge=false;
+  setMode('crank');sfx.start();
+}
+function closeCrank(){if(!crankObj){if(state.mode==='crank')setMode('play');return;}
+  const o=crankObj;o.crankTurns=crankS.turns;o.prog=Math.round(crankS.turns/crankS.need*100);   // keep the world sprite's gauge in step
+  crankObj=null;setMode('play');sfx.back();
+  if(crankS.turns>0)showMsg('valve left part-open — the pressure is still up');}
+function crankTurn(){const o=crankObj;if(!o||crankS.doneT>0)return;
+  const z=crankZone();
+  if(z==='turn'){                       // clean turn: bleed pressure, kick the wheel round
+    crankS.turns++;crankS.streak++;crankS.spin+=6.4;crankS.hitFlash=0.28;sfx.mine();
+    const wx=Math.round(VW/2),wy=Math.round(VH*0.44);for(let i=0;i<5;i++)crankPuff(wx+(Math.random()-.5)*30,wy-6,0);
+    o.crankTurns=crankS.turns;o.prog=Math.round(crankS.turns/crankS.need*100);
+    if(crankS.turns>=crankS.need){crankS.doneT=1.15;crankS.spin+=7;sfx.mix();sfx.build();}
+  } else if(z==='vent'){                 // caught it venting: scalding — burn air, wheel bucks back
+    player.oxygen=Math.max(0,player.oxygen-player.maxOxygen*0.15);
+    crankS.spin-=3.6;crankS.streak=0;crankS.flash=0.42;crankS.burnT=0.6;shake=Math.max(shake,7);sfx.zap();
+  } else {                              // pressure not down yet — nothing happens, just a nudge to wait
+    crankS.streak=0;crankS.flash=0.16;sfx.deny();
+  }
+}
+function crankInput(){
+  const o=crankObj;if(!o){if(state.mode==='crank')setMode('play');return;}
+  // the diver is still submerged and working — air behaves exactly as it does mid-dig
+  if(player.attached){player.oxygen=player.maxOxygen;player.drown=0;}
+  else{player.oxygen-=OXY_RATE*pressureAt(o.tier||0)*(player.oxyDrainMul||1);if(player.oxygen<0)player.oxygen=0;
+    if(player.oxygen<=0){player.drown++;
+      if(player.drown>=DROWN){player.drown=0;player.hearts--;flashDmg(1,true);shake=7;sfx.hurt();
+        if(player.hearts<=0){crankObj=null;if(dieOrRevive('air'))return;setMode('play');return;}}}
+    else player.drown=0;}
+  if(crankS.hint>0)crankS.hint-=1/60;
+  if(crankS.doneT>0){crankS.doneT-=1/60;crankS.wheel+=crankS.spin/60;crankS.spin*=0.9;
+    if(crankS.doneT<=0){crankObj=null;o.crankTurns=0;completeMissionObj(o);setMode('play');}return;}
+  // sweep the pressure needle (ping-pong), a touch faster as more pressure has been bled
+  const sp=Math.min(1.2,crankS.speed+crankS.turns*0.045);
+  crankS.p+=crankS.dir*sp/60;
+  if(crankS.p>=1){crankS.p=1;crankS.dir=-1;}else if(crankS.p<=0){crankS.p=0;crankS.dir=1;}
+  if(crankZone()==='vent'&&(state.tick&1)===0)crankPuff(Math.round(VW/2)-Math.round(Math.min(58,VW*0.22)),Math.round(VH*0.44),1);
+  crankS.wheel+=crankS.spin/60;crankS.spin*=0.86;
+  if(crankS.flash>0)crankS.flash-=1/60;
+  if(crankS.hitFlash>0)crankS.hitFlash-=1/60;
+  if(crankS.burnT>0)crankS.burnT-=1/60;
+  for(let i=crankS.steam.length-1;i>=0;i--){const s=crankS.steam[i];s.life-=1/60;if(s.life<=0){crankS.steam.splice(i,1);continue;}
+    s.x+=s.vx/60;s.y+=s.vy/60;s.vx*=0.95;s.vy*=0.97;}
+  if(mineEdge||actionEdge){mineEdge=false;actionEdge=false;crankTurn();}
+  if(queueCraft){queueCraft=false;closeCrank();}
+}
+function pxTextW(str){let w=0;for(const ch of str)w+=((FONT3[ch]?FONT3[ch][0].length:3)+1);return w-1;}
+function pxTextC(str,cx,y,col){pxText(ctx,str,Math.round(cx-pxTextW(str)/2),y,col);}
+// big brass valve wheel, `ang` radians — rim + 6 spokes + 6 rim knobs + hub (matches the world sprite, blown up)
+function drawCrankWheel(cx,cy,r,ang,live,vent){
+  const rim=vent?'#b06a3a':live?'#a67c3e':'#7a6440',rimHi=vent?'#e8a05a':'#d0a24e',
+        spoke=vent?'#8a4a2a':'#6a5432',hub=live?'#c8a24a':'#8a7a4a',dark='#141c22';
+  pxDisc(ctx,cx,cy,r,rim);pxDisc(ctx,cx,cy,r-2,rimHi);pxDisc(ctx,cx,cy,r-4,dark);
+  for(let i=0;i<6;i++){const a=ang+i/6*6.28318;
+    for(let s=5;s<=r-3;s++){const x=cx+Math.cos(a)*s,y=cy+Math.sin(a)*s;px(ctx,Math.round(x)-1,Math.round(y)-1,2,2,spoke);}
+    const kx=cx+Math.cos(a)*(r-1),ky=cy+Math.sin(a)*(r-1);px(ctx,Math.round(kx)-2,Math.round(ky)-2,4,4,rim);px(ctx,Math.round(kx)-1,Math.round(ky)-1,2,2,rimHi);}
+  pxDisc(ctx,cx,cy,6,shade(hub,0.6));pxDisc(ctx,cx,cy,5,hub);px(ctx,cx-1,cy-2,2,1,shade(hub,1.5));
+}
+function renderCrank(){
+  const o=crankObj;if(!o){if(state.mode==='crank')setMode('play');return;}
+  RCX=0;RCY=0;const t=state.tick;
+  const sh=shake>0?(Math.random()-.5)*shake:0,sv=shake>0?(Math.random()-.5)*shake:0;
+  ctx.fillStyle='#0a1219';ctx.fillRect(0,0,VW,VH);
+  ctx.globalCompositeOperation='lighter';
+  for(let i=0;i<3;i++){const x=((t*0.24+i*90)%(VW+80))-40;radial(ctx,x,VH*0.5,72,'rgba(60,92,112,0.05)','rgba(60,92,112,0)');}
+  ctx.globalCompositeOperation='source-over';
+  const cx=Math.round(VW/2+sh),z=crankZone();
+  const glowAt=(x,y,r,col,a)=>{ctx.globalCompositeOperation='lighter';radial(ctx,x,y,r,'rgba('+col+','+a+')','rgba('+col+',0)');ctx.globalCompositeOperation='source-over';};
+  const onAir=!!player.attached,of=clamp(player.oxygen/player.maxOxygen,0,1),hpf=clamp(player.hearts/player.maxHearts,0,1);
+  // ---- oxygen + HP, mirrored from the mining dashboard ----
+  {const gw=Math.min(158,VW-36),gx=Math.round(cx-gw/2);
+   pxText(ctx,onAir?'AIR LINE':'OXYGEN',gx,6,onAir?'#5fe6ff':'#7fd0ee');
+   const oy=13;px(ctx,gx-1,oy-1,gw+2,5,'#0c1822');px(ctx,gx,oy,Math.round(gw*of),3,onAir?'#46d0ff':(of>0.5?'#46d0ff':of>0.25?'#ffcc2e':'#ff4d5e'));if(!onAir&&of<=0.2&&(t>>3&1))px(ctx,gx,oy,gw,3,'rgba(255,77,94,0.3)');
+   pxText(ctx,'HP',gx,20,'#ff9aa6');
+   const hy=27;px(ctx,gx-1,hy-1,gw+2,5,'#0c1822');px(ctx,gx,hy,Math.round(gw*hpf),3,player.hearts<=2?'#ff4d5e':'#46e06a');}
+  // ---- title ----
+  pxTextGhost(ctx,'PRESSURE VALVE',cx,42,2,'#10202a',1);
+  pxTextXL(ctx,'PRESSURE VALVE',cx,42,2,'#7fb0c8',1);
+  // ---- vent pipe + wheel (gauge/prompt/pips are bottom-anchored so short landscape viewports still fit) ----
+  const gaugeY=VH-92;                                   // pressure-bar top; everything below hangs off it
+  const avail=gaugeY-52;                                // vertical room between the title and the gauge
+  const wr=Math.max(22,Math.min(46,(avail/2-6)|0,(VW*0.22)|0));
+  const wy=Math.round(52+avail/2+sv);
+  const nozX=cx-wr-Math.round(Math.min(30,VW*0.12));
+  px(ctx,0,wy-4,nozX+2,8,'#26333f');px(ctx,0,wy-4,nozX+2,2,'#3a4a58');px(ctx,0,wy+2,nozX+2,2,'#141e26');   // supply pipe into the wheel
+  px(ctx,nozX-3,wy-6,4,12,'#4a5a68');   // vent nozzle mouth (steam blasts from here when red)
+  const live=z==='turn',vent=z==='vent';
+  if(vent)glowAt(cx,wy,wr+14,'255,120,50',0.35+Math.sin(t*0.3)*0.14);
+  else if(live)glowAt(cx,wy,wr+10,'93,255,138',0.22+Math.sin(t*0.12)*0.08);
+  else glowAt(cx,wy,wr+6,'70,160,208',0.12);
+  drawCrankWheel(cx,wy,wr,crankS.wheel,live,vent);
+  if(crankS.hitFlash>0){ctx.strokeStyle='rgba(93,255,138,'+(crankS.hitFlash*2).toFixed(2)+')';ctx.lineWidth=1;ctx.beginPath();ctx.arc(cx,wy,wr+3,0,6.2832);ctx.stroke();}
+  // steam puffs
+  for(const s of crankS.steam){const a=clamp(s.life/0.9,0,1);ctx.globalAlpha=0.5*a;ctx.fillStyle='#dff1ff';const rr=s.r+Math.round((1-a)*2);ctx.fillRect(Math.round(s.x)-rr,Math.round(s.y)-rr,rr*2,rr*2);}
+  ctx.globalAlpha=1;
+  // ---- pressure gauge (needle sweeps low<->high; crank while it's in the green) ----
+  const bw=Math.min(168,VW-36),bx=Math.round(cx-bw/2),by=gaugeY;
+  px(ctx,bx-3,by-3,bw+6,14,'#0b141d');px(ctx,bx-2,by-2,bw+4,12,'#16222c');
+  const g0=bx+Math.round(bw*CRANK_GRN0),gwn=Math.round(bw*(CRANK_GRN1-CRANK_GRN0));
+  px(ctx,g0,by,gwn,8,'#173a22');px(ctx,g0,by,gwn,2,'#2f7a3f');px(ctx,g0,by+7,gwn,1,'#0d2314');
+  const r0=bx+Math.round(bw*CRANK_RED0),rwn=bw-Math.round(bw*CRANK_RED0);
+  px(ctx,r0,by,rwn,8,'#3a1414');px(ctx,r0,by,rwn,2,'#7a2f2f');
+  for(let x=r0;x<r0+rwn-2;x+=6)px(ctx,x,by+3,3,2,(t>>2&1)?'#ffcf3a':'#5a3a10');   // hazard ticks over the danger zone
+  const nx=bx+Math.round(crankS.p*(bw-2)),ncol=vent?'#ff5a4a':live?'#5dff8a':'#eef6ff';
+  px(ctx,nx-2,by-4,5,3,'#0b141d');px(ctx,nx-1,by-3,3,15,'#0b141d');px(ctx,nx,by-3,1,14,ncol);   // needle
+  pxTextC('LOW',bx+2,by+12,'#3f6a4a');pxTextC('HIGH',bx+bw-14,by+12,'#7a4a4a');
+  // ---- prompt ----
+  const py=by+30;let ptxt,pcol;
+  if(vent){ptxt='STEAM';pcol=(t>>2&1)?'#ff6a4a':'#c8402a';}else if(live){ptxt='TURN';pcol='#5dff8a';}else{ptxt='WAIT';pcol='#5b8095';}
+  pxTextGhost(ctx,ptxt,cx,py,3,'#121c24',1);pxTextXL(ctx,ptxt,cx,py,3,pcol,1);
+  // ---- progress pips ----
+  const pipY=py+18,pipW=9,pipG=4,tot=crankS.need,row=tot*(pipW+pipG)-pipG,px0=Math.round(cx-row/2);
+  for(let i=0;i<tot;i++){const on=i<crankS.turns;px(ctx,px0+i*(pipW+pipG),pipY,pipW,7,on?'#46d0ff':'#1c2a34');if(on)px(ctx,px0+i*(pipW+pipG),pipY,pipW,2,'#9fe8ff');}
+  pxTextC('PRESSURE',cx,pipY+11,'#4a6072');
+  // ---- first-open hint ----
+  if(crankS.hint>0){const a=clamp(crankS.hint/2.6,0,1);ctx.globalAlpha=a;pxTextC('TURN ON GREEN   STOP ON RED',cx,VH-16,'#6f93a6');ctx.globalAlpha=1;}
+  // ---- burn / release overlays ----
+  if(crankS.burnT>0){ctx.fillStyle='rgba(255,90,50,'+(0.22*clamp(crankS.burnT/0.6,0,1)).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);}
+  if(crankS.doneT>0){const k=clamp(crankS.doneT/1.15,0,1);ctx.fillStyle='rgba(93,255,138,'+(0.22*k).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);
+    glowAt(cx,wy,wr+30,'93,255,138',0.4*k);pxTextGhost(ctx,'RELEASED',cx,wy,3,'#12301e',1);pxTextXL(ctx,'RELEASED',cx,wy,3,'#9dffc0',1);}
+  if(shake>0)shake-=0.6;
+}
+canvas.addEventListener('pointerdown',e=>{if(state.mode!=='crank')return;e.preventDefault();audioInit();crankTurn();});
 
 /* ===== STUDIO BOOT SEQUENCE — segmented-LCD logo / presents / title / first-time prompt =====
  * Renders straight onto the real game canvas (same VW/VH grid, same px()/FONT3 the rest of the
@@ -5694,15 +5847,19 @@ function startStudioIntro(){
     }
   }
 
-  function loop(){
+  let _loopAcc=0,_loopLast=performance.now();
+  function loop(now){
     if(!running)return;
-    phaseT++;
-    if(actionEdge){actionEdge=false;if(phase!=='power'&&phase!=='firsttime')advance();}
-    render(phaseT);
-    if(phase==='power'&&phaseT>26)advance();
-    else if(phase==='logo'&&phaseT>150)advance();
-    else if(phase==='presents'&&phaseT>90)advance();
-    else if(phase==='title'&&phaseT>170)advance();
+    _loopAcc+=now-_loopLast;_loopLast=now;
+    if(_loopAcc>=15){_loopAcc=0;
+      phaseT++;
+      if(actionEdge){actionEdge=false;if(phase!=='power'&&phase!=='firsttime')advance();}
+      render(phaseT);
+      if(phase==='power'&&phaseT>26)advance();
+      else if(phase==='logo'&&phaseT>150)advance();
+      else if(phase==='presents'&&phaseT>90)advance();
+      else if(phase==='title'&&phaseT>170)advance();
+    }
     requestAnimationFrame(loop);
   }
   requestAnimationFrame(loop);
@@ -6026,10 +6183,14 @@ function startBootTutorial(){
   const scenes=[sceneMove,sceneRope,sceneMine,sceneCraft];
 
   /* ---- main loop ---- */
-  function slideLoop(){
+  let _slideAcc=0,_slideLast=performance.now();
+  function slideLoop(now){
     if(!slideLoopOn)return;
-    tutT++; animClock++;
-    scenes[cur](ctxs[cur],cvs[cur].width,cvs[cur].height,tutT);
+    _slideAcc+=now-_slideLast;_slideLast=now;
+    if(_slideAcc>=15){_slideAcc=0;
+      tutT++; animClock++;
+      scenes[cur](ctxs[cur],cvs[cur].width,cvs[cur].height,tutT);
+    }
     requestAnimationFrame(slideLoop);
   }
   requestAnimationFrame(slideLoop);
@@ -6290,7 +6451,12 @@ function startBaseIntro(onDone){
   }
 
   let biT=0, anim=0, loopOn=true, cur=0, done=false;
-  function loop(){ if(!loopOn)return; biT++; anim++; scene(); requestAnimationFrame(loop); }
+  let _biAcc=0,_biLast=performance.now();
+  function loop(now){ if(!loopOn)return;
+    _biAcc+=now-_biLast;_biLast=now;
+    if(_biAcc>=15){_biAcc=0; biT++; anim++; scene();}
+    requestAnimationFrame(loop);
+  }
   requestAnimationFrame(loop);
 
   // ---- navigation ----
@@ -6440,7 +6606,12 @@ function startMineIntro(){
   const scenes=[sceneDetect,sceneSignals,sceneVents];
 
   let miT=0, anim=0, loopOn=true, cur=0, done=false;
-  function loop(){ if(!loopOn)return; miT++; anim++; scenes[cur](ctxs[cur],cvs[cur].width,cvs[cur].height,miT); requestAnimationFrame(loop); }
+  let _miAcc=0,_miLast=performance.now();
+  function loop(now){ if(!loopOn)return;
+    _miAcc+=now-_miLast;_miLast=now;
+    if(_miAcc>=15){_miAcc=0; miT++; anim++; scenes[cur](ctxs[cur],cvs[cur].width,cvs[cur].height,miT);}
+    requestAnimationFrame(loop);
+  }
   requestAnimationFrame(loop);
 
   const slides=Array.prototype.slice.call(mi.querySelectorAll('.bi-slide'));
