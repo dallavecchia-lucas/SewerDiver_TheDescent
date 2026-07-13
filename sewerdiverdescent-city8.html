@@ -4126,7 +4126,7 @@ function setMode(m){state.mode=m;
   if(mc)mc.classList.toggle('hidden',!cluster);
   if(cc)cc.classList.toggle('hidden',!menuOnly);
   if(ctl)ctl.classList.toggle('menumode',cluster);
-  const cl=document.getElementById('confirmLbl');if(cl)cl.textContent=(m==='mine')?'mine':(m==='crank')?'turn':'select';
+  const cl=document.getElementById('confirmLbl');if(cl)cl.textContent=(m==='mine')?'mine':(m==='crank')?'crank':'select';
   const bl=document.getElementById('backLbl');if(bl){bl.textContent=canvasGame?'ABORT':'back';bl.classList.toggle('abortlbl',canvasGame);}
   const bb=document.getElementById('backbtn');if(bb){if(canvasGame){if(!bb.dataset.def)bb.dataset.def=bb.innerHTML;bb.innerHTML=ABORT_SVG;bb.classList.add('abortbtn');}else{if(bb.dataset.def)bb.innerHTML=bb.dataset.def;bb.classList.remove('abortbtn');}}
   const crt=document.getElementById('crt');if(crt)crt.style.display=(m==='play'||canvasGame)?'none':'';   // CRT on menu screens only
@@ -5092,6 +5092,8 @@ function diverBody(g,moving,kick){
 const FONT3={O:['111','101','101','101','111'],X:['101','101','010','101','101'],Y:['101','101','010','010','010'],G:['111','100','101','101','111'],E:['111','100','111','100','111'],N:['101','111','111','111','101'],H:['101','101','111','101','101'],P:['111','101','111','100','100'],A:['010','101','111','101','101'],I:['111','010','010','010','111'],R:['110','101','110','101','101'],L:['100','100','100','100','111'],V:['101','101','101','101','010'],
   B:['110','101','111','101','110'],C:['111','100','100','100','111'],D:['110','101','101','101','110'],F:['111','100','111','100','100'],S:['111','100','111','001','111'],T:['111','010','010','010','010'],U:['101','101','101','101','111'],M:['101','111','101','101','101'],
   W:['10001','10001','10101','10101','10101'],  // two full-height outer legs + a shorter centre leg — no crossbar, so it can't read as H
+  '0':['111','101','101','101','111'],'1':['010','110','010','010','111'],'2':['111','001','111','100','111'],'3':['111','001','111','001','111'],'4':['101','101','111','001','001'],'5':['111','100','111','001','111'],'6':['111','100','111','101','111'],'7':['111','001','010','010','010'],'8':['111','101','111','101','111'],'9':['111','101','111','001','111'],
+  '%':['101','001','010','100','101'],'/':['001','001','010','100','100'],'.':['000','000','000','000','010'],'-':['000','000','111','000','000'],':':['000','010','000','010','000'],'>':['100','010','001','010','100'],'<':['001','010','100','010','001'],
   ' ':['000','000','000','000','000']};
 function glyphW(ch){const g=FONT3[ch];return g?g[0].length:3;}
 function pxText(c,str,x,y,col){let cx=x;for(const ch of str){const g=FONT3[ch];if(g){const w=g[0].length;for(let r=0;r<5;r++)for(let i=0;i<w;i++)if(g[r][i]==='1')px(c,cx+i,y+r,1,1,col);cx+=w+1;}else cx+=4;}}
@@ -5452,26 +5454,41 @@ canvas.addEventListener('pointerdown',e=>{if(state.mode!=='mine')return;e.preven
 mineEl.addEventListener('click',e=>{const b=e.target.closest('[data-mine]');if(!b)return;const v=b.dataset.mine;if(v==='exit')closeMine();else if(v==='dig')mineDigSel();});
 
 // ============ CRANK MINIGAME (pressure valve) ============
-// Interacting with a POLLUTION pressure-valve sprite opens this focused, full-canvas panel: a big
-// bitmap valve wheel plus a live pressure gauge whose needle sweeps low<->high. TURN the wheel (F /
-// TURN / tap) while the needle sits in the GREEN band to bleed pressure off; catch it in the RED
-// band and the valve blasts scalding vapour that eats your air. Land enough clean turns and the
-// pressure is RELEASED — the valve task is done. It's the same "crank on green, back off on vent"
-// rule as before, but blown up so the timing is legible.
+// Interacting with a POLLUTION pressure-valve sprite opens this focused, full-canvas panel styled as
+// a cyberpunk engineer's HMI console: a live schematic of the sector gas grid up top, and a timing
+// track below. On the track a SAFE (green) window and a HAZARD (red) window both slide back and
+// forth, crossing each other; a swept marker runs the track. Hit ACTUATE (F / tap / the button)
+// while the marker is inside GREEN-ONLY to fire the remote servo and bleed a pulse of pressure — the
+// schematic valve physically spins each time (digital command -> mechanical crank). Fire while the
+// marker sits in RED (or where red has slid over the green) and the main vents scalding gas that
+// eats your air. Drain the pressure to zero and the valve is RELEASED — the task is done.
 let crankObj=null;
-const CRANK_GRN0=0.08,CRANK_GRN1=0.36,CRANK_RED0=0.70;   // needle position bands: safe (green) / danger (red)
-const crankS={need:7,turns:0,p:0,dir:1,speed:0.6,wheel:0,spin:0,streak:0,flash:0,hitFlash:0,doneT:0,burnT:0,steam:[],hint:0};
+// three moving bands on the track: SAFE (green) window + HAZARD (red) window each oscillate; the
+// marker sweeps. Safe zone = marker inside green AND outside red (red wins on overlap).
+const crankS={need:7,turns:0,p:0,dir:1,speed:0.5,bt:0,gSpd:0.85,rSpd:1.25,gAmp:0.26,rAmp:0.30,gH:0.12,rH:0.09,rPhase:1.4,
+  psiMax:280,actY:0,rotor:0,spin:0,streak:0,flash:0,hitFlash:0,doneT:0,burnT:0,fx:[],hint:0};
 function crankNeed(tier){return 6+Math.min(tier||0,3);}   // a couple more turns the deeper the layer
-function crankZone(){const p=crankS.p;if(p>=CRANK_RED0)return 'vent';if(p>=CRANK_GRN0&&p<=CRANK_GRN1)return 'turn';return 'wait';}
-function crankPuff(x,y,side){crankS.steam.push({x:x+(Math.random()-.5)*6,y:y+(Math.random()-.5)*4,
-  vx:(side?(24+Math.random()*34):(Math.random()-.5)*26),vy:-22-Math.random()*30,life:0.5+Math.random()*0.45,r:1+((Math.random()*2)|0)});}
+function crankBands(){                                     // normalized [0,1] edges of the two moving windows
+  const gc=0.5+Math.sin(crankS.bt*crankS.gSpd)*crankS.gAmp;
+  const rc=0.5+Math.sin(crankS.bt*crankS.rSpd+crankS.rPhase)*crankS.rAmp;
+  return {gL:clamp(gc-crankS.gH,0,1),gR:clamp(gc+crankS.gH,0,1),rL:clamp(rc-crankS.rH,0,1),rR:clamp(rc+crankS.rH,0,1)};
+}
+function crankZone(){const p=crankS.p,b=crankBands();
+  const inR=p>=b.rL&&p<=b.rR, inG=p>=b.gL&&p<=b.gR;
+  return inR?'vent':(inG?'turn':'wait');}                  // red overrides green wherever they cross
+function crankSpark(x,y,col,spd){crankS.fx.push({x:x+(Math.random()-.5)*6,y:y+(Math.random()-.5)*4,
+  vx:(Math.random()-.5)*spd,vy:-16-Math.random()*spd*0.6,life:0.4+Math.random()*0.4,r:1+((Math.random()*2)|0),col});}
 function openCrank(o){
-  crankObj=o;const tier=o.tier||0;
+  crankObj=o;const tier=o.tier||0,tc=Math.min(tier,3);
   crankS.need=crankNeed(tier);
   crankS.turns=clamp(o.crankTurns||0,0,crankS.need-1);   // resume any partial progress from a prior abort
-  crankS.p=0;crankS.dir=1;crankS.speed=0.58+tier*0.03;
-  crankS.wheel=o.ph||0;crankS.spin=0;crankS.streak=0;
-  crankS.flash=0;crankS.hitFlash=0;crankS.doneT=0;crankS.burnT=0;crankS.hint=2.6;crankS.steam.length=0;
+  crankS.p=0;crankS.dir=1;crankS.speed=0.5+tier*0.03;crankS.bt=0;
+  crankS.gSpd=0.85+tc*0.05;crankS.rSpd=1.25+tc*0.09;     // deeper layers: windows slide faster
+  crankS.gAmp=0.26;crankS.rAmp=0.30;
+  crankS.gH=0.12-tc*0.008;crankS.rH=0.085+tc*0.013;       // deeper: safe window narrower, hazard wider
+  crankS.rPhase=1.3+tier*0.4;crankS.psiMax=240+tier*70;
+  crankS.rotor=o.ph||0;crankS.spin=0;crankS.streak=0;
+  crankS.flash=0;crankS.hitFlash=0;crankS.doneT=0;crankS.burnT=0;crankS.hint=3.0;crankS.fx.length=0;
   mineEdge=false;actionEdge=false;
   setMode('crank');sfx.start();
 }
@@ -5480,16 +5497,18 @@ function closeCrank(){if(!crankObj){if(state.mode==='crank')setMode('play');retu
   crankObj=null;setMode('play');sfx.back();
   if(crankS.turns>0)showMsg('valve left part-open — the pressure is still up');}
 function crankTurn(){const o=crankObj;if(!o||crankS.doneT>0)return;
-  const z=crankZone();
-  if(z==='turn'){                       // clean turn: bleed pressure, kick the wheel round
-    crankS.turns++;crankS.streak++;crankS.spin+=6.4;crankS.hitFlash=0.28;sfx.mine();
-    const wx=Math.round(VW/2),wy=Math.round(VH*0.44);for(let i=0;i<5;i++)crankPuff(wx+(Math.random()-.5)*30,wy-6,0);
+  const z=crankZone(),ay=crankS.actY||Math.round(VH*0.4),cx=Math.round(VW/2);
+  if(z==='turn'){                       // clean actuate: servo fires, a pressure pulse bleeds off
+    crankS.turns++;crankS.streak++;crankS.spin+=6.4;crankS.hitFlash=0.30;sfx.mine();
+    for(let i=0;i<7;i++)crankSpark(cx+(Math.random()-.5)*22,ay,'#3dff9a',64);
     o.crankTurns=crankS.turns;o.prog=Math.round(crankS.turns/crankS.need*100);
-    if(crankS.turns>=crankS.need){crankS.doneT=1.15;crankS.spin+=7;sfx.mix();sfx.build();}
-  } else if(z==='vent'){                 // caught it venting: scalding — burn air, wheel bucks back
+    crankS.gSpd+=0.02;crankS.rSpd+=0.03;   // each pulse tightens the timing a touch
+    if(crankS.turns>=crankS.need){crankS.doneT=1.2;crankS.spin+=8;sfx.mix();sfx.build();}
+  } else if(z==='vent'){                 // fired into the hazard window: scalding blowout — burn air, servo kicks back
     player.oxygen=Math.max(0,player.oxygen-player.maxOxygen*0.15);
     crankS.spin-=3.6;crankS.streak=0;crankS.flash=0.42;crankS.burnT=0.6;shake=Math.max(shake,7);sfx.zap();
-  } else {                              // pressure not down yet — nothing happens, just a nudge to wait
+    for(let i=0;i<12;i++)crankSpark(cx+(Math.random()-.5)*28,ay,'#ff3b6b',96);
+  } else {                              // fired on a closed valve — no effect, just a denial blip
     crankS.streak=0;crankS.flash=0.16;sfx.deny();
   }
 }
@@ -5503,96 +5522,135 @@ function crankInput(){
         if(player.hearts<=0){crankObj=null;if(dieOrRevive('air'))return;setMode('play');return;}}}
     else player.drown=0;}
   if(crankS.hint>0)crankS.hint-=1/60;
-  if(crankS.doneT>0){crankS.doneT-=1/60;crankS.wheel+=crankS.spin/60;crankS.spin*=0.9;
+  if(crankS.doneT>0){crankS.doneT-=1/60;crankS.rotor+=crankS.spin/60;crankS.spin*=0.9;
     if(crankS.doneT<=0){crankObj=null;o.crankTurns=0;completeMissionObj(o);setMode('play');}return;}
-  // sweep the pressure needle (ping-pong), a touch faster as more pressure has been bled
-  const sp=Math.min(1.2,crankS.speed+crankS.turns*0.045);
+  // sweep the marker (ping-pong) + slide the two windows; marker speeds up a touch as pressure bleeds
+  const sp=Math.min(1.1,crankS.speed+crankS.turns*0.04);
   crankS.p+=crankS.dir*sp/60;
   if(crankS.p>=1){crankS.p=1;crankS.dir=-1;}else if(crankS.p<=0){crankS.p=0;crankS.dir=1;}
-  if(crankZone()==='vent'&&(state.tick&1)===0)crankPuff(Math.round(VW/2)-Math.round(Math.min(58,VW*0.22)),Math.round(VH*0.44),1);
-  crankS.wheel+=crankS.spin/60;crankS.spin*=0.86;
+  crankS.bt+=1/60;
+  if(crankZone()==='vent'&&(state.tick&3)===0)crankSpark(Math.round(VW/2)+(Math.random()-.5)*18,crankS.actY||Math.round(VH*0.4),'#ff3b6b',60);
+  crankS.rotor+=crankS.spin/60;crankS.spin*=0.86;
   if(crankS.flash>0)crankS.flash-=1/60;
   if(crankS.hitFlash>0)crankS.hitFlash-=1/60;
   if(crankS.burnT>0)crankS.burnT-=1/60;
-  for(let i=crankS.steam.length-1;i>=0;i--){const s=crankS.steam[i];s.life-=1/60;if(s.life<=0){crankS.steam.splice(i,1);continue;}
-    s.x+=s.vx/60;s.y+=s.vy/60;s.vx*=0.95;s.vy*=0.97;}
+  for(let i=crankS.fx.length-1;i>=0;i--){const s=crankS.fx[i];s.life-=1/60;if(s.life<=0){crankS.fx.splice(i,1);continue;}
+    s.x+=s.vx/60;s.y+=s.vy/60;s.vx*=0.94;s.vy*=0.96;s.vy+=0.3;}
   if(mineEdge||actionEdge){mineEdge=false;actionEdge=false;crankTurn();}
   if(queueCraft){queueCraft=false;closeCrank();}
 }
 function pxTextW(str){let w=0;for(const ch of str)w+=((FONT3[ch]?FONT3[ch][0].length:3)+1);return w-1;}
 function pxTextC(str,cx,y,col){pxText(ctx,str,Math.round(cx-pxTextW(str)/2),y,col);}
-// big brass valve wheel, `ang` radians — rim + 6 spokes + 6 rim knobs + hub (matches the world sprite, blown up)
-function drawCrankWheel(cx,cy,r,ang,live,vent){
-  const rim=vent?'#b06a3a':live?'#a67c3e':'#7a6440',rimHi=vent?'#e8a05a':'#d0a24e',
-        spoke=vent?'#8a4a2a':'#6a5432',hub=live?'#c8a24a':'#8a7a4a',dark='#141c22';
-  pxDisc(ctx,cx,cy,r,rim);pxDisc(ctx,cx,cy,r-2,rimHi);pxDisc(ctx,cx,cy,r-4,dark);
-  for(let i=0;i<6;i++){const a=ang+i/6*6.28318;
-    for(let s=5;s<=r-3;s++){const x=cx+Math.cos(a)*s,y=cy+Math.sin(a)*s;px(ctx,Math.round(x)-1,Math.round(y)-1,2,2,spoke);}
-    const kx=cx+Math.cos(a)*(r-1),ky=cy+Math.sin(a)*(r-1);px(ctx,Math.round(kx)-2,Math.round(ky)-2,4,4,rim);px(ctx,Math.round(kx)-1,Math.round(ky)-1,2,2,rimHi);}
-  pxDisc(ctx,cx,cy,6,shade(hub,0.6));pxDisc(ctx,cx,cy,5,hub);px(ctx,cx-1,cy-2,2,1,shade(hub,1.5));
+// cyberpunk rotary servo/actuator — LED-rimmed housing + a 4-arm rotor (one accent index arm) that
+// spins on `ang`. This is the "mechanical" end of the console: it snaps round each time you ACTUATE.
+function drawActuator(cx,cy,r,ang,live,vent){
+  const acc=vent?'#ff3b6b':live?'#3dff9a':'#39c6ff',dim=vent?'#5a1830':live?'#164a30':'#123848';
+  pxDisc(ctx,cx,cy,r,'#0c1826');pxDisc(ctx,cx,cy,r-1,'#0a1420');
+  for(let i=0;i<12;i++){const a=i/12*6.28318,lx=cx+Math.cos(a)*(r-2),ly=cy+Math.sin(a)*(r-2);   // segmented LED rim
+    px(ctx,Math.round(lx)-1,Math.round(ly)-1,2,2,(i%3===0)?acc:dim);}
+  pxDisc(ctx,cx,cy,r-4,'#060d16');
+  for(let i=0;i<4;i++){const a=ang+i/4*6.28318,col=(i===0)?acc:'#2a5a72';                        // rotor cross
+    for(let s=2;s<=r-5;s++){const x=cx+Math.cos(a)*s,y=cy+Math.sin(a)*s;px(ctx,Math.round(x)-1,Math.round(y)-1,2,2,col);}}
+  pxDisc(ctx,cx,cy,3,shade(acc,0.6));pxDisc(ctx,cx,cy,2,acc);   // hub
 }
 function renderCrank(){
   const o=crankObj;if(!o){if(state.mode==='crank')setMode('play');return;}
   RCX=0;RCY=0;const t=state.tick;
   const sh=shake>0?(Math.random()-.5)*shake:0,sv=shake>0?(Math.random()-.5)*shake:0;
-  ctx.fillStyle='#0a1219';ctx.fillRect(0,0,VW,VH);
+  // ---- console backdrop: near-black with a faint scrolling grid + drifting cyan glow ----
+  ctx.fillStyle='#05090f';ctx.fillRect(0,0,VW,VH);
+  for(let gy=2;gy<VH;gy+=9)px(ctx,0,gy,VW,1,'#0a1420');
+  const goff=Math.round(t*0.3)%14;for(let gx=-goff;gx<VW;gx+=14)px(ctx,gx,0,1,VH,'#0a1420');
   ctx.globalCompositeOperation='lighter';
-  for(let i=0;i<3;i++){const x=((t*0.24+i*90)%(VW+80))-40;radial(ctx,x,VH*0.5,72,'rgba(60,92,112,0.05)','rgba(60,92,112,0)');}
+  for(let i=0;i<2;i++){const x=((t*0.2+i*130)%(VW+80))-40;radial(ctx,x,VH*0.44,80,'rgba(40,120,150,0.05)','rgba(40,120,150,0)');}
   ctx.globalCompositeOperation='source-over';
-  const cx=Math.round(VW/2+sh),z=crankZone();
+  const cx=Math.round(VW/2+sh),z=crankZone(),live=z==='turn',vent=z==='vent';
   const glowAt=(x,y,r,col,a)=>{ctx.globalCompositeOperation='lighter';radial(ctx,x,y,r,'rgba('+col+','+a+')','rgba('+col+',0)');ctx.globalCompositeOperation='source-over';};
   const onAir=!!player.attached,of=clamp(player.oxygen/player.maxOxygen,0,1),hpf=clamp(player.hearts/player.maxHearts,0,1);
-  // ---- oxygen + HP, mirrored from the mining dashboard ----
-  {const gw=Math.min(158,VW-36),gx=Math.round(cx-gw/2);
-   pxText(ctx,onAir?'AIR LINE':'OXYGEN',gx,6,onAir?'#5fe6ff':'#7fd0ee');
-   const oy=13;px(ctx,gx-1,oy-1,gw+2,5,'#0c1822');px(ctx,gx,oy,Math.round(gw*of),3,onAir?'#46d0ff':(of>0.5?'#46d0ff':of>0.25?'#ffcc2e':'#ff4d5e'));if(!onAir&&of<=0.2&&(t>>3&1))px(ctx,gx,oy,gw,3,'rgba(255,77,94,0.3)');
-   pxText(ctx,'HP',gx,20,'#ff9aa6');
-   const hy=27;px(ctx,gx-1,hy-1,gw+2,5,'#0c1822');px(ctx,gx,hy,Math.round(gw*hpf),3,player.hearts<=2?'#ff4d5e':'#46e06a');}
-  // ---- title ----
-  pxTextGhost(ctx,'PRESSURE VALVE',cx,42,2,'#10202a',1);
-  pxTextXL(ctx,'PRESSURE VALVE',cx,42,2,'#7fb0c8',1);
-  // ---- vent pipe + wheel (gauge/prompt/pips are bottom-anchored so short landscape viewports still fit) ----
-  const gaugeY=VH-92;                                   // pressure-bar top; everything below hangs off it
-  const avail=gaugeY-52;                                // vertical room between the title and the gauge
-  const wr=Math.max(22,Math.min(46,(avail/2-6)|0,(VW*0.22)|0));
-  const wy=Math.round(52+avail/2+sv);
-  const nozX=cx-wr-Math.round(Math.min(30,VW*0.12));
-  px(ctx,0,wy-4,nozX+2,8,'#26333f');px(ctx,0,wy-4,nozX+2,2,'#3a4a58');px(ctx,0,wy+2,nozX+2,2,'#141e26');   // supply pipe into the wheel
-  px(ctx,nozX-3,wy-6,4,12,'#4a5a68');   // vent nozzle mouth (steam blasts from here when red)
-  const live=z==='turn',vent=z==='vent';
-  if(vent)glowAt(cx,wy,wr+14,'255,120,50',0.35+Math.sin(t*0.3)*0.14);
-  else if(live)glowAt(cx,wy,wr+10,'93,255,138',0.22+Math.sin(t*0.12)*0.08);
-  else glowAt(cx,wy,wr+6,'70,160,208',0.12);
-  drawCrankWheel(cx,wy,wr,crankS.wheel,live,vent);
-  if(crankS.hitFlash>0){ctx.strokeStyle='rgba(93,255,138,'+(crankS.hitFlash*2).toFixed(2)+')';ctx.lineWidth=1;ctx.beginPath();ctx.arc(cx,wy,wr+3,0,6.2832);ctx.stroke();}
-  // steam puffs
-  for(const s of crankS.steam){const a=clamp(s.life/0.9,0,1);ctx.globalAlpha=0.5*a;ctx.fillStyle='#dff1ff';const rr=s.r+Math.round((1-a)*2);ctx.fillRect(Math.round(s.x)-rr,Math.round(s.y)-rr,rr*2,rr*2);}
+  const frac=clamp(crankS.turns/crankS.need,0,1),psi=Math.max(0,Math.round((1-frac)*crankS.psiMax));
+  // ==== TOP STATUS STRIP: O2 + HULL ====
+  {const gw=Math.min(150,VW-38),gx=Math.round(cx-gw/2);
+   pxText(ctx,onAir?'AIR LINE':'O2',gx,5,onAir?'#5fe6ff':'#7fd0ee');
+   const oy=12;px(ctx,gx-1,oy-1,gw+2,5,'#0a1420');px(ctx,gx,oy,Math.round(gw*of),3,onAir?'#39c6ff':(of>0.5?'#39c6ff':of>0.25?'#ffcf3a':'#ff4d5e'));if(!onAir&&of<=0.2&&(t>>3&1))px(ctx,gx,oy,gw,3,'rgba(255,77,94,0.3)');
+   pxText(ctx,'HULL',gx,19,'#ff9aa6');
+   const hy=26;px(ctx,gx-1,hy-1,gw+2,5,'#0a1420');px(ctx,gx,hy,Math.round(gw*hpf),3,player.hearts<=2?'#ff4d5e':'#3dff9a');}
+  // ==== HEADER BAR ====
+  const hbY=35;
+  px(ctx,8,hbY,VW-16,11,'#081420');px(ctx,8,hbY,VW-16,1,'#1c4152');px(ctx,8,hbY+10,VW-16,1,'#0c2330');
+  px(ctx,8,hbY,1,4,'#39c6ff');px(ctx,8,hbY,4,1,'#39c6ff');px(ctx,VW-9,hbY,1,4,'#39c6ff');px(ctx,VW-12,hbY,4,1,'#39c6ff');   // corner brackets
+  pxText(ctx,'VALVE CTRL',14,hbY+3,'#7fe0ff');
+  {const lvX=VW-14;pxText(ctx,'LIVE',lvX-16,hbY+3,'#2f9a6a');if((t>>4)&1)px(ctx,lvX,hbY+3,4,4,'#3dff9a');}
+  // ==== ENGINEER DECK: sector gas-grid schematic ====
+  const barY=VH-82;                                   // timing track top — everything below anchored here
+  const panX=8,panT=hbY+15,panW=VW-16,panB=barY-8,panH=Math.max(46,panB-panT);
+  px(ctx,panX,panT,panW,panH,'#070f18');
+  px(ctx,panX,panT,panW,1,'#123040');px(ctx,panX,panT+panH-1,panW,1,'#0c2230');px(ctx,panX,panT,1,panH,'#123040');px(ctx,panX+panW-1,panT,1,panH,'#123040');
+  pxText(ctx,'SECTOR GAS GRID',panX+5,panT+4,'#3a6f88');
+  pxText(ctx,'BLED '+Math.round(frac*100)+'%',panX+panW-46,panT+4,'#2f7a56');
+  // big PSI readout — bleeds toward 0 as pressure drops
+  const psiCol=psi<=0?'#3dff9a':(frac<0.34?'#ff6a4a':frac<0.7?'#ffcf3a':'#7fe0ff'),psiStr=''+psi;
+  pxTextGhost(ctx,psiStr,cx,panT+18,3,'#0e1c22',1);pxTextXL(ctx,psiStr,cx,panT+18,3,psiCol,1);
+  pxText(ctx,'PSI',cx+Math.ceil(lcdWidth(psiStr,3,1)/2)+3,panT+16,'#3a6f88');
+  // pipe network + central actuator
+  const pipeY=Math.round(panT+panH*0.66+sv);crankS.actY=pipeY;
+  const ar=Math.max(11,Math.min(26,(panH*0.30)|0,(panW*0.14)|0));
+  const nodeLX=panX+14,nodeRX=panX+panW-14;
+  px(ctx,nodeLX,pipeY-3,(cx-ar)-nodeLX,6,'#0f2230');px(ctx,cx+ar,pipeY-3,nodeRX-(cx+ar),6,'#0f2230');
+  px(ctx,nodeLX,pipeY-3,(cx-ar)-nodeLX,1,'#1c4256');px(ctx,cx+ar,pipeY-3,nodeRX-(cx+ar),1,'#1c4256');
+  px(ctx,nodeLX,pipeY-1,(cx-ar)-nodeLX,3,'#08161f');px(ctx,cx+ar,pipeY-1,nodeRX-(cx+ar),3,'#08161f');
+  const flowSpd=0.5+(1-frac)*1.6,foff=(t*flowSpd)%9;   // flow dashes slow as the main bleeds off
+  for(let x=nodeLX+2+foff;x<cx-ar-1;x+=9)px(ctx,Math.round(x),pipeY-1,4,3,'#2be0ff');
+  for(let x=cx+ar+2+foff;x<nodeRX-1;x+=9)px(ctx,Math.round(x),pipeY-1,4,3,vent?'#ff6a4a':'#2be0ff');
+  const drawNode=(nxp,lab,col)=>{px(ctx,nxp-5,pipeY-6,10,12,'#0c1c28');px(ctx,nxp-5,pipeY-6,10,1,'#1c4256');px(ctx,nxp-3,pipeY-4,6,8,'#08161f');
+    for(let k=0;k<3;k++)px(ctx,nxp-2,pipeY-3+k*3,4,2,(((t>>3)+k)%3)?'#123040':col);pxTextC(lab,nxp,pipeY+9,'#3a6f88');};
+  drawNode(nodeLX,'IN','#39c6ff');drawNode(nodeRX,'OUT',vent?'#ff3b6b':'#39c6ff');
+  if(vent)glowAt(cx,pipeY,ar+12,'255,59,107',0.34+Math.sin(t*0.3)*0.14);
+  else if(live)glowAt(cx,pipeY,ar+9,'61,255,154',0.24+Math.sin(t*0.12)*0.08);
+  else glowAt(cx,pipeY,ar+6,'57,198,255',0.12);
+  drawActuator(cx,pipeY,ar,crankS.rotor,live,vent);
+  if(crankS.hitFlash>0){ctx.strokeStyle='rgba(61,255,154,'+(crankS.hitFlash*2).toFixed(2)+')';ctx.lineWidth=1;ctx.beginPath();ctx.arc(cx,pipeY,ar+3,0,6.2832);ctx.stroke();}
+  pxTextC('SERVO A'+(Math.min(o.tier||0,8)+1),cx,pipeY+ar+4,'#3a6f88');
+  for(const s of crankS.fx){const a=clamp(s.life/0.8,0,1);ctx.globalAlpha=0.6*a;ctx.fillStyle=s.col||'#dff1ff';const rr=s.r+Math.round((1-a)*2);ctx.fillRect(Math.round(s.x)-rr,Math.round(s.y)-rr,rr*2,rr*2);}
   ctx.globalAlpha=1;
-  // ---- pressure gauge (needle sweeps low<->high; crank while it's in the green) ----
-  const bw=Math.min(168,VW-36),bx=Math.round(cx-bw/2),by=gaugeY;
-  px(ctx,bx-3,by-3,bw+6,14,'#0b141d');px(ctx,bx-2,by-2,bw+4,12,'#16222c');
-  const g0=bx+Math.round(bw*CRANK_GRN0),gwn=Math.round(bw*(CRANK_GRN1-CRANK_GRN0));
-  px(ctx,g0,by,gwn,8,'#173a22');px(ctx,g0,by,gwn,2,'#2f7a3f');px(ctx,g0,by+7,gwn,1,'#0d2314');
-  const r0=bx+Math.round(bw*CRANK_RED0),rwn=bw-Math.round(bw*CRANK_RED0);
-  px(ctx,r0,by,rwn,8,'#3a1414');px(ctx,r0,by,rwn,2,'#7a2f2f');
-  for(let x=r0;x<r0+rwn-2;x+=6)px(ctx,x,by+3,3,2,(t>>2&1)?'#ffcf3a':'#5a3a10');   // hazard ticks over the danger zone
-  const nx=bx+Math.round(crankS.p*(bw-2)),ncol=vent?'#ff5a4a':live?'#5dff8a':'#eef6ff';
-  px(ctx,nx-2,by-4,5,3,'#0b141d');px(ctx,nx-1,by-3,3,15,'#0b141d');px(ctx,nx,by-3,1,14,ncol);   // needle
-  pxTextC('LOW',bx+2,by+12,'#3f6a4a');pxTextC('HIGH',bx+bw-14,by+12,'#7a4a4a');
-  // ---- prompt ----
-  const py=by+30;let ptxt,pcol;
-  if(vent){ptxt='STEAM';pcol=(t>>2&1)?'#ff6a4a':'#c8402a';}else if(live){ptxt='TURN';pcol='#5dff8a';}else{ptxt='WAIT';pcol='#5b8095';}
-  pxTextGhost(ctx,ptxt,cx,py,3,'#121c24',1);pxTextXL(ctx,ptxt,cx,py,3,pcol,1);
-  // ---- progress pips ----
-  const pipY=py+18,pipW=9,pipG=4,tot=crankS.need,row=tot*(pipW+pipG)-pipG,px0=Math.round(cx-row/2);
-  for(let i=0;i<tot;i++){const on=i<crankS.turns;px(ctx,px0+i*(pipW+pipG),pipY,pipW,7,on?'#46d0ff':'#1c2a34');if(on)px(ctx,px0+i*(pipW+pipG),pipY,pipW,2,'#9fe8ff');}
-  pxTextC('PRESSURE',cx,pipY+11,'#4a6072');
-  // ---- first-open hint ----
-  if(crankS.hint>0){const a=clamp(crankS.hint/2.6,0,1);ctx.globalAlpha=a;pxTextC('TURN ON GREEN   STOP ON RED',cx,VH-16,'#6f93a6');ctx.globalAlpha=1;}
-  // ---- burn / release overlays ----
-  if(crankS.burnT>0){ctx.fillStyle='rgba(255,90,50,'+(0.22*clamp(crankS.burnT/0.6,0,1)).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);}
-  if(crankS.doneT>0){const k=clamp(crankS.doneT/1.15,0,1);ctx.fillStyle='rgba(93,255,138,'+(0.22*k).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);
-    glowAt(cx,wy,wr+30,'93,255,138',0.4*k);pxTextGhost(ctx,'RELEASED',cx,wy,3,'#12301e',1);pxTextXL(ctx,'RELEASED',cx,wy,3,'#9dffc0',1);}
+  // ==== TIMING TRACK: sliding SAFE (green) + HAZARD (red) windows + swept marker ====
+  const bw=Math.min(180,VW-24),bx=Math.round(cx-bw/2),by=barY;
+  px(ctx,bx-3,by-3,bw+6,16,'#060d16');px(ctx,bx-2,by-2,bw+4,14,'#0c1a26');px(ctx,bx-2,by-2,bw+4,1,'#173040');
+  for(let i=0;i<=8;i++)px(ctx,bx+Math.round(i/8*(bw-1)),by-2,1,2,'#173040');
+  const b=crankBands();
+  const gx0=bx+Math.round(b.gL*(bw-1)),gx1=bx+Math.round(b.gR*(bw-1));
+  const rx0=bx+Math.round(b.rL*(bw-1)),rx1=bx+Math.round(b.rR*(bw-1));
+  glowAt((gx0+gx1)/2,by+5,18,'61,255,154',0.16);   // SAFE window
+  px(ctx,gx0,by,gx1-gx0,10,'#123f28');px(ctx,gx0,by,gx1-gx0,2,'#3dff9a');px(ctx,gx0,by+9,gx1-gx0,1,'#0c2a1a');
+  px(ctx,gx0,by,1,10,'#3dff9a');px(ctx,gx1-1,by,1,10,'#3dff9a');
+  glowAt((rx0+rx1)/2,by+5,18,'255,59,107',0.18);   // HAZARD window, drawn over green so overlaps read as danger
+  px(ctx,rx0,by,rx1-rx0,10,'#3a1020');px(ctx,rx0,by,rx1-rx0,2,'#ff3b6b');
+  for(let x=rx0+1;x<rx1-1;x+=4)px(ctx,x,by+3,2,4,(t>>2&1)?'#ffcf3a':'#7a1a30');
+  px(ctx,rx0,by,1,10,'#ff3b6b');px(ctx,rx1-1,by,1,10,'#ff3b6b');
+  {const oL=Math.max(gx0,rx0),oR=Math.min(gx1,rx1);if(oR>oL){const wc=(t>>1&1)?'#ffef8a':'#ff3b6b';px(ctx,oL,by-2,oR-oL,1,wc);px(ctx,oL,by+11,oR-oL,1,wc);}}   // overlap warning
+  const nx=bx+Math.round(crankS.p*(bw-1)),ncol=vent?'#ff5a6b':live?'#5dffa0':'#eef6ff';
+  px(ctx,nx-2,by-5,5,3,'#060d16');px(ctx,nx-1,by-4,3,18,'#060d16');px(ctx,nx,by-4,1,17,ncol);px(ctx,nx-2,by-5,5,2,ncol);   // marker
+  // ==== ACTUATE BUTTON (digital control that fires the mechanical servo) ====
+  const btnW=Math.min(150,VW-40),btnX=Math.round(cx-btnW/2),btnY=by+22,btnH=18;
+  let btLab,btCol,btEdge,btFill;
+  if(vent){btLab='HOLD';btCol='#ff5a6b';btEdge='#ff3b6b';btFill='#26090f';}
+  else if(live){btLab='ACTUATE';btCol='#eafff2';btEdge='#3dff9a';btFill='#123f28';}
+  else{btLab='STANDBY';btCol='#6fa0b8';btEdge='#1c4256';btFill='#0a1622';}
+  px(ctx,btnX-1,btnY-1,btnW+2,btnH+2,'#05090f');px(ctx,btnX,btnY,btnW,btnH,btFill);
+  px(ctx,btnX,btnY,btnW,1,btEdge);px(ctx,btnX,btnY+btnH-1,btnW,1,shade(btEdge,0.5));px(ctx,btnX,btnY,1,btnH,btEdge);px(ctx,btnX+btnW-1,btnY,1,btnH,shade(btEdge,0.6));
+  if(live)glowAt(cx,btnY+btnH/2,btnW*0.5,'61,255,154',0.14+Math.sin(t*0.2)*0.05);
+  if(crankS.hitFlash>0||crankS.flash>0)px(ctx,btnX,btnY,btnW,btnH,'rgba(255,255,255,0.16)');
+  {const chv=live?'#3dff9a':vent?'#ff5a6b':'#2a4a5a';pxText(ctx,'>',btnX+6,btnY+7,chv);pxText(ctx,'<',btnX+btnW-10,btnY+7,chv);}
+  pxTextGhost(ctx,btLab,cx,btnY+9,2,'#0a1620',1);pxTextXL(ctx,btLab,cx,btnY+9,2,btCol,1);
+  // ==== PROGRESS PIPS ====
+  {const pipY=btnY+btnH+6,tot=crankS.need,pipW=Math.max(5,Math.min(11,((btnW-tot*3)/tot)|0)),pipG=3,rowW=tot*(pipW+pipG)-pipG,ppx=Math.round(cx-rowW/2);
+   for(let i=0;i<tot;i++){const on=i<crankS.turns;px(ctx,ppx+i*(pipW+pipG),pipY,pipW,5,on?'#39c6ff':'#122430');if(on)px(ctx,ppx+i*(pipW+pipG),pipY,pipW,1,'#9fe8ff');}}
+  // ==== RULE / FIRST-OPEN HINT ====
+  if(crankS.hint>0){const a=clamp(crankS.hint/3,0,1);ctx.globalAlpha=a;pxTextC('FIRE ON GREEN   AVOID RED',cx,VH-13,'#6f93a6');ctx.globalAlpha=1;}
+  else pxTextC('FIRE ON GREEN',cx,VH-13,'#3a5a6a');
+  // ==== BURN / RELEASE OVERLAYS ====
+  if(crankS.burnT>0){ctx.fillStyle='rgba(255,60,90,'+(0.22*clamp(crankS.burnT/0.6,0,1)).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);}
+  if(crankS.doneT>0){const k=clamp(crankS.doneT/1.2,0,1);ctx.fillStyle='rgba(61,255,154,'+(0.22*k).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);
+    glowAt(cx,pipeY,40,'61,255,154',0.4*k);pxTextGhost(ctx,'RELEASED',cx,pipeY,3,'#0e2a1c',1);pxTextXL(ctx,'RELEASED',cx,pipeY,3,'#9dffc0',1);}
   if(shake>0)shake-=0.6;
 }
 canvas.addEventListener('pointerdown',e=>{if(state.mode!=='crank')return;e.preventDefault();audioInit();crankTurn();});
