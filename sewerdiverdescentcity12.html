@@ -2814,14 +2814,14 @@ function applyCityVariant(n,d,A){
     T.kelp=[blendHex(T.kelp[0],b.kelp[0],w),blendHex(T.kelp[1],b.kelp[1],w)];
     T.scenery=(w>0.25)?a.scenery.slice(0,3).concat(b.scenery[0]):a.scenery;}
   // one suit per ENVIRONMENT, fabricated on the env's LAST layer and required to pass the control
-  // unit into the next environment. Recipe = one composite (refined = 2 ore + 1 floating mixer)
-  // from EACH of this environment's 4 layers — material 1 from layer 1, ... material 4 from layer 4.
+  // unit into the next environment. Recipe = the TOP composite (slot c: 2× ore #3 + 1× floating #3,
+  // the tier reserved for suits) from EACH of this environment's 4 layers.
   if(d.layerInEnv===3&&n<SCHED.length-1){
     if(!TIERS[n].gear)TIERS[n].gear={name:'DIVE-RIG',in:{},carry:null,stats:null};
     const nx=SCHED[n+1];                                            // the environment this suit unlocks
     TIERS[n].gear.name=suitNameFor(A[nx.arch]||a,nx.mod||m,d.city);
     TIERS[n].gear.stats=suitStatsFor(d.city,d.env+1,nx.mod||m);
-    const gin={};for(let L=n-3;L<=n;L++)gin['t'+(L+1)+'f'+SLOTS[(Math.random()*3)|0]]=1;
+    const gin={};for(let L=n-3;L<=n;L++)gin['t'+(L+1)+'fc']=1;
     TIERS[n].gear.in=gin;TIERS[n].gear.carry=null;
   } else delete TIERS[n].gear;                                      // all other layers craft no suit
 }
@@ -3153,6 +3153,11 @@ function missionInteract(o){
     const d=SCHED[o.tier];
     if(d&&d.layerInEnv===3&&gearLevel<=o.tier){const g=TIERS[o.tier]&&TIERS[o.tier].gear;
       showMsg('new environment below — fabricate the '+(g?g.name:'next dive suit')+' first');sfx.deny();return;}
+    // the panel eats the layer's #1 composite once, on top of the finished quest (bulkPaid rides the
+    // saved mission, so a save caught mid-animation can't charge twice)
+    if(!m.bulkPaid){const toll=bulkToll(o.tier);
+      if(!canPay(toll)){showMsg('panel needs 1× '+RES['t'+(o.tier+1)+'fa'].name+' to power the release');sfx.deny();return;}
+      pay(toll);m.bulkPaid=true;sfx.craft();}
     controlTrigger(o.tier);return;
   }
   if(o.type==='term'){
@@ -4003,14 +4008,31 @@ function clipReach(b){if(!b)return false;
   if(b.endX!==undefined&&Math.hypot(player.x+4-b.endX,player.y+4-b.endY)<=GRAB_R)return true;
   return false;}
 function ropeCost(t){const c={};c['t'+(t+1)+'ra']=3;return c;}
-function activateBase(b){const kit={};kit['t'+b.tier+'fa']=2;
+/* ---- per-environment V1–V4 progression (O2 tank, O2 regulator, lens; seals ride player.seals) ----
+ * Version v of an item draws on layer v of the CURRENT environment: layer li (0..3) of environment
+ * e ↔ global tier index 4*e+li (every environment is exactly 4 layers). Resource roles per layer:
+ * slot a (#1) = life support & infrastructure (tank←floating, regulator←ore, composite→bulkhead+seal),
+ * slot b (#2) = utility (composite→lens, base power, seal), slot c (#3) = reserved for the suit. */
+function envTier(e,li){return 4*e+li;}
+function progFlags(p,key,e){if(!p[key])p[key]={};if(!p[key][e])p[key][e]=[false,false,false,false];return p[key][e];}
+function progCount(p,key){let c=0;const m=p[key]||{};for(const e in m)for(let i=0;i<4;i++)if(m[e][i])c++;return c;}
+function recalcOxyDrain(){player.oxyDrainMul=Math.max(0.4,1-0.05*progCount(player,'o2reg'));}
+const O2_TANK_COST=5, O2_REG_COST=5;      // × the layer's #1 floating / #1 ore
+function o2TankCost(e,v){return {['t'+(envTier(e,v)+1)+'ma']:O2_TANK_COST};}
+function o2RegCost(e,v){return {['t'+(envTier(e,v)+1)+'ra']:O2_REG_COST};}
+function lensCost(e,v){return {['t'+(envTier(e,v)+1)+'fb']:1};}
+function sealCost(t){return {['t'+(t+1)+'fa']:1,['t'+(t+1)+'fb']:1};}
+function bulkToll(t){return {['t'+(t+1)+'fa']:1};}
+// every base eats the #2 composite of the layer ABOVE it ('t'+b.tier is the previous layer's prefix;
+// only env-1 layer-a of each city has nothing above, and that base spawns online)
+function activateBase(b){const kit={};kit['t'+b.tier+'fb']=1;
   if(canPay(kit)){pay(kit);b.active=true;b.ropeLen=ROPE_DEF;
     burst(b.x,b.y,26,150,0.7,'#46d0ff');
     bubbleBurst(b.x,b.y-2,10,20,-26,16,1.3,2);
     sfx.build();
     // bulkheads are owned by the layer's quest + control unit now — the base is air and crafting only
     showMsg('base online — air line live, clip on with ⚓');}
-  else showMsg('haul 2 '+RES['t'+b.tier+'fa'].name+' down here to power this base');
+  else showMsg('haul 1 '+RES['t'+b.tier+'fb'].name+' down here — built one layer up — to power this base');
 }
 function chip(id){const r=RES[id];return '<span class="chip">'+iconSVG(id,18)+'<span class="n">'+r.name+'</span><span class="q">'+invGet(id)+'</span></span>';}
 function need(m,curT){return Object.keys(m).map(id=>{const r=RES[id],nd=m[id],hv=invGet(id),ok=hv>=nd,it=idTier(id)-1,carry=it<curT;
@@ -4025,6 +4047,7 @@ const DIVS={
   {k:'mixer', label:'Mixer',   fn:()=>DIVICON.flask},
   {k:'fab',   label:'Fab Bay', fn:()=>gearIcon(34)},
   {k:'airline',label:'Air Line',fn:()=>ropeIcon(34)},
+  {k:'o2',    label:'O₂ Gear', fn:()=>tankIcon(34)},
   {k:'seals', label:'Seals',   fn:()=>sealIcon(34)},
   {k:'lens',  label:'Lens',    fn:()=>lensIcon(34)},
   {k:'patch', label:'Patch',   fn:()=>medIcon(34)},
@@ -4037,7 +4060,7 @@ const DIVS={
   {k:'exch',   label:'Exchange', fn:()=>DIVICON.swap},
  ]
 };
-const DIVTITLE={hold:'Cargo hold',mixer:'The mixer',fab:'Fabrication bay',airline:'Air line',seals:'Hazard seals',lens:'Lantern lens',patch:'Patch kits',dealer:'Scrap dealer',parts:'Buy parts',machine:'Machine shop',outfit:'Outfitter',exch:'Resource exchange'};
+const DIVTITLE={hold:'Cargo hold',mixer:'The mixer',fab:'Fabrication bay',airline:'Air line',o2:'O₂ tank & regulator',seals:'Hazard seals',lens:'Lantern lens',patch:'Patch kits',dealer:'Scrap dealer',parts:'Buy parts',machine:'Machine shop',outfit:'Outfitter',exch:'Resource exchange'};
 const ctabsEl=document.getElementById('ctabs');
 let mDiv=null, mZone='tab', mIdx=0, mGridIdx=0;
 let baseIntroSeen=false;
@@ -4059,12 +4082,19 @@ function relevantResPanel(tab,div,T0){
    const _gi=nextGearTier();
    if(_gi>=0){const g=TIERS[_gi].gear;for(const k in g.in)add(k,g.in[k]);}
    const nb=bases[T0+1];
-   if(nb&&!nb.active){const aid='t'+nb.tier+'fa',ah=invGet(aid),aok=ah>=2;
-    baseRow='<div class="rpbase"><span class="rpb-l">NEXT BASE \u25be</span><span class="rpchip '+(aok?'ok':'no')+'">'+iconSVG(aid,16)+'<span class="rpn">'+ah+'</span><span class="rpneed">/2</span></span><span class="rpb-t">'+(aok?'ready \u2014 haul it down &amp; power on':'haul '+RES[aid].name+' down to power it on')+'</span></div>';}
+   if(nb&&!nb.active){const aid='t'+nb.tier+'fb',ah=invGet(aid),aok=ah>=1;
+    baseRow='<div class="rpbase"><span class="rpb-l">NEXT BASE \u25be</span><span class="rpchip '+(aok?'ok':'no')+'">'+iconSVG(aid,16)+'<span class="rpn">'+ah+'</span><span class="rpneed">/1</span></span><span class="rpb-t">'+(aok?'ready \u2014 haul it down &amp; power on':'haul '+RES[aid].name+' down to power it on')+'</span></div>';}
   }
   else if(div==='airline'){const rc=ropeCost(T0);for(const k in rc)add(k,rc[k]);}
-  else if(div==='seals'){if(T0>=1){add('t'+(T0+1)+'fb',1);add('t'+(T0+1)+'rc',2);}}
-  else if(div==='lens'){const LL=player.lanternLevel||0;if(LL<4){add('t'+(LL+1)+'ra',2);add('t'+(LL+1)+'ma',1);}}
+  else if(div==='o2'){const e=envOfTier(T0);
+   const tk=progFlags(player,'o2tank',e);let tv=0;while(tv<4&&tk[tv])tv++;
+   if(tv<4){const c=o2TankCost(e,tv);for(const k in c)add(k,c[k]);}
+   const rg=progFlags(player,'o2reg',e);let rv=0;while(rv<4&&rg[rv])rv++;
+   if(rv<4){const c=o2RegCost(e,rv);for(const k in c)add(k,c[k]);}
+  }
+  else if(div==='seals'){if(envOfTier(T0)>=1&&!(player.seals&&player.seals[T0])){const sc=sealCost(T0);for(const k in sc)add(k,sc[k]);}}
+  else if(div==='lens'){const e=envOfTier(T0),lf=progFlags(player,'lensUpg',e);let lv=0;while(lv<4&&lf[lv])lv++;
+   if(lv<4){const lc=lensCost(e,lv);for(const k in lc)add(k,lc[k]);}}
   else if(div==='patch'){add('t'+(T0+1)+'ra',1);add('t'+(T0+1)+'ma',1);}
  } else {
   if(div==='dealer'||div==='parts'||div==='exch')return '';    // these run on coins/scrap shown elsewhere
@@ -4073,7 +4103,7 @@ function relevantResPanel(tab,div,T0){
    if(!chips.length)return '';
    return '<div class="rpanel"><div class="rphead">parts aboard</div><div class="rpgrid">'+chips.join('')+'</div></div>';
   }
-  else if(div==='outfit'){for(let T=0;T<4;T++)add('t'+(T+1)+'ra',null);}
+  else if(div==='outfit')return '';                              // coin-only now — tank & regulator craft in the workshop
  }
  if(!ord.length&&!baseRow)return '';
  let chips=ord.map(id=>resChip(id,nd[id])).join('');
@@ -4084,10 +4114,10 @@ function relevantResPanel(tab,div,T0){
 function nextBasePanel(T0){
  const nb=bases[T0+1];
  if(nb&&!nb.active){
-  const aid='t'+nb.tier+'fa',ah=invGet(aid),aok=ah>=2;
+  const aid='t'+nb.tier+'fb',ah=invGet(aid),aok=ah>=1;
   return '<div class="rpanel rpnext"><div class="rphead">next base \u00b7 power-on</div><div class="rpnextrow">'
-   +'<span class="rpchip '+(aok?'ok':'no')+'">'+iconSVG(aid,18)+'<span class="rpn">'+ah+'</span><span class="rpneed">/2</span></span>'
-   +'<span class="rpb-t">'+(aok? RES[aid].name+' ready \u2014 haul it to the dead base below &amp; press X to power on' : 'haul 2\u00d7 '+RES[aid].name+' down to the dead base below to power it on')+'</span>'
+   +'<span class="rpchip '+(aok?'ok':'no')+'">'+iconSVG(aid,18)+'<span class="rpn">'+ah+'</span><span class="rpneed">/1</span></span>'
+   +'<span class="rpb-t">'+(aok? RES[aid].name+' ready \u2014 haul it to the dead base below &amp; press X to power on' : 'haul 1\u00d7 '+RES[aid].name+' \u2014 this layer\u2019s #2 composite \u2014 down to the dead base below to power it on')+'</span>'
    +'</div></div>';
  }
  if(nb&&nb.active) return '<div class="rpanel rpnext"><div class="rphead">next base</div><div class="rpnextrow"><span class="rpb-t" style="color:#5dff8a">\u2713 the base below is powered \u2014 gear up and descend</span></div></div>';
@@ -4111,7 +4141,7 @@ function divContent(tab,div,T0){
    if(g){const ok=canPay(g.in);
     h+='<div class="recipe gearrec '+(ok?'rok':'')+'"><div class="rout">'+gearIcon(30)+'<span class="nm" style="color:var(--gold)">'+g.name+'</span></div><div class="rin">'+need(g.in,gi)+'</div><button class="cbtn build" data-craft="gear:'+gi+'"'+(ok?'':' disabled')+'>Build</button></div>';
     if(g.carry)h+='<div class="gearnote">\u25c2 needs '+RES[g.carry].name+' carried down from the tier above</div>';
-    h+='<div class="gearnote">one composite from each of this environment\u2019s 4 layers \u2014 the control unit at its last bulkhead demands this suit</div>';}
+    h+='<div class="gearnote">the top (#3) composite from each of this environment\u2019s 4 layers \u2014 the control unit at its last bulkhead demands this suit</div>';}
    else h+='<div class="emptyhold">no suit line to fabricate right now \u2014 the next environment\u2019s spec unlocks as you descend; the transit gate waits at the bottom</div>';
   }
   else if(div==='airline'){
@@ -4121,17 +4151,33 @@ function divContent(tab,div,T0){
    else{const rc=ropeCost(T0),ok=canPay(rc);
     h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+ropeIcon(30)+'<span class="nm">Extend rope +'+ROPE_STEP+' <span style="color:#5b8095;font-size:9px">'+_b.ropeLen+'\u2192'+Math.min(ROPE_MAX,_b.ropeLen+ROPE_STEP)+'u</span></span></div><div class="rin">'+need(rc,T0)+'</div><button class="cbtn '+(ok?'go':'')+'" data-craft="rope"'+(ok?'':' disabled')+'>Extend</button></div>';}
   }
+  else if(div==='o2'){
+   const e=envOfTier(T0),tk=progFlags(player,'o2tank',e),rg=progFlags(player,'o2reg',e);
+   h+='<div class="gearnote">each version draws on one layer of this environment \u2014 V1 from its 1st layer down to V4 from its 4th</div>';
+   for(let vv=0;vv<4;vv++){const fitted=tk[vv],rid='t'+(envTier(e,vv)+1)+'ma';
+    if(!RES[rid]){h+='<div class="gearnote">\u25c2 O\u2082 tank V'+(vv+1)+' \u2014 descend to this environment\u2019s layer '+(vv+1)+' to spec it</div>';continue;}
+    const c=o2TankCost(e,vv),ok=!fitted&&(vv===0||tk[vv-1])&&canPay(c);
+    h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+tankIcon(30)+'<span class="nm">O\u2082 tank V'+(vv+1)+' <span style="color:#5b8095;font-size:9px">+'+TANK_STEP+' max air</span></span></div><div class="rin">'+(fitted?'<span style="color:#5dff8a;font-size:9px">FITTED</span>':need(c,T0))+'</div><button class="cbtn '+(ok?'build':'')+'" data-craft="o2tank:'+vv+'"'+(ok?'':' disabled')+'>'+(fitted?'\u2713':'Fit')+'</button></div>';}
+   for(let vv=0;vv<4;vv++){const fitted=rg[vv],rid='t'+(envTier(e,vv)+1)+'ra';
+    if(!RES[rid]){h+='<div class="gearnote">\u25c2 O\u2082 regulator V'+(vv+1)+' \u2014 descend to this environment\u2019s layer '+(vv+1)+' to spec it</div>';continue;}
+    const c=o2RegCost(e,vv),ok=!fitted&&(vv===0||rg[vv-1])&&canPay(c);
+    h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+tankIcon(30)+'<span class="nm">O\u2082 regulator V'+(vv+1)+' <span style="color:#5b8095;font-size:9px">\u22125% air drain</span></span></div><div class="rin">'+(fitted?'<span style="color:#5dff8a;font-size:9px">FITTED</span>':need(c,T0))+'</div><button class="cbtn '+(ok?'build':'')+'" data-craft="o2reg:'+vv+'"'+(ok?'':' disabled')+'>'+(fitted?'\u2713':'Fit')+'</button></div>';}
+  }
   else if(div==='seals'){
-   if(T0<1)h+='<div class="emptyhold">no hazard seals needed at this depth</div>';
-   else if(player.seals&&player.seals[T0])h+='<div class="allbuilt" style="color:#7dff4a">seals fitted for this level \u2713</div>';
-   else{const sc={};sc['t'+(T0+1)+'fb']=1;sc['t'+(T0+1)+'rc']=2;const ok=canPay(sc);
-    h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+sealIcon(30)+'<span class="nm">Hazard seals <span style="color:#5b8095;font-size:9px">big cut to this level\u2019s pollution</span></span></div><div class="rin">'+need(sc,T0)+'</div><button class="cbtn '+(ok?'go':'')+'" data-craft="seal"'+(ok?'':' disabled')+'>Fit</button></div>';}
+   const e=envOfTier(T0),V=(SCHED[T0]?SCHED[T0].layerInEnv:T0%4)+1;
+   if(e<1)h+='<div class="emptyhold">this environment runs clean \u2014 pollution (and the seals that counter it) begin one environment down</div>';
+   else if(player.seals&&player.seals[T0])h+='<div class="allbuilt" style="color:#7dff4a">seal V'+V+' fitted for this layer \u2713</div>';
+   else{const sc=sealCost(T0),ok=canPay(sc);
+    h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+sealIcon(30)+'<span class="nm">Hazard seal V'+V+' <span style="color:#5b8095;font-size:9px">big cut to this layer\u2019s pollution \u00b7 its #1 + #2 composites</span></span></div><div class="rin">'+need(sc,T0)+'</div><button class="cbtn '+(ok?'go':'')+'" data-craft="seal"'+(ok?'':' disabled')+'>Fit</button></div>';}
   }
   else if(div==='lens'){
-   const LMAX=4,LL=player.lanternLevel||0;
-   if(LL>=LMAX)h+='<div class="allbuilt" style="color:#ffd23c;text-shadow:0 0 10px rgba(255,210,60,.4)">lantern fully focused \u00b7 +'+(LL*10)+'%</div>';
-   else{const lt=LL+1,lc={};lc['t'+lt+'ra']=2;lc['t'+lt+'ma']=1;const ok=canPay(lc);
-    h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+lensIcon(30)+'<span class="nm">Grind lens '+lt+' <span style="color:#5b8095;font-size:9px">beam +10% ('+(LL*10)+'%\u2192'+(lt*10)+'%) \u00b7 needs '+TIERS[LL].name+' mats</span></span></div><div class="rin">'+need(lc,T0)+'</div><button class="cbtn '+(ok?'go':'')+'" data-craft="lens"'+(ok?'':' disabled')+'>Grind</button></div>';}
+   const e=envOfTier(T0),lf=progFlags(player,'lensUpg',e),LL=player.lanternLevel||0;
+   let lv=0;while(lv<4&&lf[lv])lv++;
+   if(lv>=4)h+='<div class="allbuilt" style="color:#ffd23c;text-shadow:0 0 10px rgba(255,210,60,.4)">lens fully focused for this environment \u00b7 beam +'+(LL*10)+'%</div>';
+   else{const rid='t'+(envTier(e,lv)+1)+'fb';
+    if(!RES[rid])h+='<div class="gearnote">\u25c2 lens V'+(lv+1)+' \u2014 descend to this environment\u2019s layer '+(lv+1)+' to spec it</div>';
+    else{const lc=lensCost(e,lv),ok=canPay(lc);
+     h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+lensIcon(30)+'<span class="nm">Grind lens V'+(lv+1)+' <span style="color:#5b8095;font-size:9px">beam +10% ('+(LL*10)+'%\u2192'+((LL+1)*10)+'%) \u00b7 layer '+(lv+1)+'\u2019s #2 composite</span></span></div><div class="rin">'+need(lc,T0)+'</div><button class="cbtn '+(ok?'go':'')+'" data-craft="lens"'+(ok?'':' disabled')+'>Grind</button></div>';}}
   }
   else if(div==='patch'){
    const mc={};mc['t'+(T0+1)+'ra']=1;mc['t'+(T0+1)+'ma']=1;const full=(player.medkits||0)>=5,ok=!full&&canPay(mc);
@@ -4158,16 +4204,12 @@ function divContent(tab,div,T0){
     h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+machIcon(m.id,30)+'<span class="nm">'+m.name+' <span style="color:#5b8095;font-size:9px">'+m.desc+'</span></span></div><div class="rin">'+(built?'<span style="color:#5dff8a;font-size:9px">BUILT</span>':costStr)+'</div><button class="cbtn '+(ok?'build':'')+'" data-craft="machine:'+m.id+'"'+(ok?'':' disabled')+'>'+(built?'\u2713':'Build')+'</button></div>';}
   }
   else if(div==='outfit'){
-   const tc=Math.round((player.tankBonus||0)/TANK_STEP),tcost=10+tc*7,tmax=(player.tankBonus||0)>=TANK_MAX,tok=!tmax&&coins>=tcost;
-   h+='<div class="recipe '+(tok?'rok':'')+'"><div class="rout">'+tankIcon(30)+'<span class="nm">Spare tank <span style="color:#5b8095;font-size:9px">+'+TANK_STEP+' max air'+(tmax?' \u00b7 MAX':' \u00b7 '+tcost+' coin')+'</span></span></div><button class="cbtn '+(tok?'go':'')+'" data-craft="buy:tank"'+(tok?'':' disabled')+'>Buy</button></div>';
-   const fc=Math.round((player.filterBonus||0)/FILT_STEP),fcost=14+fc*9,fmax=(player.filterBonus||0)>=FILT_MAX-1e-6,fok=!fmax&&coins>=fcost;
-   h+='<div class="recipe '+(fok?'rok':'')+'"><div class="rout">'+filterIcon(30)+'<span class="nm">Filter cartridge <span style="color:#5b8095;font-size:9px">cuts pollution'+(fmax?' \u00b7 MAX':' \u00b7 '+fcost+' coin')+'</span></span></div><button class="cbtn '+(fok?'go':'')+'" data-craft="buy:filter"'+(fok?'':' disabled')+'>Buy</button></div>';
+   // spare tank + O2 regulator moved to the workshop's O2 GEAR division \u2014 crafted per environment now
+   if(envOfTier(T0)<1)h+='<div class="gearnote">no pollution in this environment \u2014 filter cartridges matter from the next one down</div>';
+   else{const fc=Math.round((player.filterBonus||0)/FILT_STEP),fcost=14+fc*9,fmax=(player.filterBonus||0)>=FILT_MAX-1e-6,fok=!fmax&&coins>=fcost;
+    h+='<div class="recipe '+(fok?'rok':'')+'"><div class="rout">'+filterIcon(30)+'<span class="nm">Filter cartridge <span style="color:#5b8095;font-size:9px">cuts pollution'+(fmax?' \u00b7 MAX':' \u00b7 '+fcost+' coin')+'</span></span></div><button class="cbtn '+(fok?'go':'')+'" data-craft="buy:filter"'+(fok?'':' disabled')+'>Buy</button></div>';}
    const owned=!!player.hasMap,mok=!owned&&coins>=MAP_COST;
    h+='<div class="recipe '+(owned?'rok':mok?'rok':'')+'"><div class="rout">'+mapIcon(30)+'<span class="nm">Sector-nav unit <span style="color:#5b8095;font-size:9px">'+(owned?'installed \u00b7 live HUD map':'live minimap on your HUD \u00b7 '+MAP_COST+' coin')+'</span></span></div>'+(owned?'<span style="color:#5dff8a;font-size:9px;align-self:center">OWNED</span>':'<button class="cbtn '+(mok?'go':'')+'" data-craft="buy:map"'+(mok?'':' disabled')+'>Buy</button>')+'</div>';
-   // O2 regulators (migrated here from the former Oxygen category)
-   for(let T=0;T<4;T++){const id='t'+(T+1)+'ra',amt=6+T*2,bought=player.oxyUpg[T],ok=!bought&&canPay({[id]:amt});
-    const costStr=iconSVG(id,16)+'<span class="pq'+(invGet(id)>=amt?' ok':'')+'">'+invGet(id)+'/'+amt+'</span>';
-    h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+tankIcon(30)+'<span class="nm">O\u2082 regulator \u00b7 Lv'+(T+1)+' <span style="color:#5b8095;font-size:9px">\u22125% air drain'+(bought?' \u00b7 FITTED':'')+'</span></span></div><div class="rin">'+(bought?'<span style="color:#5dff8a;font-size:9px">FITTED</span>':costStr)+'</div><button class="cbtn '+(ok?'build':'')+'" data-craft="oxyup:'+T+'"'+(ok?'':' disabled')+'>'+(bought?'\u2713':'Fit')+'</button></div>';}
   }
   else if(div==='exch'){
    for(let T=0;T<4;T++){const id='t'+(T+1)+'ra',price=5+T*4,ok=coins>=price;
@@ -4394,23 +4436,28 @@ craftEl.addEventListener('click',e=>{const b=e.target.closest('[data-craft]');if
   else if(p[0]==='sell'){const id=p[1];if((scrapInv[id]||0)>0){scrapInv[id]--;coins+=SCRAPBYID[id].coin;sfx.pop();buildCraft();}}
   else if(v==='sellall'){let got=0;for(const id in scrapInv){got+=(scrapInv[id]||0)*SCRAPBYID[id].coin;scrapInv[id]=0;}if(got>0){coins+=got;sfx.build();showMsg('cashed in salvage · +'+got+' coin');}buildCraft();}
   else if(p[0]==='buy'){buyUpgrade(p[1]);buildCraft();}
-  else if(p[0]==='oxyup'){const T=+p[1];if(player.oxyUpg[T]){craftDeny();return;}
-    const cost={};cost['t'+(T+1)+'ra']=6+T*2;
-    if(!canPay(cost)){showMsg('need '+(6+T*2)+'× '+RES['t'+(T+1)+'ra'].name);craftDeny();return;}
-    pay(cost);player.oxyUpg[T]=true;
-    let cnt=0;for(let i=0;i<4;i++)if(player.oxyUpg[i])cnt++;player.oxyDrainMul=Math.max(0.4,1-0.05*cnt);
-    sfx.build();showMsg('O\u2082 regulator fitted \u00b7 air drain \u2212'+Math.round((1-player.oxyDrainMul)*100)+'%');
+  else if(p[0]==='o2tank'){const vv=+p[1],e=envOfTier(tAt(player.y)),tk=progFlags(player,'o2tank',e);
+    if(tk[vv]||(vv>0&&!tk[vv-1])||!canPay(o2TankCost(e,vv))){craftDeny();return;}
+    pay(o2TankCost(e,vv));tk[vv]=true;player.tankBonus=(player.tankBonus||0)+TANK_STEP;player.maxOxygen+=TANK_STEP;player.oxygen=player.maxOxygen;
+    sfx.build();showMsg('O₂ tank V'+(vv+1)+' fitted · +'+TANK_STEP+' max air');
+    burst(player.x+4,player.y+4,16,110,0.6,'#46d0ff');buildCraft();}
+  else if(p[0]==='o2reg'){const vv=+p[1],e=envOfTier(tAt(player.y)),rg=progFlags(player,'o2reg',e);
+    if(rg[vv]||(vv>0&&!rg[vv-1])||!canPay(o2RegCost(e,vv))){craftDeny();return;}
+    pay(o2RegCost(e,vv));rg[vv]=true;recalcOxyDrain();
+    sfx.build();showMsg('O\u2082 regulator V'+(vv+1)+' fitted \u00b7 air drain \u2212'+Math.round((1-player.oxyDrainMul)*100)+'%');
     burst(player.x+4,player.y+4,16,110,0.6,'#46d0ff');buildCraft();}
   else if(p[0]==='buyres'){const T=+p[1],id='t'+(T+1)+'ra',price=5+T*4;if(coins<price){showMsg('need '+price+' coin');craftDeny();return;}
     coins-=price;addInv(id,1);sfx.pop();showMsg('bought 1\u00d7 '+RES[id].name);buildCraft();}
   else if(p[0]==='tab'){if(craftTab!==p[1]){craftTab=p[1];mDiv=null;mGridIdx=0;}mZone='tab';mIdx=(craftTab==='shop'?1:0);sfx.pop();buildCraft();}
-  else if(v==='lens'){const LL=player.lanternLevel||0;if(LL>=4){buildCraft();return;}
-    const lt=LL+1,lc={};lc['t'+lt+'ra']=2;lc['t'+lt+'ma']=1;
-    if(canPay(lc)){pay(lc);player.lanternLevel=lt;sfx.build();showMsg('lens ground — the beam reaches '+(lt*10)+'% further');
+  else if(v==='lens'){const e=envOfTier(tAt(player.y)),lf=progFlags(player,'lensUpg',e);
+    let lv=0;while(lv<4&&lf[lv])lv++;
+    if(lv>=4){buildCraft();return;}
+    const lc=lensCost(e,lv);if(!RES['t'+(envTier(e,lv)+1)+'fb']){craftDeny();return;}
+    if(canPay(lc)){pay(lc);lf[lv]=true;player.lanternLevel=(player.lanternLevel||0)+1;sfx.build();showMsg('lens V'+(lv+1)+' ground — the beam reaches '+(player.lanternLevel*10)+'% further');
       burst(player.x+4,player.y+4,14,120,0.5,'#ffe27a');}buildCraft();}
-  else if(v==='seal'){const T0=tAt(player.y);if(T0<1||(player.seals&&player.seals[T0])){buildCraft();return;}
-    const sc={};sc['t'+(T0+1)+'fb']=1;sc['t'+(T0+1)+'rc']=2;
-    if(canPay(sc)){pay(sc);player.seals[T0]=true;sfx.build();showMsg('hazard seals fitted — this level bites less now');
+  else if(v==='seal'){const T0=tAt(player.y);if(envOfTier(T0)<1||(player.seals&&player.seals[T0])){buildCraft();return;}
+    const sc=sealCost(T0);
+    if(canPay(sc)){pay(sc);player.seals[T0]=true;sfx.build();showMsg('hazard seal V'+((SCHED[T0]?SCHED[T0].layerInEnv:T0%4)+1)+' fitted — this layer bites less now');
       burst(player.x+4,player.y+4,16,110,0.6,'#7dff4a');}buildCraft();}
   else if(v==='medkit'){const T0=tAt(player.y);const mc={};mc['t'+(T0+1)+'ra']=1;mc['t'+(T0+1)+'ma']=1;
     if((player.medkits||0)<5&&canPay(mc)){pay(mc);player.medkits=(player.medkits||0)+1;sfx.build();showMsg('patch kit stowed ('+player.medkits+')');}buildCraft();}
@@ -4480,7 +4527,7 @@ const TITLE_HTML=`
       <li>You breathe through an <b>air line</b> clipped to the <b>base</b> on each level. <b>X</b> clips/unclips it. On the line: air is endless and you slowly heal. Unclip and it <b>stays where you drop it</b> — swim back to that spot (or to the base) to clip on again.</li>
       <li>Off the line your tank drains. Ore within reach of the line can be dug <b>while clipped on</b> — the air keeps flowing, no breath-hold. But to reach far veins you must <b>detach</b>, and then your tank drains the whole time you're out, <b>including while you dig</b>. Read the gas (don't pop a pocket), grab <b>mixer canisters</b> and <b>glinting scrap</b>, and haul it back before your air runs out.</li>
       <li>At the base, <b>E</b> opens the workshop: <b>refine</b> 2 raw + 1 mixer → a part, <b>fabricate</b> your suit, <b>extend the air line</b>, and <b>sell salvage</b> for coin to buy spare tanks &amp; filters.</li>
-      <li>Building a suit <b>opens the bulkhead</b>. The first environment runs clean, but from the <b>second environment</b> down the water thickens with <b>pollution</b> that bites harder the deeper you go — the suit cuts it ~85%, never fully. Each new base starts <b>dead</b>: haul parts down and <b>power it on</b> (X) for air and crafting. Levels without a suit line release their bulkhead the moment their base powers on.</li>
+      <li>Every layer's resources have a job: <b>#1 feeds life support</b> (O₂ tank &amp; regulator, and its composite throws the <b>bulkhead panel</b> + fits seals), <b>#2 is utility</b> (its composite powers the base below, grinds the lens, fits seals), and <b>#3's composite is reserved for the suit</b> — one from each of the environment's 4 layers. The first environment runs clean, but from the <b>second environment</b> down the water thickens with <b>pollution</b> that bites harder the deeper you go — the suit cuts it ~85%, never fully; <b>hazard seals</b> and coin-bought <b>filters</b> cut the rest. Each new base starts <b>dead</b>: haul the <b>#2 composite built one layer up</b> down to it and <b>power it on</b> (X) for air and crafting.</li>
       <li><b>THE CITY UPDATE:</b> each city is a stack of environments, every environment with its own suit line. At the bottom of the final layer waits the <b>transit gate</b> — swim in, pick your next city on the <b>grid map</b>, and dive again, one environment deeper each time.</li>
       <li><b>SECTOR OBJECTIVES</b> gate the last level of every environment. The pink readout under your depth names the current task and its machine, all worked with <b>F</b>: <b>HACK</b> glowing wall terminals (an octagon ICE puzzle — steer the cursor to each shining side to fold a glyph, then find it in the 3-row grid and input; break 3 glyphs), <b>STRIKE</b> pulsing spore pods (hit, dodge the toxin cloud, hit again), <b>CRANK</b> pressure valves (tap F while the gauge reads green — the vents scald). Clear the chain, then throw the <b>AIRLOCK</b> lever beside the sealed bulkhead — or ride the transit gate on a city's finale.</li>
       <li><b>The dark deceives.</b> Eels coil on ledges, anglers and fungus fake the glow of treasure and ore, and "stranded divers" aren't. Craft <b>patch kits</b> (auto-saves you once if you'd die, or <b>Q</b> to top up), and in the <b>SHOP</b> tab sell salvage for coin to buy parts and build machines — even a <b>scrappy robot</b> that grabs loot for you.</li>
@@ -4576,6 +4623,11 @@ function applySave(d){
   inv=d.inv;gearLevel=d.gearLevel;scrapInv=d.scrapInv;coins=d.coins;partsInv=d.partsInv;
   companion=d.companion;respT=d.respT;craftTab=d.craftTab;camera=d.camera;
   player=d.player;
+  // migrate pre-rework saves: coin-era oxyUpg becomes env-0 regulators, lanternLevel maps to env-0 grinds
+  player.o2tank=player.o2tank||{};player.o2reg=player.o2reg||{};player.lensUpg=player.lensUpg||{};
+  if(player.oxyUpg){const a=progFlags(player,'o2reg',0);for(let i=0;i<4;i++)if(player.oxyUpg[i])a[i]=true;delete player.oxyUpg;}
+  if((player.lanternLevel||0)>0&&!Object.keys(player.lensUpg).length){const a=progFlags(player,'lensUpg',0);for(let i=0;i<Math.min(4,player.lanternLevel);i++)a[i]=true;}
+  recalcOxyDrain();
   player.attachedBase=(player.attachedBase>=0)?(bases[player.attachedBase]||null):null;
   Object.assign(state,{loseReason:d.st.loseReason,tick:d.st.tick,maxDepth:d.st.maxDepth});
   particles=[];glows=[];shake=0;lockMsgCD=0;miningCell=null;mgOre=null;
@@ -4628,7 +4680,7 @@ function objectivesHTML(){
    +'<div class="panel" style="max-width:560px"><h3>tasks in this layer</h3>'
    +'<ul class="obj">'+rows+'</ul>'
    +'<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--line);font-size:11px;letter-spacing:1px;color:'+(allDone?'#ffd23c':'#6f93a6')+';text-transform:uppercase">'
-   +(allDone?'◆ all tasks done — throw the '+exitTitle+' lever to release the bulkhead':'◇ '+exitTitle+' — locked until every task above is cleared')+'</div></div>'
+   +(allDone?'◆ all tasks done — the '+exitTitle+' panel takes 1× '+((RES['t'+(tier+1)+'fa']&&RES['t'+(tier+1)+'fa'].name)||'this layer’s #1 composite')+' to throw':'◇ '+exitTitle+' — locked until every task above is cleared')+'</div></div>'
    +'<div class="legend"><span><b style="color:#7fe6ff">HACK</b> terminal</span><span><b style="color:#c2ff5f">BURST</b> spore pod</span><span><b style="color:#ff9a5c">VENT</b> valve</span></div>'
    +'<div class="prompt">press F / space / esc to close</div>'
    +'<div class="pause-actions"><button class="pause-abandon" onclick="window.__sdCloseObjectives()">close panel</button></div></div>';
@@ -4638,7 +4690,7 @@ function startGame(){
   CITY=1;CITY_ID=0;CITY_NAME='OLD MIRE';cityExit=null;   // a fresh dive starts back at the founding city
   inv={};gearLevel=0;coins=0;partsInv={};companion=null;craftTab='work';respT=0;genWorld();
   player={x:(MW/2)*TS,y:(tierTop[0]+3)*TS,w:9,h:9,vx:0,vy:0,dir:1,
-    oxygen:110,maxOxygen:110,hearts:5,maxHearts:5,invuln:0,dashCD:0,drown:0,bub:0,accMul:1,maxvMul:1,lightRadius:80,thermalR:0,pollutionR:0,sensitivity:1,burn:0,tint:0,tintCol:'',attached:true,attachedBase:null,regen:0,tankBonus:0,filterBonus:0,rooted:0,medkits:0,lightBonus:0,mvBonus:0,builtFloodlight:false,builtThruster:false,seals:[false,false,false,false],lookX:1,lookY:0,lanternLevel:0,oxyDrainMul:1,oxyUpg:[false,false,false,false],hasMap:false,dmgFx:null};
+    oxygen:110,maxOxygen:110,hearts:5,maxHearts:5,invuln:0,dashCD:0,drown:0,bub:0,accMul:1,maxvMul:1,lightRadius:80,thermalR:0,pollutionR:0,sensitivity:1,burn:0,tint:0,tintCol:'',attached:true,attachedBase:null,regen:0,tankBonus:0,filterBonus:0,rooted:0,medkits:0,lightBonus:0,mvBonus:0,builtFloodlight:false,builtThruster:false,seals:[false,false,false,false],lookX:1,lookY:0,lanternLevel:0,oxyDrainMul:1,o2tank:{},o2reg:{},lensUpg:{},hasMap:false,dmgFx:null};
   particles=[];camera.x=clamp(player.x-VW/2,0,MW*TS-VW);camera.y=clamp(player.y-VH/2,0,MH*TS-VH);
   shake=0;lockMsgCD=0;miningCell=null;state.maxDepth=0;sfx.start();setMode('play');
 }
@@ -5277,12 +5329,9 @@ function medIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" vie
 function sealIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><path d="M8 1.5 L13.5 4 V8 C13.5 11.5 11 13.5 8 14.5 C5 13.5 2.5 11.5 2.5 8 V4 Z" fill="#2a5a3a" stroke="#7dff4a" stroke-width="1.1"/><path d="M5.5 8 L7.2 9.8 L10.5 6" fill="none" stroke="#7dff4a" stroke-width="1.4"/></svg>';}
 function lensIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><defs><radialGradient id="lg"><stop offset="0" stop-color="#fff7d6"/><stop offset="1" stop-color="#ffcf4a"/></radialGradient></defs><ellipse cx="8" cy="8" rx="3.4" ry="5.6" fill="url(#lg)" stroke="#b8862a" stroke-width="1"/><path d="M8 2.6 V13.4" stroke="#b8862a" stroke-width=".8" opacity=".6"/><path d="M2 8 L0.6 5 M2 8 L0.6 11 M14 8 L15.4 5 M14 8 L15.4 11" stroke="#ffe27a" stroke-width="1.2"/></svg>';}
 function buyUpgrade(kind){
-  if(kind==='tank'){if((player.tankBonus||0)>=TANK_MAX){showMsg('tank capacity maxed');return;}
-    const cnt=Math.round((player.tankBonus||0)/TANK_STEP),cost=10+cnt*7;
-    if(coins<cost){showMsg('need '+cost+' coin');return;}
-    coins-=cost;player.tankBonus=(player.tankBonus||0)+TANK_STEP;player.maxOxygen+=TANK_STEP;player.oxygen=player.maxOxygen;
-    sfx.build();showMsg('spare tank fitted · +'+TANK_STEP+' air');}
-  else if(kind==='filter'){if((player.filterBonus||0)>=FILT_MAX-1e-6){showMsg('filters maxed');return;}
+  // spare tank left the shop — O2 tanks are crafted in the workshop's O2 GEAR division now
+  if(kind==='filter'){if(envOfTier(tAt(player.y))<1){showMsg('no pollution in this environment — filters matter deeper down');return;}
+    if((player.filterBonus||0)>=FILT_MAX-1e-6){showMsg('filters maxed');return;}
     const cnt=Math.round((player.filterBonus||0)/FILT_STEP),cost=14+cnt*9;
     if(coins<cost){showMsg('need '+cost+' coin');return;}
     coins-=cost;player.filterBonus=(player.filterBonus||0)+FILT_STEP;
@@ -5703,7 +5752,7 @@ function enterGame(){
 }
 function init(){
   genWorld();
-  player={x:(MW/2)*TS,y:(tierTop[0]+3)*TS,w:9,h:9,vx:0,vy:0,dir:1,oxygen:110,maxOxygen:110,hearts:5,maxHearts:5,invuln:0,dashCD:0,drown:0,bub:0,accMul:1,maxvMul:1,lightRadius:80,thermalR:0,pollutionR:0,sensitivity:1,burn:0,tint:0,tintCol:'',attached:true,attachedBase:null,regen:0,tankBonus:0,filterBonus:0,rooted:0,medkits:0,lightBonus:0,mvBonus:0,builtFloodlight:false,builtThruster:false,seals:[false,false,false,false],lookX:1,lookY:0,lanternLevel:0,oxyDrainMul:1,oxyUpg:[false,false,false,false],hasMap:false,dmgFx:null};
+  player={x:(MW/2)*TS,y:(tierTop[0]+3)*TS,w:9,h:9,vx:0,vy:0,dir:1,oxygen:110,maxOxygen:110,hearts:5,maxHearts:5,invuln:0,dashCD:0,drown:0,bub:0,accMul:1,maxvMul:1,lightRadius:80,thermalR:0,pollutionR:0,sensitivity:1,burn:0,tint:0,tintCol:'',attached:true,attachedBase:null,regen:0,tankBonus:0,filterBonus:0,rooted:0,medkits:0,lightBonus:0,mvBonus:0,builtFloodlight:false,builtThruster:false,seals:[false,false,false,false],lookX:1,lookY:0,lanternLevel:0,oxyDrainMul:1,o2tank:{},o2reg:{},lensUpg:{},hasMap:false,dmgFx:null};
   camera.x=clamp(player.x-VW/2,0,MW*TS-VW);camera.y=clamp(player.y-VH/2,0,MH*TS-VH);
   resize();startStudioIntro();
 }
