@@ -3003,8 +3003,9 @@ let tierDry=[];       // per-layer: spawned without water — floods when the bu
 let floodFx=null;     // {tier,t,dur} rising-water animation in `tier`; the bulkhead above opens after
 let bulkAnims=[];     // [{tier,t,dur}] bulkhead-opening animations in progress
 /* Each chain archetype is a REAL mechanic with its own machine, sprite and action loop:
- *  CYBER      -> wall terminal: timing-lock hack — F starts the ICE sweep, F again when the cursor
- *                crosses the gold band; 3 clean hits crack it, a miss zaps your air and drops a hit
+ *  CYBER      -> wall terminal: F opens a focused, full-screen octagon ICE-break minigame — rotate a
+ *                cursor to each shining side of an 8-sided ring and select it to fold a glyph together,
+ *                then find that glyph among 3 rows of candidates and input it; crack 3 glyphs to break in
  *  BIOLOGICAL -> gas sac: F opens a focused, full-screen flamethrower minigame — aim a high-precision
  *                blue flame at 3 glowing slimes inside a metal urn and burn each down before an 8s timer
  *                busts. Win OR bust, the sac blows and the step counts; a win gives a 2s escape window
@@ -3110,7 +3111,7 @@ function missionObjActive(o){const m=layerMissions[o.tier];if(!m||o.done)return 
   return !m.complete&&o.step===m.progress;}
 function missionVerb(o){
   if(o.type==='gate')return 'RELEASE';
-  if(o.type==='term')return o.hk?'CRACK':'HACK';
+  if(o.type==='term')return 'HACK';
   if(o.type==='pod')return 'BURN';
   return (o.cyc%VALVE_CYCLE)>VALVE_CALM?'BACK OFF':'CRANK';
 }
@@ -3155,14 +3156,7 @@ function missionInteract(o){
     controlTrigger(o.tier);return;
   }
   if(o.type==='term'){
-    if(!o.hk){o.hk={pos:Math.random(),dir:1,win:0.2+Math.random()*0.6,hits:0};sfx.uiopen();
-      showMsg('ICE up — press F as the sweep crosses the gold band');return;}
-    const H=o.hk;
-    if(Math.abs(H.pos-H.win)<=0.10){H.hits++;sfx.select();burst(o.x,o.y,8,90,0.4,'#7fe6ff');
-      if(H.hits>=3){o.hk=null;burst(o.x,o.y,20,150,0.6,'#46d0ff');completeMissionObj(o);}
-      else H.win=0.12+Math.random()*0.76;}
-    else{sfx.zap();shake=Math.max(shake,4);burst(o.x,o.y,10,120,0.4,'#ffd23c');
-      player.oxygen=Math.max(0,player.oxygen-9);H.hits=Math.max(0,H.hits-1);}
+    openHack(o);   // the wall terminal is now a focused, full-screen octagon ICE-break minigame (see below)
     return;
   }
   if(o.type==='pod'){
@@ -3202,9 +3196,6 @@ function missionSim(dt){
         if((state.tick%4)===0)particles.push({type:'bubble',x:o.x-4+Math.random()*8,y:o.y-9,vx:(Math.random()-.5)*22,vy:-42-Math.random()*30,life:0.5,max:0.5,size:1.5,col:'#ffb35c'});
         if(Math.hypot(cx-o.x,cy-(o.y-6))<15)hurt(1,o.x,o.y-6);
       }}
-    if(o.type==='term'&&o.hk){const H=o.hk;H.pos+=H.dir*dt*(0.9+H.hits*0.45);
-      if(H.pos>1){H.pos=1;H.dir=-1;}if(H.pos<0){H.pos=0;H.dir=1;}
-      if(Math.hypot(cx-o.x,cy-o.y)>MOBJ_R+8){o.hk=null;showMsg('link dropped — hack reset');sfx.back();}}
     if(act){const dd=Math.hypot(cx-o.x,cy-o.y);
       if(dd<MOBJ_R&&dd<best){best=dd;nearMission=o;}}
   }
@@ -3896,8 +3887,8 @@ bindBtn('minebtn',()=>{if(state.mode==='craft'||state.mode==='inv')menuConfirm()
 bindBtn('clipbtn',()=>{if(state.mode==='play')clipEdge=true;});
 bindBtn('ropebtn',()=>{queueCraft=true;});
 // menu/minigame cluster: confirm activates (dig in the mine), back & the red EXIT pill both bail out
-function menuConfirmAct(){if(state.mode==='craft'||state.mode==='inv')menuConfirm();else if(state.mode==='mine')mineDigSel();else if(state.mode==='crank')crankTurn();}
-function menuExit(){if(state.mode==='craft')toggleCraft(false);else if(state.mode==='inv')toggleInv(false);else if(state.mode==='mine')closeMine();else if(state.mode==='crank')closeCrank();else if(state.mode==='flame')closeFlame();}
+function menuConfirmAct(){if(state.mode==='craft'||state.mode==='inv')menuConfirm();else if(state.mode==='mine')mineDigSel();else if(state.mode==='crank')crankTurn();else if(state.mode==='hack')hackConfirm();}
+function menuExit(){if(state.mode==='craft')toggleCraft(false);else if(state.mode==='inv')toggleInv(false);else if(state.mode==='mine')closeMine();else if(state.mode==='crank')closeCrank();else if(state.mode==='flame')closeFlame();else if(state.mode==='hack')closeHack();}
 bindBtn('confirmbtn',menuConfirmAct);
 bindBtn('backbtn',menuBack);
 bindBtn('exitbtn',menuExit);
@@ -3919,11 +3910,12 @@ window.addEventListener('pagehide',()=>{if(player&&(state.mode==='play'||state.m
   const REPEAT_DELAY=220,REPEAT_RATE=80;   // ms before auto-repeat kicks in, then ms between steps
   const MINEPAD_DEAD=0.13;                  // neutral-centre radius as a fraction of pad size; everything outside it is split into 4 generous directional zones
   let curEl=null,pid=null,delayT=null,repT=null;
-  const padLive=()=>state.mode==='mine'||state.mode==='craft'||state.mode==='inv';
+  const padLive=()=>state.mode==='mine'||state.mode==='craft'||state.mode==='inv'||state.mode==='hack';
   // route a direction to the right consumer for the current mode
   function padDir(md){
     if(state.mode==='mine'){const d=DIR[md];if(d)mgMove(d[0],d[1]);}
     else if(state.mode==='craft'||state.mode==='inv'){menuMove(md);}
+    else if(state.mode==='hack'){hackNav(md);}
   }
   function stop(){if(delayT){clearTimeout(delayT);delayT=null;}if(repT){clearInterval(repT);repT=null;}
     if(curEl){curEl.classList.remove('held');curEl=null;}pid=null;}
@@ -3962,6 +3954,12 @@ window.addEventListener('keydown',e=>{audioInit();
   if(state.mode==='objectives'){   // read-only briefing: any confirm/back key closes it (ignore auto-repeat)
     if(!e.repeat&&(e.code==='Escape'||e.code==='Space'||e.code==='Enter'||e.code==='KeyF'||e.code==='KeyE'))closeObjectives();
     e.preventDefault();return;
+  }
+  if(state.mode==='hack'){   // octagon ICE minigame: arrows move the cursor, confirm selects/inputs, Esc aborts
+    if(keymap[e.code]){hackNav(keymap[e.code]);e.preventDefault();return;}
+    if(!e.repeat&&(e.code==='Space'||e.code==='Enter'||e.code==='KeyF')){hackConfirm();e.preventDefault();return;}
+    if(e.code==='Escape'){closeHack();e.preventDefault();return;}
+    return;
   }
   const inMenu=(state.mode==='craft'||state.mode==='inv');
   if(keymap[e.code]){if(inMenu){menuMove(keymap[e.code]);e.preventDefault();return;}input[keymap[e.code]]=true;e.preventDefault();return;}
@@ -4247,6 +4245,7 @@ function menuBack(){
  if(state.mode==='mine'){closeMine();return;}
  if(state.mode==='crank'){closeCrank();return;}
  if(state.mode==='flame'){closeFlame();return;}
+ if(state.mode==='hack'){closeHack();return;}
  if(state.mode==='craft'){if(mZone==='opt'){menuBackToGrid();return;}toggleCraft(false);return;}
 }
 
@@ -4483,7 +4482,7 @@ const TITLE_HTML=`
       <li>At the base, <b>E</b> opens the workshop: <b>refine</b> 2 raw + 1 mixer → a part, <b>fabricate</b> your suit, <b>extend the air line</b>, and <b>sell salvage</b> for coin to buy spare tanks &amp; filters.</li>
       <li>Building a suit <b>opens the bulkhead</b>. The first environment runs clean, but from the <b>second environment</b> down the water thickens with <b>pollution</b> that bites harder the deeper you go — the suit cuts it ~85%, never fully. Each new base starts <b>dead</b>: haul parts down and <b>power it on</b> (X) for air and crafting. Levels without a suit line release their bulkhead the moment their base powers on.</li>
       <li><b>THE CITY UPDATE:</b> each city is a stack of environments, every environment with its own suit line. At the bottom of the final layer waits the <b>transit gate</b> — swim in, pick your next city on the <b>grid map</b>, and dive again, one environment deeper each time.</li>
-      <li><b>SECTOR OBJECTIVES</b> gate the last level of every environment. The pink readout under your depth names the current task and its machine, all worked with <b>F</b>: <b>HACK</b> glowing wall terminals (press F as the sweep crosses the gold band — a miss zaps your air), <b>STRIKE</b> pulsing spore pods (hit, dodge the toxin cloud, hit again), <b>CRANK</b> pressure valves (tap F while the gauge reads green — the vents scald). Clear the chain, then throw the <b>AIRLOCK</b> lever beside the sealed bulkhead — or ride the transit gate on a city's finale.</li>
+      <li><b>SECTOR OBJECTIVES</b> gate the last level of every environment. The pink readout under your depth names the current task and its machine, all worked with <b>F</b>: <b>HACK</b> glowing wall terminals (an octagon ICE puzzle — steer the cursor to each shining side to fold a glyph, then find it in the 3-row grid and input; break 3 glyphs), <b>STRIKE</b> pulsing spore pods (hit, dodge the toxin cloud, hit again), <b>CRANK</b> pressure valves (tap F while the gauge reads green — the vents scald). Clear the chain, then throw the <b>AIRLOCK</b> lever beside the sealed bulkhead — or ride the transit gate on a city's finale.</li>
       <li><b>The dark deceives.</b> Eels coil on ledges, anglers and fungus fake the glow of treasure and ore, and "stranded divers" aren't. Craft <b>patch kits</b> (auto-saves you once if you'd die, or <b>Q</b> to top up), and in the <b>SHOP</b> tab sell salvage for coin to buy parts and build machines — even a <b>scrappy robot</b> that grabs loot for you.</li>
     </ul>
     <div class="legend"><span><b>JOYSTICK</b> swim · aim</span><span><b>F</b> mine · <b>X</b> clip / power base · <b>I</b> pack</span><span><b>E</b> ⚙ workshop (at base)</span></div>
@@ -4503,9 +4502,9 @@ function setMode(m){state.mode=m;
   if(m!=='play'&&m!=='mine'&&m!=='flame'){mineEdge=false;input.joy=false;input.jx=0;input.jy=0;}if(m!=='play')clipEdge=false;
   if(m!=='play'&&m!=='flame'){input.joy=false;input.jx=0;input.jy=0;const dp=document.getElementById('dpad');if(dp)dp.classList.remove('active');}
   const dpad=document.getElementById('dpad'),mpad=document.getElementById('minepad');
-  const padMenu=(m==='mine'||m==='craft'||m==='inv');   // discrete arrow pad drives mining AND menus
+  const padMenu=(m==='mine'||m==='craft'||m==='inv'||m==='hack');   // discrete arrow pad drives mining, menus AND the ICE ring
   const cluster=(padMenu||m==='crank'||m==='flame');    // uses the confirm/back cluster
-  const canvasGame=(m==='mine'||m==='crank'||m==='flame'); // a full-canvas minigame (abort button + CRT off)
+  const canvasGame=(m==='mine'||m==='crank'||m==='flame'||m==='hack'); // a full-canvas minigame (abort button + CRT off)
   const menuOnly=(m==='craft'||m==='inv');               // true menus (not a minigame)
   const showJoy=(m==='play'||m==='flame');               // analog stick aims in play AND the flame minigame
   if(dpad)dpad.classList.toggle('hidden',!showJoy);
@@ -4516,7 +4515,7 @@ function setMode(m){state.mode=m;
   if(mc)mc.classList.toggle('hidden',!cluster);
   if(cc)cc.classList.toggle('hidden',!menuOnly);
   if(ctl)ctl.classList.toggle('menumode',cluster);
-  const cl=document.getElementById('confirmLbl');if(cl)cl.textContent=(m==='mine')?'mine':(m==='crank')?'crank':(m==='flame')?'fire':'select';
+  const cl=document.getElementById('confirmLbl');if(cl)cl.textContent=(m==='mine')?'mine':(m==='crank')?'crank':(m==='flame')?'fire':(m==='hack')?'select':'select';
   const bl=document.getElementById('backLbl');if(bl){bl.textContent=canvasGame?'ABORT':'back';bl.classList.toggle('abortlbl',canvasGame);}
   const bb=document.getElementById('backbtn');if(bb){if(canvasGame){if(!bb.dataset.def)bb.dataset.def=bb.innerHTML;bb.innerHTML=ABORT_SVG;bb.classList.add('abortbtn');}else{if(bb.dataset.def)bb.innerHTML=bb.dataset.def;bb.classList.remove('abortbtn');}}
   const crt=document.getElementById('crt');if(crt)crt.style.display=(m==='play'||canvasGame)?'none':'';   // CRT on menu screens only
@@ -4905,6 +4904,7 @@ function render(){
   if(state.mode==='mine'){renderMine();return;}
   if(state.mode==='crank'){renderCrank();return;}
   if(state.mode==='flame'){renderFlame();return;}
+  if(state.mode==='hack'){renderHack();return;}
   const sh=shake>0?(Math.random()-.5)*shake:0, sv=shake>0?(Math.random()-.5)*shake:0;
   RCX=Math.round(camera.x+sh);RCY=Math.round(camera.y+sv);glows.length=0;
   const tier=tAt(player.y), w=TIERS[tier].water;
@@ -5679,6 +5679,7 @@ function frame(now){
         else player.drown=0;}}}
   else if(state.mode==='crank'){crankInput();}
   else if(state.mode==='flame'){flameInput();}
+  else if(state.mode==='hack'){hackInput();}
   else if(state.mode==='craft'){if(queueCraft){queueCraft=false;toggleCraft(false);}}
   else if(state.mode==='play'){if(queueCraft){queueCraft=false;if(nearBase&&nearBase.active)toggleCraft(true);else showMsg('dock at a powered base to craft');}}
   else if(state.mode==='inv'){if(queueCraft){queueCraft=false;toggleInv(false);}}
@@ -6096,6 +6097,247 @@ function renderCrank(){
   if(shake>0)shake-=0.6;
 }
 canvas.addEventListener('pointerdown',e=>{if(state.mode!=='crank')return;e.preventDefault();audioInit();crankTurn();});
+
+/* ===== CYBER WALL TERMINAL: OCTAGON ICE-BREAK MINIGAME ==============================================
+ * Interacting with a CYBER wall terminal drops the diver into a focused, full-canvas ICE console.
+ * An 8-sided ICE ring is drawn centre-screen with a cursor parked on one side. Sides light up one at a
+ * time; the diver rotates the cursor to the shining side and SELECTS it — the side folds inward and
+ * joins a glyph forming at the ring's core. A shape is built from 1–8 selected sides (random). Pick the
+ * WRONG side and the whole shape build resets. Once the glyph is whole, the console shows THREE rows of
+ * candidate glyphs — the diver navigates the grid and INPUTS on the cell matching the glyph they built.
+ * The right cell cracks that layer of ICE; the wrong cell scrambles the glyph and forces a rebuild.
+ * Build and input THREE glyphs to break the node. Air keeps draining the whole time — this is a dive. */
+let hackObj=null;
+const HACK_ROWS=3, HACK_COLS=6, HACK_TOTAL=3;
+// phase: 'build' (pick shining sides) -> 'form' (glyph snaps together) -> 'input' (find it in the grid);
+// 'done' plays the ACCESS GRANTED beat before handing back to the world.
+const hackS={phase:'build',tier:0,cx:0,cy:0,R:60,
+  ptr:0,need:3,target:[],targetSet:[],collected:[],shineIdx:0,
+  grid:[],gcur:0,targetCell:0,
+  shapesDone:0,formT:0,doneT:0,flash:0,hitFlash:0,wrongT:0,hint:0,pulse:0,banner:'',bannerT:0,fx:[]};
+// geometry — a flat-topped regular octagon; side k runs from vertex k to vertex k+1
+function hackVert(cx,cy,r,k){const a=Math.PI/8+k*(Math.PI/4);return [cx+Math.cos(a)*r,cy+Math.sin(a)*r];}
+function hackSideMid(cx,cy,r,k){const a=hackVert(cx,cy,r,k),b=hackVert(cx,cy,r,(k+1)%8);return [(a[0]+b[0])/2,(a[1]+b[1])/2];}
+function hackPickSet(n){const pool=[0,1,2,3,4,5,6,7];_shuffle(pool);return pool.slice(0,n).sort((a,b)=>a-b);}
+function hackSetKey(arr){return arr.slice().sort((a,b)=>a-b).join(',');}   // canonical id for a glyph
+function hackSpark(x,y,col,spd,n){for(let i=0;i<(n||6);i++)hackS.fx.push({x:x+(Math.random()-.5)*6,y:y+(Math.random()-.5)*4,
+  vx:(Math.random()-.5)*spd,vy:-14-Math.random()*spd*0.6,life:0.4+Math.random()*0.4,r:1+((Math.random()*2)|0),col});}
+function hackBanner(txt,t){hackS.banner=txt;hackS.bannerT=t||1.1;}
+// a fresh glyph to build: 1–8 sides (deeper nodes lean toward more sides, but any given node is random)
+function hackStartBuild(){const S=hackS,tc=Math.min(S.tier,3);
+  const lo=1+Math.min(tc,3);                       // deeper ICE needs at least a few sides
+  S.need=clamp(lo+((Math.random()*(9-lo))|0),1,8);
+  S.targetSet=hackPickSet(S.need);
+  S.target=S.targetSet.slice();_shuffle(S.target);  // order the sides shine in
+  S.collected=[];S.shineIdx=0;S.ptr=(Math.random()*8)|0;S.phase='build';sfx.uiopen();
+}
+// lay out the 3×6 candidate grid; one cell is the exact glyph just built, the rest are near-miss decoys
+function hackBuildGrid(set){const S=hackS,tk=hackSetKey(set),used={};used[tk]=1;
+  const total=HACK_ROWS*HACK_COLS,tgt=(Math.random()*total)|0,cells=[];
+  for(let i=0;i<total;i++){
+    if(i===tgt){cells.push(set.slice());continue;}
+    let s,k,guard=0;
+    do{const n=clamp(S.need+(((Math.random()*5)|0)-2),1,8);s=hackPickSet(n);k=hackSetKey(s);guard++;}
+    while(used[k]&&guard<40);
+    used[k]=1;cells.push(s);
+  }
+  S.grid=cells;S.targetCell=tgt;S.gcur=0;S.phase='input';sfx.mix();
+}
+function openHack(o){
+  hackObj=o;const S=hackS,tier=o.tier||0;
+  S.tier=tier;S.cx=Math.round(VW/2);S.cy=Math.round(VH*0.42);
+  S.R=Math.round(Math.min(VW*0.30,VH*0.17,64));
+  S.shapesDone=0;S.doneT=0;S.formT=0;S.flash=0;S.hitFlash=0;S.wrongT=0;S.hint=3.5;S.pulse=0;S.banner='';S.bannerT=0;S.fx.length=0;
+  mineEdge=false;actionEdge=false;input.action=false;
+  hackStartBuild();
+  setMode('hack');sfx.start();
+}
+function closeHack(){if(!hackObj){if(state.mode==='hack')setMode('play');return;}
+  hackObj=null;setMode('play');sfx.back();
+  showMsg('link dropped — the node is still locked');}
+// rotate the cursor round the ring (build) or step the grid cursor (input); both wrap around
+function hackNav(dir){const S=hackS;if(!hackObj||S.doneT>0||S.formT>0)return;
+  if(S.phase==='build'){S.ptr=(dir==='left'||dir==='up')?(S.ptr+7)%8:(S.ptr+1)%8;sfx.nav();}
+  else if(S.phase==='input'){let r=(S.gcur/HACK_COLS)|0,c=S.gcur%HACK_COLS;
+    if(dir==='up')r=(r+HACK_ROWS-1)%HACK_ROWS;else if(dir==='down')r=(r+1)%HACK_ROWS;
+    else if(dir==='left')c=(c+HACK_COLS-1)%HACK_COLS;else if(dir==='right')c=(c+1)%HACK_COLS;
+    S.gcur=r*HACK_COLS+c;sfx.nav();}
+}
+function hackConfirm(){const S=hackS,o=hackObj;if(!o||S.doneT>0||S.formT>0)return;
+  if(S.phase==='build'){
+    const want=S.target[S.shineIdx],m=hackSideMid(S.cx,S.cy,S.R,S.ptr);
+    if(S.ptr===want){                                   // right side: it folds inward into the glyph
+      S.collected.push(want);S.shineIdx++;S.hitFlash=0.3;S.flash=0.14;sfx.select();
+      hackSpark(m[0],m[1],'#7fe6ff',56,7);
+      if(S.shineIdx>=S.target.length){S.phase='form';S.formT=0.8;S.flash=0.3;sfx.build();
+        hackBanner('GLYPH LOCKED',0.9);
+        const c=hackSideMid(S.cx,S.cy,S.R*0.42,want);hackSpark(c[0],c[1],'#9dffe0',70,10);}
+    } else {                                             // wrong side: the whole build scrambles
+      S.collected=[];S.shineIdx=0;_shuffle(S.target);S.wrongT=0.5;S.flash=0.4;shake=Math.max(shake,5);sfx.zap();
+      player.oxygen=Math.max(0,player.oxygen-player.maxOxygen*0.05);
+      hackSpark(m[0],m[1],'#ff3b6b',80,10);hackBanner('SEQUENCE RESET',1.0);
+    }
+  } else if(S.phase==='input'){
+    if(S.gcur===S.targetCell){                           // matched: this layer of ICE cracks
+      S.shapesDone++;S.flash=0.3;S.hitFlash=0.4;sfx.win();
+      if(S.shapesDone>=HACK_TOTAL){S.phase='done';S.doneT=1.3;S.banner='';sfx.build();}
+      else{hackBanner('LAYER CRACKED  '+S.shapesDone+'/'+HACK_TOTAL,1.0);hackStartBuild();}
+    } else {                                             // wrong cell: glyph scrambles, build again
+      S.wrongT=0.6;S.flash=0.45;shake=Math.max(shake,6);sfx.zap();
+      player.oxygen=Math.max(0,player.oxygen-player.maxOxygen*0.07);
+      hackBanner('WRONG NODE — REBUILD',1.1);hackStartBuild();
+    }
+  }
+}
+function hackInput(){const S=hackS,o=hackObj;if(!o){if(state.mode==='hack')setMode('play');return;}
+  // still submerged and working: air behaves exactly as it does mid-dig / mid-crank / mid-flame
+  if(player.attached){player.oxygen=player.maxOxygen;player.drown=0;}
+  else{player.oxygen-=OXY_RATE*pressureAt(o.tier||0)*(player.oxyDrainMul||1);if(player.oxygen<0)player.oxygen=0;
+    if(player.oxygen<=0){player.drown++;
+      if(player.drown>=DROWN){player.drown=0;player.hearts--;flashDmg(1,true);shake=7;sfx.hurt();
+        if(player.hearts<=0){hackObj=null;if(dieOrRevive('air'))return;setMode('play');return;}}}
+    else player.drown=0;}
+  S.pulse+=1/60;
+  if(S.hint>0)S.hint-=1/60;
+  if(S.flash>0)S.flash-=1/60;
+  if(S.hitFlash>0)S.hitFlash-=1/60;
+  if(S.wrongT>0)S.wrongT-=1/60;
+  if(S.bannerT>0)S.bannerT-=1/60;
+  for(let i=S.fx.length-1;i>=0;i--){const s=S.fx[i];s.life-=1/60;if(s.life<=0){S.fx.splice(i,1);continue;}
+    s.x+=s.vx/60;s.y+=s.vy/60;s.vx*=0.94;s.vy*=0.96;s.vy+=0.25;}
+  if(S.phase==='form'){S.formT-=1/60;if(S.formT<=0)hackBuildGrid(S.targetSet);return;}
+  if(S.phase==='done'){S.doneT-=1/60;if(S.doneT<=0){hackObj=null;completeMissionObj(o);setMode('play');}return;}
+  if(mineEdge||actionEdge){mineEdge=false;actionEdge=false;hackConfirm();}
+  if(queueCraft){queueCraft=false;closeHack();}
+}
+// ---- ICE glyph drawing ----------------------------------------------------------------------------
+function hackPxLine(x0,y0,x1,y1,col,w){x0=Math.round(x0);y0=Math.round(y0);x1=Math.round(x1);y1=Math.round(y1);
+  const dx=Math.abs(x1-x0),dy=Math.abs(y1-y0),sx=x0<x1?1:-1,sy=y0<y1?1:-1;let err=dx-dy,x=x0,y=y0;w=w||1;const o=(w-1)>>1;
+  for(;;){px(ctx,x-o,y-o,w,w,col);if(x===x1&&y===y1)break;const e2=2*err;if(e2>-dy){err-=dy;x+=sx;}if(e2<dx){err+=dx;y+=sy;}}}
+function hackDrawRing(cx,cy,r,col){for(let k=0;k<8;k++){const a=hackVert(cx,cy,r,k),b=hackVert(cx,cy,r,(k+1)%8);hackPxLine(a[0],a[1],b[0],b[1],col,1);}
+  for(let k=0;k<8;k++){const v=hackVert(cx,cy,r,k);px(ctx,Math.round(v[0])-1,Math.round(v[1])-1,2,2,col);}}
+function hackDrawEdge(cx,cy,r,k,col,w,node){const a=hackVert(cx,cy,r,k),b=hackVert(cx,cy,r,(k+1)%8);hackPxLine(a[0],a[1],b[0],b[1],col,w);
+  if(node){px(ctx,Math.round(a[0])-1,Math.round(a[1])-1,2,2,col);px(ctx,Math.round(b[0])-1,Math.round(b[1])-1,2,2,col);}}
+// draw a whole glyph (its selected sides) at (cx,cy) radius r — used at the core and in every grid cell
+function hackDrawGlyph(cx,cy,r,sides,col,w,node){for(const s of sides)hackDrawEdge(cx,cy,r,s,col,w,node);}
+function hackGlow(x,y,r,col,a){ctx.globalCompositeOperation='lighter';radial(ctx,x,y,r,'rgba('+col+','+a+')','rgba('+col+',0)');ctx.globalCompositeOperation='source-over';}
+// grid geometry, shared by render + tap hit-testing so they always agree
+function hackGridGeom(){const gx=8,gw=VW-16,cellW=gw/HACK_COLS,gTop=Math.round(VH*0.34),gBot=VH-26,rowH=(gBot-gTop)/HACK_ROWS;
+  const r=Math.max(7,Math.min(15,Math.round(Math.min(cellW,rowH)*0.34)));
+  return {gx,gw,cellW,gTop,rowH,r,cx:(c)=>Math.round(gx+cellW*(c+0.5)),cy:(rr)=>Math.round(gTop+rowH*(rr+0.5))};}
+function renderHack(){
+  const S=hackS,o=hackObj;if(!o){if(state.mode==='hack')setMode('play');return;}
+  RCX=0;RCY=0;const t=state.tick;
+  const sh=shake>0?(Math.random()-.5)*shake:0,sv=shake>0?(Math.random()-.5)*shake:0;
+  // ---- console backdrop: near-black with a faint scrolling grid + drifting cyan glow ----
+  ctx.fillStyle='#05090f';ctx.fillRect(0,0,VW,VH);
+  for(let gy=2;gy<VH;gy+=9)px(ctx,0,gy,VW,1,'#0a1420');
+  const goff=Math.round(t*0.3)%14;for(let gx=-goff;gx<VW;gx+=14)px(ctx,gx,0,1,VH,'#0a1420');
+  ctx.globalCompositeOperation='lighter';
+  for(let i=0;i<2;i++){const x=((t*0.2+i*130)%(VW+80))-40;radial(ctx,x,VH*0.44,80,'rgba(40,120,150,0.05)','rgba(40,120,150,0)');}
+  ctx.globalCompositeOperation='source-over';
+  const cx=Math.round(VW/2+sh);
+  const of=clamp(player.oxygen/player.maxOxygen,0,1),hpf=clamp(player.hearts/player.maxHearts,0,1),onAir=!!player.attached;
+  // ==== TOP STATUS STRIP: O2 + HULL (mirrors the other minigame consoles) ====
+  {const gw=Math.min(150,VW-38),gx=Math.round(cx-gw/2);
+   pxText(ctx,onAir?'AIR LINE':'O2',gx,5,onAir?'#5fe6ff':'#7fd0ee');
+   const oy=12;px(ctx,gx-1,oy-1,gw+2,5,'#0a1420');px(ctx,gx,oy,Math.round(gw*of),3,onAir?'#39c6ff':(of>0.5?'#39c6ff':of>0.25?'#ffcf3a':'#ff4d5e'));if(!onAir&&of<=0.2&&(t>>3&1))px(ctx,gx,oy,gw,3,'rgba(255,77,94,0.3)');
+   pxText(ctx,'HULL',gx,19,'#ff9aa6');
+   const hy=26;px(ctx,gx-1,hy-1,gw+2,5,'#0a1420');px(ctx,gx,hy,Math.round(gw*hpf),3,player.hearts<=2?'#ff4d5e':'#3dff9a');}
+  // ==== HEADER BAR ====
+  const hbY=35;
+  px(ctx,8,hbY,VW-16,11,'#081420');px(ctx,8,hbY,VW-16,1,'#1c4152');px(ctx,8,hbY+10,VW-16,1,'#0c2330');
+  px(ctx,8,hbY,1,4,'#39c6ff');px(ctx,8,hbY,4,1,'#39c6ff');px(ctx,VW-9,hbY,1,4,'#39c6ff');px(ctx,VW-12,hbY,4,1,'#39c6ff');
+  pxText(ctx,S.phase==='input'?'MATCH GLYPH':'ICE BREAK',14,hbY+3,'#7fe0ff');
+  {const lvX=VW-14;pxText(ctx,'ICE',lvX-12,hbY+3,'#2f9a6a');if((t>>4)&1)px(ctx,lvX,hbY+3,4,4,'#3dff9a');}
+  // node-break progress pips (3 glyphs to crack)
+  {const pw=8,pg=4,tot=HACK_TOTAL,rw=tot*(pw+pg)-pg,px0=Math.round(cx-rw/2),py=hbY+14;
+   for(let i=0;i<tot;i++){const on=i<S.shapesDone;px(ctx,px0+i*(pw+pg),py,pw,3,on?'#3dff9a':'#12283a');if(on)px(ctx,px0+i*(pw+pg),py,pw,1,'#9dffcf');}}
+
+  if(S.phase==='build'||S.phase==='form'){
+    const forming=S.phase==='form';
+    const oc=S.cx+sh,oy=S.cy+sv,R=S.R;
+    // faint base ring
+    hackDrawRing(oc,oy,R,'#123040');
+    // sides already folded in read as locked (dim green) on the outer ring
+    for(const s of S.collected)hackDrawEdge(oc,oy,R,s,'#2f9a6a',2,true);
+    if(!forming){
+      // the shining side the diver must select next — pulsing cyan
+      const want=S.target[S.shineIdx],pul=0.5+0.5*Math.sin(S.pulse*6),m=hackSideMid(oc,oy,R,want);
+      hackGlow(m[0],m[1],14,'127,230,255',0.22+pul*0.22);
+      hackDrawEdge(oc,oy,R,want,pul>0.5?'#eafcff':'#7fe6ff',2,true);
+      // the cursor: an arrowhead just outside the current side, aimed inward
+      const cm=hackSideMid(oc,oy,R,S.ptr);
+      const ux=(cm[0]-oc)/(Math.hypot(cm[0]-oc,cm[1]-oy)||1),uy=(cm[1]-oy)/(Math.hypot(cm[0]-oc,cm[1]-oy)||1);
+      const perx=-uy,pery=ux,onTgt=S.ptr===want,ac=onTgt?'#eafcff':'#ffd23c';
+      const tipx=cm[0]+ux*3,tipy=cm[1]+uy*3,b1x=cm[0]+ux*11+perx*5,b1y=cm[1]+uy*11+pery*5,b2x=cm[0]+ux*11-perx*5,b2y=cm[1]+uy*11-pery*5;
+      hackGlow(cm[0]+ux*7,cm[1]+uy*7,9,onTgt?'234,252,255':'255,210,60',0.3);
+      hackPxLine(tipx,tipy,b1x,b1y,ac,1);hackPxLine(tipx,tipy,b2x,b2y,ac,1);hackPxLine(b1x,b1y,b2x,b2y,ac,1);
+    } else {
+      // form beat — the finished glyph flares on the outer ring
+      const fl=clamp(S.formT/0.8,0,1);
+      for(const s of S.targetSet)hackDrawEdge(oc,oy,R,s,(t>>1&1)?'#eafcff':'#7fe6ff',2,true);
+      hackGlow(oc,oy,R+8,'127,230,255',0.18*fl);
+    }
+    // the glyph assembling at the core, one folded side at a time
+    const core=forming?S.targetSet:S.collected;
+    hackDrawRing(oc,oy,Math.round(R*0.42),'#0e2230');
+    hackDrawGlyph(oc,oy,Math.round(R*0.42),core,'#7fe6ff',2,true);
+    if(core.length)hackGlow(oc,oy,Math.round(R*0.42)+4,'127,230,255',0.12+(forming?0.1:0));
+    // side-build progress pips (collected / needed)
+    {const tot=S.need,pw=Math.max(4,Math.min(12,((Math.min(150,VW-40)-tot*3)/tot)|0)),pg=3,rw=tot*(pw+pg)-pg,px0=Math.round(cx-rw/2),py=oy+R+16;
+     for(let i=0;i<tot;i++){const on=i<S.collected.length;px(ctx,px0+i*(pw+pg),py,pw,5,on?'#39c6ff':'#122430');if(on)px(ctx,px0+i*(pw+pg),py,pw,1,'#9fe8ff');}
+     pxTextC(forming?'GLYPH LOCKED':('SIDES  '+S.collected.length+'/'+S.need),cx,py+9,forming?'#9dffcf':'#4f7f96');}
+    // sparks
+    for(const s of S.fx){const a=clamp(s.life/0.8,0,1);ctx.globalAlpha=0.6*a;ctx.fillStyle=s.col||'#dff1ff';const rr=s.r+Math.round((1-a)*2);ctx.fillRect(Math.round(s.x)-rr,Math.round(s.y)-rr,rr*2,rr*2);}
+    ctx.globalAlpha=1;
+    if(S.hint>0&&!forming){const a=clamp(S.hint/3.5,0,1);ctx.globalAlpha=a;pxTextC('MOVE TO THE LIT SIDE   SELECT',cx,VH-13,'#6f93a6');ctx.globalAlpha=1;}
+    else if(!forming)pxTextC('SELECT THE SHINING SIDE',cx,VH-13,'#3a5a6a');
+  } else if(S.phase==='input'){
+    // the glyph the diver just built, shown as the thing to find
+    const pcy=Math.round((hbY+15+VH*0.34)/2);
+    pxTextC('YOUR GLYPH',cx,hbY+16,'#4f7f96');
+    hackDrawRing(cx,pcy,15,'#0e2230');hackDrawGlyph(cx,pcy,15,S.targetSet,'#7fe6ff',2,true);
+    hackGlow(cx,pcy,20,'127,230,255',0.14);
+    // the 3×6 candidate grid
+    const G=hackGridGeom();
+    for(let i=0;i<S.grid.length;i++){const r=(i/HACK_COLS)|0,c=i%HACK_COLS,gcx=G.cx(c),gcy=G.cy(r),sel=i===S.gcur;
+      const bw=Math.round(G.cellW-6),bh=Math.round(G.rowH-6),bx=gcx-(bw>>1),by=gcy-(bh>>1);
+      px(ctx,bx,by,bw,bh,sel?'#0b2230':'#081420');
+      px(ctx,bx,by,bw,1,sel?'#39c6ff':'#12283a');px(ctx,bx,by+bh-1,bw,1,'#0c1c28');px(ctx,bx,by,1,bh,sel?'#39c6ff':'#12283a');px(ctx,bx+bw-1,by,1,bh,'#0c1c28');
+      hackDrawRing(gcx,gcy,G.r,'#123040');
+      hackDrawGlyph(gcx,gcy,G.r,S.grid[i],sel?'#bfeeff':'#5fb8d8',1,false);
+      if(sel){const pul=0.5+0.5*Math.sin(S.pulse*6);hackGlow(gcx,gcy,G.r+6,'57,198,255',0.14+pul*0.14);
+        px(ctx,bx-1,by-1,bw+2,1,'#39c6ff');px(ctx,bx-1,by+bh,bw+2,1,'#39c6ff');}}
+    if(S.hint>0){const a=clamp(S.hint/3.5,0,1);ctx.globalAlpha=a;pxTextC('FIND YOUR GLYPH   INPUT',cx,VH-13,'#6f93a6');ctx.globalAlpha=1;}
+    else pxTextC('MATCH THE GLYPH YOU BUILT',cx,VH-13,'#3a5a6a');
+  } else if(S.phase==='done'){
+    const k=clamp(S.doneT/1.3,0,1);
+    hackDrawRing(cx,S.cy,S.R,'#0e2230');hackGlow(cx,S.cy,S.R+10,'61,255,154',0.4*k);
+    pxTextGhost(ctx,'GRANTED',cx,S.cy,3,'#0e2a1c',1);pxTextXL(ctx,'GRANTED',cx,S.cy,3,'#9dffc0',1);
+    pxTextC('ACCESS',cx,S.cy-24,'#3dff9a');
+  }
+  // ==== flashes / banners ====
+  if(S.flash>0){const isW=S.wrongT>0;ctx.fillStyle=(isW?'rgba(255,60,90,':'rgba(127,230,255,')+(0.18*clamp(S.flash/0.45,0,1)).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);}
+  if(S.doneT>0){ctx.fillStyle='rgba(61,255,154,'+(0.2*clamp(S.doneT/1.3,0,1)).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);}
+  if(S.bannerT>0){const a=clamp(S.bannerT/0.5,0,1),bw=S.wrongT>0,col=bw?'#ff6a7f':'#9dffcf';
+    ctx.globalAlpha=a;pxTextC(S.banner,cx,hbY+26,col);ctx.globalAlpha=1;}
+  if(shake>0)shake-=0.6;
+}
+// touch: tap a side / grid cell to move the cursor there and act; anywhere else just confirms
+canvas.addEventListener('pointerdown',e=>{if(state.mode!=='hack')return;e.preventDefault();audioInit();
+  const S=hackS,o=hackObj;if(!o||S.doneT>0||S.formT>0){hackConfirm();return;}
+  const r=canvas.getBoundingClientRect(),mx=(e.clientX-r.left)/r.width*VW,my=(e.clientY-r.top)/r.height*VH;
+  if(S.phase==='build'){
+    let best=-1,bd=1e9;for(let k=0;k<8;k++){const m=hackSideMid(S.cx,S.cy,S.R,k),d=Math.hypot(mx-m[0],my-m[1]);if(d<bd){bd=d;best=k;}}
+    if(best>=0&&bd<S.R*0.7)S.ptr=best;
+    hackConfirm();
+  } else if(S.phase==='input'){
+    const G=hackGridGeom();let best=-1,bd=1e9;
+    for(let i=0;i<S.grid.length;i++){const rr=(i/HACK_COLS)|0,c=i%HACK_COLS,d=Math.hypot(mx-G.cx(c),my-G.cy(rr));if(d<bd){bd=d;best=i;}}
+    if(best>=0){S.gcur=best;hackConfirm();}
+  } else hackConfirm();
+});
 
 /* ===== BIOLOGICAL GAS-SAC: HIGH-PRECISION FLAMETHROWER MINIGAME =====================================
  * Opening a gas sac drops the diver into a focused, full-canvas console: a pixel cyberpunk metal urn
