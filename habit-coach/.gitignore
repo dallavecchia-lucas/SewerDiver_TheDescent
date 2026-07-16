@@ -1,0 +1,8 @@
+# Token e segredos — NUNCA versionar
+.env
+*.token
+
+# Imagens baixadas da agenda (podem conter dados pessoais)
+state/*.jpg
+state/*.jpeg
+state/*.png
