@@ -1119,6 +1119,72 @@
     /* mining: hide the top header bar — its info (resource / sens / vents) plus the oxygen & HP bars are redrawn as a dashboard in the empty space left of the grid, so nothing covers the gauges */
     #mine .mhead{display:none!important;}
   }
+
+  /* ============================================================
+     PC MODE — the moment a key or a gamepad is used, the handheld
+     casing is dropped for a desktop deck: no d-pad, no action
+     diamond, no plastic. The screen takes the whole window and the
+     controls move to a legend strip + a bindings panel.
+     Body class only — the handheld layout above is untouched.
+     ============================================================ */
+  body.pc-mode{align-items:stretch;}
+  body.pc-mode #game{
+    display:flex;flex-direction:column;                 /* undo the landscape grid if it was in force */
+    max-width:none;width:100vw;padding:0;border-radius:0;
+    background:linear-gradient(180deg,#0a121a 0%,#070d14 55%,#04080d 100%);
+    box-shadow:inset 0 0 0 1px rgba(70,208,255,.05);}
+  body.pc-mode .screw{display:none;}
+  body.pc-mode #controls{display:none!important;}
+  body.pc-mode .kbdhint{display:none;}
+  /* slim title bar across the top of the deck */
+  body.pc-mode #brand{padding:9px 20px 8px;border-bottom:1px solid rgba(70,208,255,.09);
+    background:linear-gradient(180deg,rgba(18,30,40,.7),rgba(8,14,20,0));}
+  body.pc-mode .bm-name{font-size:14px;}
+  body.pc-mode #pausebtn{width:26px;height:26px;}
+  /* the screen: as big as the window allows, capped so pixels stay chunky */
+  body.pc-mode #screenwrap{padding:16px 20px 10px;justify-content:center;}
+  body.pc-mode #stage{flex:none;width:min(100%,1360px);height:100%;margin:0 auto;border-width:3px;}
+
+  /* legend strip — replaces the physical buttons */
+  #pcbar{display:none;}
+  body.pc-mode #pcbar{
+    display:flex;align-items:center;justify-content:center;gap:7px 16px;flex-wrap:wrap;
+    flex:none;padding:9px 18px max(11px,env(safe-area-inset-bottom));
+    border-top:1px solid rgba(70,208,255,.09);
+    background:linear-gradient(180deg,rgba(8,14,20,0),rgba(14,24,33,.72));}
+  .pcb{display:flex;align-items:center;gap:6px;font-size:10px;letter-spacing:1px;color:#6f93a6;text-transform:uppercase;white-space:nowrap;}
+  .pcb kbd{font-family:'Courier New',monospace;font-size:9px;font-weight:bold;letter-spacing:1px;
+    color:#bcd4e2;background:linear-gradient(180deg,#22303b,#131d25);
+    border:1px solid #2c3e4f;border-bottom-width:2px;border-radius:3px;padding:2px 6px;}
+  .pcb.pcb-hint kbd{color:#46d0ff;border-color:#1d5670;box-shadow:0 0 7px rgba(70,208,255,.2);}
+  .pconly{display:none;}
+  body.pc-mode .pconly{display:inline;color:#46d0ff;}
+  #pcsrc{position:absolute;right:20px;bottom:11px;font-size:9px;letter-spacing:2px;color:#3c5365;text-transform:uppercase;pointer-events:none;}
+  body:not(.pc-mode) #pcsrc{display:none;}
+
+  /* ===== BINDINGS PANEL (? / F1 / SELECT) ===== */
+  #binds{position:fixed;inset:0;z-index:400;display:none;align-items:center;justify-content:center;padding:20px;
+    background:radial-gradient(circle at 50% 35%,rgba(6,14,20,.95),rgba(2,5,9,.97));}
+  #binds.on{display:flex;}
+  .bdwrap{width:min(880px,96vw);max-height:92vh;overflow-y:auto;
+    border:1px solid rgba(70,208,255,.32);border-radius:10px;padding:16px 20px 20px;
+    background:linear-gradient(180deg,rgba(10,22,30,.98),rgba(5,11,17,.98));
+    box-shadow:0 0 44px rgba(70,208,255,.14),inset 0 0 60px rgba(0,0,0,.5);}
+  .bdhead{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+    border-bottom:1px solid rgba(70,208,255,.22);padding-bottom:9px;margin-bottom:12px;}
+  .bdtitle{color:#46d0ff;font-weight:bold;letter-spacing:4px;font-size:14px;text-shadow:0 0 10px rgba(70,208,255,.45);}
+  .bdsub{color:#6f93a6;font-size:10px;letter-spacing:2px;text-transform:uppercase;}
+  .bdcols{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:6px 28px;}
+  .bdsec{grid-column:1/-1;color:#7fff3c;font-size:9px;letter-spacing:3px;text-transform:uppercase;
+    margin:12px 0 3px;border-bottom:1px solid rgba(127,255,60,.14);padding-bottom:4px;}
+  .bdrow{display:flex;align-items:center;gap:10px;padding:4px 0;font-size:11px;color:#8fb6c2;}
+  .bdrow .k{flex:none;display:flex;flex-wrap:wrap;gap:4px;width:168px;}
+  .bdrow>span:last-child{flex:1;min-width:0;}
+  .bdrow .k i{font-style:normal;font-family:'Courier New',monospace;font-size:9px;font-weight:bold;
+    color:#bcd4e2;background:linear-gradient(180deg,#22303b,#131d25);border:1px solid #2c3e4f;
+    border-radius:3px;padding:2px 5px;letter-spacing:1px;}
+  .bdrow .k i.pad{color:#ffd23c;border-color:#5a4a1e;background:linear-gradient(180deg,#2b2513,#171308);}
+  .bdfoot{margin-top:16px;text-align:center;color:#6f93a6;font-size:10px;letter-spacing:2px;text-transform:uppercase;}
 </style>
 </head>
 <body>
@@ -4897,7 +4963,7 @@ function pauseHTML(){
   <div class="stat" style="color:#6f93a6;font-size:12px;margin-top:2px">${CITY_NAME} · city <b style="color:var(--gold)">${CITY}</b> · layer <b style="color:var(--gold)">${tAt(player.y)+1}/${SCHED.length}</b></div>
   <div class="stat" style="color:#6f93a6;font-size:12px;margin-top:2px">progress is saved — close the tab any time and pick up right here</div>
   <div class="prompt">press space to resume</div>
-  <div class="pause-actions"><button class="pause-abandon" onclick="window.__sdAbandon()">abandon dive &amp; start fresh</button></div></div>`;
+  <div class="pause-actions"><button class="pause-abandon" onclick="window.__sdAbandon()">abandon dive &amp; start fresh<span class="pconly"> · shift+a</span></button></div></div>`;
 }
 function pauseGame(){if(state.mode!=='play')return;saveGame();setMode('pause');sfx.back();}
 function resumeGame(){if(state.mode!=='pause')return;setMode('play');sfx.uiopen();}
@@ -6039,6 +6105,16 @@ function drawMinimap(tier){
 function resize(){const stage=document.getElementById('stage'),w=stage.clientWidth,h=stage.clientHeight;
   if(!w||!h)return;                                   // no layout yet (e.g. headless) — keep defaults
   const gba=window.matchMedia('(orientation:landscape) and (max-height:600px)').matches;
+  if(document.body.classList.contains('pc-mode')){
+    // PC: integer pixel scaling. One world pixel = `scale` screen pixels exactly, so the
+    // art never lands on a half pixel; the view widens to whatever the window gives us.
+    const scale=Math.max(2,Math.ceil(w/PC_MAX_VW),Math.ceil(h/PC_MAX_VH));
+    VW=Math.max(176,Math.round(w/scale)); if(VW&1)VW++;
+    VH=Math.max(240,Math.round(h/scale)); if(VH&1)VH++;
+    if(canvas.width!==VW||canvas.height!==VH){canvas.width=VW;canvas.height=VH;murk.width=VW;murk.height=VH;ctx.imageSmoothingEnabled=false;mctx.imageSmoothingEnabled=false;}
+    canvas.style.width=(VW*scale)+'px';canvas.style.height=(VH*scale)+'px';   // exact multiple — square pixels, at most a few px of bezel
+    return;
+  }
   if(gba){
     // LANDSCAPE: lock the on-screen tile size so the diver renders at the same scale as portrait (zoom in).
     // VW & VH are both derived from the display size at a fixed px-per-tile, so pixels stay square (no stretch).
@@ -8002,6 +8078,210 @@ function startMineIntro(){
   nextB.addEventListener('click',nx); prevB.addEventListener('click',pv); skipB.addEventListener('click',fin);
   go(0);
 }
+
+/* ================================================================================
+ * PC MODE + FULL KEYBOARD / GAMEPAD BINDINGS
+ * The handheld shell is the touch layout. The moment the player uses a keyboard
+ * or a gamepad we drop the plastic and run as a desktop deck: full-window screen,
+ * wider view, integer pixel scaling, and a legend strip where the buttons were.
+ * Every function the on-screen controls expose has a key AND a pad button here.
+ * A touch anywhere hands the handheld back.
+ * ============================================================================== */
+const PC_MAX_VW=760, PC_MAX_VH=470;      // world-pixel budget per frame; the scale grows to respect it
+
+// label · keyboard keys · gamepad buttons  (single source for the panel and the strip)
+const BINDS=[
+  {sec:'DIVING',rows:[
+    ['swim / move',            ['W A S D','↑ ↓ ← →'], ['L-STICK','D-PAD']],
+    ['mine · dig',             ['F'],                 ['X']],
+    ['clip / unclip air line', ['X'],                 ['Y']],
+    ['craft & shop (at a base)',['E','C','TAB'],      ['RB']],
+    ['open pack',              ['I'],                 ['LB']],
+    ['use patch kit',          ['Q'],                 ['LT']],
+    ['interact · hook · confirm',['SPACE','ENTER'],   ['A','RT']],
+    ['layer objectives',       ['O'],                 ['L3']],
+    ['pause / resume',         ['ESC','P'],           ['START']],
+  ]},
+  {sec:'DV-8 "MULE" MECH',rows:[
+    ['drill a vein',           ['F'],                 ['X']],
+    ['fire grappling hook',    ['SPACE'],             ['A']],
+    ['boost (hold, airborne)', ['W','↑'],             ['L-STICK ↑','D-PAD ↑']],
+    ['leave the mech',         ['X'],                 ['Y']],
+  ]},
+  {sec:'MENUS · MINING · HACK · CRANK',rows:[
+    ['move selection',         ['W A S D','↑ ↓ ← →'], ['D-PAD','L-STICK']],
+    ['select · dig · confirm', ['SPACE','ENTER','F'], ['A','X']],
+    ['back one step',          ['ESC'],               ['B']],
+    ['quick exit',             ['BACKSPACE'],         ['R3']],
+  ]},
+  {sec:'PROMPTS & TUTORIAL SLIDES',rows:[
+    ['next slide · yes',       ['SPACE','ENTER','F','Y'],['A','X']],
+    ['previous slide',         ['BACKSPACE'],         ['R3']],
+    ['skip · no',              ['ESC','N'],           ['B']],
+  ]},
+  {sec:'SYSTEM',rows:[
+    ['this panel',             ['?','F1','H'],        ['SELECT']],
+    ['abandon dive (paused)',  ['SHIFT+A'],           ['Y']],
+  ]},
+];
+const PC_LEGEND={
+  key:[['W A S D','swim'],['SPACE','act'],['F','mine'],['X','clip'],['E','craft'],['I','pack'],['Q','patch'],['ESC','pause']],
+  pad:[['L-STICK','swim'],['A','act'],['X','mine'],['Y','clip'],['RB','craft'],['LB','pack'],['LT','patch'],['START','pause']],
+};
+
+let pcMode=false, pcSrc='', pausedForBinds=false;
+
+function pcBuild(){
+  if(document.getElementById('pcbar'))return;
+  const g=document.getElementById('game');
+  const bar=document.createElement('div'); bar.id='pcbar'; g.appendChild(bar);
+  const src=document.createElement('div'); src.id='pcsrc'; g.appendChild(src);
+  let h='<div class="bdwrap"><div class="bdhead"><div class="bdtitle">CONTROLS</div>'
+       +'<div class="bdsub">keyboard &amp; gamepad</div></div><div class="bdcols">';
+  for(const s of BINDS){
+    h+='<div class="bdsec">'+s.sec+'</div>';
+    for(const r of s.rows){
+      h+='<div class="bdrow"><span class="k">'
+        +r[1].map(k=>'<i>'+k+'</i>').join('')+r[2].map(k=>'<i class="pad">'+k+'</i>').join('')
+        +'</span><span>'+r[0]+'</span></div>';
+    }
+  }
+  h+='</div><div class="bdfoot">press <b>?</b> · <b>ESC</b> · <b>SELECT</b> to close</div></div>';
+  const bd=document.createElement('div'); bd.id='binds'; bd.innerHTML=h; document.body.appendChild(bd);
+  bd.addEventListener('pointerdown',e=>{if(e.target===bd)bindsToggle(false);});
+}
+function pcLegend(kind){
+  const bar=document.getElementById('pcbar'); if(!bar)return;
+  bar.innerHTML=(PC_LEGEND[kind]||PC_LEGEND.key).map(l=>'<span class="pcb"><kbd>'+l[0]+'</kbd>'+l[1]+'</span>').join('')
+    +'<span class="pcb pcb-hint"><kbd>'+(kind==='pad'?'SELECT':'?')+'</kbd>all bindings</span>';
+}
+function pcOn(src){
+  if(!pcMode){pcMode=true;document.body.classList.add('pc-mode');pcBuild();resize();}
+  if(pcSrc!==src){pcSrc=src;pcLegend(src);
+    const el=document.getElementById('pcsrc'); if(el)el.textContent='input · '+(src==='pad'?'gamepad':'keyboard');}
+}
+function pcOff(){ if(!pcMode)return; pcMode=false;pcSrc='';document.body.classList.remove('pc-mode');resize(); }
+// a real finger means a real handheld — hand the casing back
+window.addEventListener('pointerdown',e=>{if(e.pointerType==='touch')pcOff();},true);
+
+function bindsToggle(on){
+  const el=document.getElementById('binds'); if(!el)return;
+  const show=(on===undefined)?!el.classList.contains('on'):!!on;
+  el.classList.toggle('on',show);
+  if(show){ if(state.mode==='play'){pausedForBinds=true;pauseGame();} }
+  else if(pausedForBinds){ pausedForBinds=false; if(state.mode==='pause')resumeGame(); }
+}
+
+/* ---- click-only dialogs --------------------------------------------------
+ * The studio intro's FIRST TIME HERE prompt and the three slide decks (tutorial,
+ * briefing, mining primer) shipped as buttons you had to tap. They answer to keys
+ * and the pad now. Movement keys are deliberately left alone so the tutorial's
+ * "try it" steps still work while a deck is up.                              */
+const DLG=[
+  {el:'#intro-ft-btns',yes:'#intro-yes',no:'#intro-no'},
+  {el:'#tut-nav',next:'#tut-next',prev:'#tut-prev',skip:'#tut-skip'},
+  {el:'#bi-nav', next:'#bi-next', prev:'#bi-prev', skip:'#bi-skip'},
+  {el:'#mi-nav', next:'#mi-next', prev:'#mi-prev', skip:'#mi-skip'},
+];
+function dlgOpen(){
+  for(const d of DLG){
+    const el=document.querySelector(d.el); if(!el)continue;
+    const r=el.getBoundingClientRect();
+    if(r.width>0&&r.height>0&&getComputedStyle(el).visibility!=='hidden')return d;
+  }
+  return null;
+}
+function dlgKey(d,code){
+  const hit=s=>{const b=s&&document.querySelector(s);if(b&&!b.disabled){b.click();return true;}return false;};
+  if(d.yes){
+    if(code==='Space'||code==='Enter'||code==='KeyF'||code==='KeyY')return hit(d.yes);
+    if(code==='Escape'||code==='KeyN'||code==='Backspace')return hit(d.no);
+    return false;
+  }
+  if(code==='Space'||code==='Enter'||code==='KeyF')return hit(d.next);
+  if(code==='Backspace')return hit(d.prev);
+  if(code==='Escape')return hit(d.skip);
+  return false;
+}
+
+// Capture phase: this runs BEFORE the main key handler, so the panel can swallow
+// input outright and the extra bindings never double-fire with the originals.
+let padSynth=false;
+window.addEventListener('keydown',e=>{
+  if(e.key==='Shift'||e.key==='Control'||e.key==='Alt'||e.key==='Meta')return;
+  if(!padSynth)pcOn('key');
+  const bd=document.getElementById('binds');
+  if(bd&&bd.classList.contains('on')){
+    e.preventDefault();e.stopPropagation();
+    if(e.code==='Escape'||e.code==='F1'||e.code==='KeyH'||e.code==='Slash'||e.key==='?'||e.code==='Space'||e.code==='Enter')bindsToggle(false);
+    return;
+  }
+  if(e.code==='F1'||e.code==='KeyH'||e.code==='Slash'||e.key==='?'){bindsToggle(true);e.preventDefault();e.stopPropagation();return;}
+  if(e.repeat)return;
+  const eat=()=>{audioInit();e.preventDefault();e.stopPropagation();};
+  const dlg=dlgOpen();
+  if(dlg&&dlgKey(dlg,e.code)){eat();return;}
+  if(e.code==='KeyO'){                       // layer briefing, on demand
+    if(state.mode==='play'&&player)openObjectives(tierAtY(player.y));
+    else if(state.mode==='objectives')closeObjectives();
+    eat();return;}
+  if(e.code==='KeyP'){                       // pause alias (ESC also works)
+    if(state.mode==='play')pauseGame(); else if(state.mode==='pause')resumeGame();
+    eat();return;}
+  if(e.code==='Backspace'){menuExit();eat();return;}                       // the red EXIT pill
+  if(e.code==='KeyA'&&e.shiftKey&&state.mode==='pause'){abandonDive();eat();return;}
+},true);
+
+/* ---- GAMEPAD ---------------------------------------------------------------
+ * Pad buttons are replayed as the keyboard events the game already understands,
+ * so the two schemes can never drift apart. The left stick stays analog while
+ * swimming and turns into a repeating d-pad inside menus.                     */
+const PAD_BTN={0:'Space',1:'Escape',2:'KeyF',3:'KeyX',4:'KeyI',5:'KeyE',6:'KeyQ',7:'Space',9:'Escape',10:'KeyO',11:'Backspace'};
+const PAD_DIR={12:'ArrowUp',13:'ArrowDown',14:'ArrowLeft',15:'ArrowRight'};
+const PAD_DEAD=0.28;
+let padPrev={},padJoy=false,padDir=null,padRepeat=0;
+function padKey(code,down,shift){
+  padSynth=true;
+  try{window.dispatchEvent(new KeyboardEvent(down?'keydown':'keyup',{code:code,key:code,shiftKey:!!shift,bubbles:true}));}
+  finally{padSynth=false;}
+}
+function padRelease(){ if(padDir){padKey(padDir,false);padDir=null;} if(padJoy){padJoy=false;input.joy=false;input.jx=0;input.jy=0;} }
+function padPoll(){
+  const pads=navigator.getGamepads?navigator.getGamepads():[];
+  let gp=null; for(let i=0;i<pads.length;i++){if(pads[i]&&pads[i].connected){gp=pads[i];break;}}
+  if(gp){
+    let live=false;
+    for(let i=0;i<gp.buttons.length;i++){
+      const b=gp.buttons[i], dn=b.pressed||b.value>0.5;
+      if(dn)live=true;
+      if(dn===!!padPrev[i])continue;
+      padPrev[i]=dn;
+      if(i===8){if(dn)bindsToggle();continue;}                                  // SELECT — bindings panel
+      if(i===3&&dn&&state.mode==='pause'){abandonDive();continue;}              // Y on the pause screen
+      const code=PAD_BTN[i]||PAD_DIR[i];
+      if(code)padKey(code,dn);
+    }
+    const ax=gp.axes[0]||0, ay=gp.axes[1]||0, mag=Math.hypot(ax,ay);
+    if(mag>PAD_DEAD)live=true;
+    const analog=(state.mode==='play'||state.mode==='flame');
+    if(analog){
+      if(padDir){padKey(padDir,false);padDir=null;}
+      if(mag>PAD_DEAD){input.joy=true;input.jx=ax;input.jy=ay;padJoy=true;}
+      else if(padJoy){padJoy=false;input.joy=false;input.jx=0;input.jy=0;}
+    }else{
+      if(padJoy){padJoy=false;input.joy=false;input.jx=0;input.jy=0;}
+      const d=mag>0.5?(Math.abs(ax)>=Math.abs(ay)?(ax>0?'ArrowRight':'ArrowLeft'):(ay>0?'ArrowDown':'ArrowUp')):null;
+      const now=performance.now();
+      if(d!==padDir){ if(padDir)padKey(padDir,false); padDir=d; if(d){padKey(d,true);padRepeat=now+260;} }
+      else if(d&&now>padRepeat){ padKey(d,false);padKey(d,true);padRepeat=now+110; }
+    }
+    if(live)pcOn('pad');
+  }else if(padDir||padJoy){padRelease();padPrev={};}
+  requestAnimationFrame(padPoll);
+}
+window.addEventListener('gamepadconnected',()=>{pcOn('pad');});
+window.addEventListener('gamepaddisconnected',()=>{padRelease();padPrev={};});
+requestAnimationFrame(padPoll);
 
 init();
 })();
