@@ -6428,13 +6428,10 @@ function crankTurn(){const o=crankObj;if(!o||crankS.doneT>0)return;
 }
 function crankInput(){
   const o=crankObj;if(!o){if(state.mode==='crank')setMode('play');return;}
-  // the diver is still submerged and working — air behaves exactly as it does mid-dig
-  if(player.attached){player.oxygen=player.maxOxygen;player.drown=0;}
-  else{player.oxygen-=OXY_RATE*pressureAt(o.tier||0)*(player.oxyDrainMul||1);if(player.oxygen<0)player.oxygen=0;
-    if(player.oxygen<=0){player.drown++;
-      if(player.drown>=DROWN){player.drown=0;player.hearts--;flashDmg(1,true);shake=7;sfx.hurt();
-        if(player.hearts<=0){crankObj=null;if(dieOrRevive('air'))return;setMode('play');return;}}}
-    else player.drown=0;}
+  // AIR IS FROZEN for the duration of the minigame — no passive drain, no drowning while you work.
+  // A blown vent still costs air (see crankFire): that's the minigame's own risk, not passive drain.
+  if(player.attached)player.oxygen=player.maxOxygen;
+  player.drown=0;
   if(crankS.hint>0)crankS.hint-=1/60;
   if(crankS.doneT>0){crankS.doneT-=1/60;crankS.rotor+=crankS.spin/60;crankS.spin*=0.9;
     if(crankS.doneT<=0){crankObj=null;o.crankTurns=0;completeMissionObj(o);setMode('play');}return;}
@@ -6484,7 +6481,7 @@ function renderCrank(){
   const frac=clamp(crankS.turns/crankS.need,0,1),psi=Math.max(0,Math.round((1-frac)*crankS.psiMax));
   // ==== TOP STATUS STRIP: O2 + HULL ====
   {const gw=Math.min(150,VW-38),gx=Math.round(cx-gw/2);
-   pxText(ctx,onAir?'AIR LINE':'O2',gx,5,onAir?'#5fe6ff':'#7fd0ee');
+   pxText(ctx,onAir?'AIR LINE':'O2 HELD',gx,5,onAir?'#5fe6ff':'#7fd0ee');
    const oy=12;px(ctx,gx-1,oy-1,gw+2,5,'#0a1420');px(ctx,gx,oy,Math.round(gw*of),3,onAir?'#39c6ff':(of>0.5?'#39c6ff':of>0.25?'#ffcf3a':'#ff4d5e'));if(!onAir&&of<=0.2&&(t>>3&1))px(ctx,gx,oy,gw,3,'rgba(255,77,94,0.3)');
    pxText(ctx,'HULL',gx,19,'#ff9aa6');
    const hy=26;px(ctx,gx-1,hy-1,gw+2,5,'#0a1420');px(ctx,gx,hy,Math.round(gw*hpf),3,player.hearts<=2?'#ff4d5e':'#3dff9a');}
@@ -6661,13 +6658,10 @@ function hackConfirm(){const S=hackS,o=hackObj;if(!o||S.doneT>0||S.formT>0)retur
   }
 }
 function hackInput(){const S=hackS,o=hackObj;if(!o){if(state.mode==='hack')setMode('play');return;}
-  // still submerged and working: air behaves exactly as it does mid-dig / mid-crank / mid-flame
-  if(player.attached){player.oxygen=player.maxOxygen;player.drown=0;}
-  else{player.oxygen-=OXY_RATE*pressureAt(o.tier||0)*(player.oxyDrainMul||1);if(player.oxygen<0)player.oxygen=0;
-    if(player.oxygen<=0){player.drown++;
-      if(player.drown>=DROWN){player.drown=0;player.hearts--;flashDmg(1,true);shake=7;sfx.hurt();
-        if(player.hearts<=0){hackObj=null;if(dieOrRevive('air'))return;setMode('play');return;}}}
-    else player.drown=0;}
+  // AIR IS FROZEN for the duration of the minigame — no passive drain, no drowning while you work.
+  // A scrambled sequence still costs air (see the wrong-side branch): that's the ICE's own risk.
+  if(player.attached)player.oxygen=player.maxOxygen;
+  player.drown=0;
   S.pulse+=1/60;
   if(S.hint>0)S.hint-=1/60;
   if(S.flash>0)S.flash-=1/60;
@@ -6711,7 +6705,7 @@ function renderHack(){
   const of=clamp(player.oxygen/player.maxOxygen,0,1),hpf=clamp(player.hearts/player.maxHearts,0,1),onAir=!!player.attached;
   // ==== TOP STATUS STRIP: O2 + HULL (mirrors the other minigame consoles) ====
   {const gw=Math.min(150,VW-38),gx=Math.round(cx-gw/2);
-   pxText(ctx,onAir?'AIR LINE':'O2',gx,5,onAir?'#5fe6ff':'#7fd0ee');
+   pxText(ctx,onAir?'AIR LINE':'O2 HELD',gx,5,onAir?'#5fe6ff':'#7fd0ee');
    const oy=12;px(ctx,gx-1,oy-1,gw+2,5,'#0a1420');px(ctx,gx,oy,Math.round(gw*of),3,onAir?'#39c6ff':(of>0.5?'#39c6ff':of>0.25?'#ffcf3a':'#ff4d5e'));if(!onAir&&of<=0.2&&(t>>3&1))px(ctx,gx,oy,gw,3,'rgba(255,77,94,0.3)');
    pxText(ctx,'HULL',gx,19,'#ff9aa6');
    const hy=26;px(ctx,gx-1,hy-1,gw+2,5,'#0a1420');px(ctx,gx,hy,Math.round(gw*hpf),3,player.hearts<=2?'#ff4d5e':'#3dff9a');}
@@ -6871,13 +6865,10 @@ function updateFlameFx(){
 }
 function flameInput(){
   const o=flameObj,B=flameS;if(!o){if(state.mode==='flame')setMode('play');return;}
-  // still submerged and working: air behaves exactly as it does mid-dig / mid-crank
-  if(player.attached){player.oxygen=player.maxOxygen;player.drown=0;}
-  else{player.oxygen-=OXY_RATE*pressureAt(o.tier||0)*(player.oxyDrainMul||1);if(player.oxygen<0)player.oxygen=0;
-    if(player.oxygen<=0){player.drown++;
-      if(player.drown>=DROWN){player.drown=0;player.hearts--;flashDmg(1,true);shake=7;sfx.hurt();
-        if(player.hearts<=0){flameObj=null;flameFire=false;if(dieOrRevive('air'))return;setMode('play');return;}}}
-    else player.drown=0;}
+  // AIR IS FROZEN for the duration of the minigame — no passive drain, no drowning while you work.
+  // Backdraft/scald hits still cost air (see the burn branches): that's the sac's own risk.
+  if(player.attached)player.oxygen=player.maxOxygen;
+  player.drown=0;
   if(B.hint>0)B.hint-=1/60;
   if(B.flash>0)B.flash-=1/60;
   if(B.hitFlash>0)B.hitFlash-=1/60;
