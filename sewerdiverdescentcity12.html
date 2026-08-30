@@ -8274,6 +8274,156 @@ window.addEventListener('gamepadconnected',()=>{pcOn('pad');});
 window.addEventListener('gamepaddisconnected',()=>{padRelease();padPrev={};});
 requestAnimationFrame(padPoll);
 
+/* ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║  ███  DEV TEST PANEL  ███   NOT FOR RELEASE                              ║
+ * ╠══════════════════════════════════════════════════════════════════════════╣
+ * ║  TO REMOVE FOR RELEASE: delete everything from this banner down to the    ║
+ * ║  "END DEV TEST PANEL" banner. That is the whole thing — one contiguous    ║
+ * ║  block. No other line in this file mentions the panel: its markup, its    ║
+ * ║  styles and its behaviour are all created from in here at runtime, and    ║
+ * ║  the cheats work by wrapping existing functions rather than by editing    ║
+ * ║  them, so nothing else has a hook to leave behind.                        ║
+ * ║                                                                          ║
+ * ║  TO DISABLE WITHOUT DELETING: set DEV_PANEL_ON to false, one line down.   ║
+ * ║  (Verify a release build with: grep -c "DEV TEST PANEL" — expect 0.)      ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝ */
+const DEV_PANEL_ON = true;
+if(DEV_PANEL_ON)(function devTestPanel(){
+  const S={oxy:false,shop:false,invuln:false};
+  let coinsBefore=null;
+
+  // ---- cheats that need to override game functions --------------------------
+  // Wrapped, not edited: the originals are kept and called whenever the toggle
+  // is off, so switching a cheat off restores stock behaviour exactly.
+  const _canPay=canPay, _pay=pay, _canPayParts=canPayParts, _payParts=payParts;
+  canPay      = m => S.shop ? true : _canPay(m);
+  pay         = m => { if(!S.shop) _pay(m); };
+  canPayParts = c => S.shop ? true : _canPayParts(c);
+  payParts    = c => { if(!S.shop) _payParts(c); };
+
+  // ---- cheats enforced per frame (no game code involved at all) -------------
+  function devTick(){
+    if(player){
+      if(S.oxy){player.oxygen=player.maxOxygen;player.drown=0;}
+      if(S.invuln){player.hearts=player.maxHearts;player.burn=0;player.invuln=Math.max(player.invuln,6);}
+    }
+    if(S.shop&&coins<9999)coins=9999;
+    requestAnimationFrame(devTick);
+  }
+  requestAnimationFrame(devTick);
+
+  function setShop(on){
+    if(on&&coinsBefore===null){coinsBefore=coins;}
+    else if(!on&&coinsBefore!==null){coins=coinsBefore;coinsBefore=null;}   // hand back the real wallet
+    S.shop=on;
+  }
+
+  // ---- teleport ------------------------------------------------------------
+  function devSpot(t){                                   // first cell in layer t the diver actually fits in
+    const cx=Math.max(1,Math.min(MW-2,Math.round(player.x/TS)));
+    for(let ty=tierTop[t]+1; ty<tierTop[t]+28 && ty<MH-1; ty++)
+      for(let r=0;r<28;r++)
+        for(const s of (r?[-1,1]:[0])){
+          const tx=Math.max(1,Math.min(MW-2,cx+r*s)), X=tx*TS+3, Y=ty*TS+3;
+          if(!rectHit(X,Y,player.w,player.h))return{x:X,y:Y};
+        }
+    return {x:((MW/2)|0)*TS, y:(tierTop[t]+3)*TS};
+  }
+  function devTeleport(dir){
+    if(!player||state.mode==='title'){devSay('start a dive first');return;}
+    const cur=tierAtY(player.y), tgt=cur+dir;
+    if(tgt<0){devSay('already on the top layer');return;}
+    if(tgt>=SCHED.length){devSay('no layer below — this is the city finale');return;}
+    while(generatedTiers<=tgt&&generatedTiers<SCHED.length)growTier(generatedTiers);   // build it if it isn't there yet
+    if(dir>0){tierDry[tgt]=false;finishBulkAnim(cur);}   // flood the deck and release the seal you drop through
+    const p=devSpot(tgt);
+    player.x=p.x;player.y=p.y;player.vx=0;player.vy=0;player.drown=0;player.invuln=90;
+    player.attached=false;player.attachedBase=null;      // the line above can't stretch this far
+    camera.x=clamp(player.x-VW/2,0,MW*TS-VW);camera.y=clamp(player.y-VH/2,0,MH*TS-VH);
+    ensureDepth();
+    if(state.mode!=='play')setMode('play');
+    devSay('teleported to layer '+(tgt+1)+'/'+SCHED.length);
+  }
+  function devSay(m){ try{showMsg(m);}catch(_){} const t=el.querySelector('#dev-say'); if(t){t.textContent=m;} }
+
+  // ---- panel ---------------------------------------------------------------
+  const css=document.createElement('style');
+  css.textContent=`
+    /* thin tab on the left edge — the one spot free in BOTH the handheld and PC layouts */
+    #devtab{position:fixed;left:0;top:50%;transform:translateY(-50%);z-index:500;
+      writing-mode:vertical-rl;font:700 9px 'Courier New',monospace;
+      letter-spacing:3px;color:#ff9a3c;background:rgba(30,12,4,.9);border:1px solid #6b3410;
+      border-left:none;border-radius:0 4px 4px 0;padding:9px 3px;cursor:pointer;opacity:.7;}
+    #devtab:hover{opacity:1;}
+    #devpanel{position:fixed;left:22px;top:50%;transform:translateY(-50%);
+      max-height:82vh;overflow-y:auto;z-index:501;display:none;width:250px;
+      font-family:'Courier New',monospace;color:#e8d9c8;background:rgba(14,9,5,.97);
+      border:1px solid #6b3410;border-radius:7px;padding:10px 11px 11px;
+      box-shadow:0 0 30px rgba(255,140,50,.14),inset 0 0 40px rgba(0,0,0,.5);}
+    #devpanel.on{display:block;}
+    #devpanel h5{font-size:9px;letter-spacing:2px;color:#ff6b3c;font-weight:700;margin-bottom:2px;}
+    #devpanel .sub{font-size:8px;letter-spacing:1px;color:#7a6252;margin-bottom:9px;
+      border-bottom:1px solid #3a2113;padding-bottom:7px;}
+    #devpanel button.row{display:flex;justify-content:space-between;align-items:center;gap:8px;
+      width:100%;font:700 10px 'Courier New',monospace;letter-spacing:1px;text-align:left;
+      color:#cbbcae;background:rgba(40,24,12,.6);border:1px solid #4a2c14;border-radius:4px;
+      padding:6px 8px;margin-bottom:4px;cursor:pointer;}
+    #devpanel button.row:hover{border-color:#8a4a1c;color:#fff;}
+    #devpanel button.row .st{font-size:9px;color:#6d5a4a;flex:none;}
+    #devpanel button.row.on{color:#ffd7a8;border-color:#ff9a3c;background:rgba(90,45,12,.6);}
+    #devpanel button.row.on .st{color:#7dff6a;}
+    #devpanel .act{margin-top:7px;padding-top:7px;border-top:1px solid #3a2113;}
+    #dev-say{font-size:8px;color:#7a6252;letter-spacing:1px;margin-top:7px;min-height:10px;}
+    #devpanel .warn{font-size:8px;color:#a8674a;letter-spacing:1px;margin-top:8px;line-height:1.5;}`;
+  document.head.appendChild(css);
+
+  const el=document.createElement('div'); el.id='devpanel';
+  el.innerHTML=
+     '<h5>DEV TEST PANEL</h5>'
+    +'<div class="sub">not for release &middot; F8</div>'
+    +'<button class="row" data-t="oxy"><span>Stop oxygen drain</span><span class="st">OFF</span></button>'
+    +'<button class="row" data-t="shop"><span>Shop resources free</span><span class="st">OFF</span></button>'
+    +'<button class="row" data-t="invuln"><span>Invulnerable</span><span class="st">OFF</span></button>'
+    +'<div class="act">'
+    +'<button class="row" data-a="down"><span>Teleport to next layer</span><span class="st">&#9660;</span></button>'
+    +'<button class="row" data-a="up"><span>Teleport to layer above</span><span class="st">&#9650;</span></button>'
+    +'</div>'
+    +'<div id="dev-say"></div>'
+    +'<div class="warn">&#9888; free shop waives every resource, part and coin cost &mdash; base power and bulkhead tolls included.</div>';
+  document.body.appendChild(el);
+
+  const tab=document.createElement('button'); tab.id='devtab'; tab.textContent='DEV'; document.body.appendChild(tab);
+
+  function paint(){
+    el.querySelectorAll('button.row[data-t]').forEach(b=>{
+      const on=!!S[b.dataset.t];
+      b.classList.toggle('on',on);
+      b.querySelector('.st').textContent=on?'ON':'OFF';
+    });
+  }
+  function toggle(show){ el.classList.toggle('on',show===undefined?!el.classList.contains('on'):!!show); }
+
+  el.addEventListener('click',e=>{
+    const b=e.target.closest('button.row'); if(!b)return;
+    if(b.dataset.t){
+      const k=b.dataset.t;
+      if(k==='shop')setShop(!S.shop); else S[k]=!S[k];
+      paint(); devSay(b.textContent.replace(/ON|OFF/,'').trim()+' → '+(S[k]?'ON':'OFF'));
+    } else devTeleport(b.dataset.a==='down'?1:-1);
+    b.blur();                                   // never leave a button holding the keyboard
+  });
+  tab.addEventListener('click',()=>{toggle();tab.blur();});
+  // the panel eats its own keys so nothing reaches the diver
+  el.addEventListener('keydown',e=>e.stopPropagation());
+  window.addEventListener('keydown',e=>{
+    if(e.code==='F8'){toggle();e.preventDefault();e.stopPropagation();}
+  },true);
+
+  paint();
+  console.warn('SEWER DIVER: dev test panel is active (F8). Remove the DEV TEST PANEL block before release.');
+})();
+/* ╚═══════════════════  END DEV TEST PANEL — NOT FOR RELEASE  ═══════════════╝ */
+
 init();
 })();
 </script>
