@@ -8346,6 +8346,24 @@ if(DEV_PANEL_ON)(function devTestPanel(){
   }
   function devSay(m){ try{showMsg(m);}catch(_){} const t=el.querySelector('#dev-say'); if(t){t.textContent=m;} }
 
+  // ---- auto-complete the layer's current objective --------------------------
+  // Marks every machine of the current step done through the game's own
+  // completeMissionObj(), so progress, messages and the control unit / transit
+  // gate coming online all behave exactly as they do when you play it out.
+  function devCompleteObjective(){
+    if(!player||state.mode!=='play'){devSay('start a dive first');return;}
+    const t=tierAtY(player.y), m=layerMissions[t];
+    if(!m){devSay('no quest on this layer');return;}
+    if(m.complete){devSay('layer '+(t+1)+' quest is already clear');return;}
+    ensureDepth();                       // re-assert this layer's machines before touching them
+    const step=m.progress;
+    const objs=missionObjs.filter(q=>q.tier===t&&q.type!=='gate'&&q.step===step&&!q.done);
+    if(!objs.length){devSay('no machines found for the current step');return;}
+    for(const o of objs){ if(m.progress!==step)break; completeMissionObj(o); }
+    devSay(m.complete ? 'layer '+(t+1)+' quest COMPLETE'
+                      : 'step cleared — next: '+m.steps[m.progress].title);
+  }
+
   // ---- panel ---------------------------------------------------------------
   const css=document.createElement('style');
   css.textContent=`
@@ -8385,11 +8403,12 @@ if(DEV_PANEL_ON)(function devTestPanel(){
     +'<button class="row" data-t="shop"><span>Shop resources free</span><span class="st">OFF</span></button>'
     +'<button class="row" data-t="invuln"><span>Invulnerable</span><span class="st">OFF</span></button>'
     +'<div class="act">'
+    +'<button class="row" data-a="obj"><span>Complete current objective</span><span class="st">&#10003;</span></button>'
     +'<button class="row" data-a="down"><span>Teleport to next layer</span><span class="st">&#9660;</span></button>'
     +'<button class="row" data-a="up"><span>Teleport to layer above</span><span class="st">&#9650;</span></button>'
     +'</div>'
     +'<div id="dev-say"></div>'
-    +'<div class="warn">&#9888; free shop waives every resource, part and coin cost &mdash; base power and bulkhead tolls included.</div>';
+    +'<div class="warn">&#9888; free shop waives every resource, part and coin cost &mdash; base power and bulkhead tolls included.<br>&#9888; complete objective clears ONE step &mdash; press again to finish the layer and bring the control unit / transit gate online.</div>';
   document.body.appendChild(el);
 
   const tab=document.createElement('button'); tab.id='devtab'; tab.textContent='DEV'; document.body.appendChild(tab);
@@ -8409,7 +8428,8 @@ if(DEV_PANEL_ON)(function devTestPanel(){
       const k=b.dataset.t;
       if(k==='shop')setShop(!S.shop); else S[k]=!S[k];
       paint(); devSay(b.textContent.replace(/ON|OFF/,'').trim()+' → '+(S[k]?'ON':'OFF'));
-    } else devTeleport(b.dataset.a==='down'?1:-1);
+    } else if(b.dataset.a==='obj')devCompleteObjective();
+    else devTeleport(b.dataset.a==='down'?1:-1);
     b.blur();                                   // never leave a button holding the keyboard
   });
   tab.addEventListener('click',()=>{toggle();tab.blur();});
