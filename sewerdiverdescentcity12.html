@@ -1660,7 +1660,7 @@ const MAP_COST=60;   // coin price of the sector-nav minimap (bought at the shop
 // Overpowered on purpose, rationed by the battery: the cell only drains when the mech WORKS
 // (drill / saw / boost / hook) — walking and hanging are free. One cell carried, no refunds.
 const MECH_BAT_BASE=10, MECH_BAT_STEP=2;            // seconds of work per cell; +2s per environment upgrade
-const MECH_BOOST_BASE=2.0, MECH_BOOST_STEP=0.2;     // boost burn per airborne trip; +0.2s per environment upgrade
+const MECH_BOOST_BASE=2.0, MECH_BOOST_STEP=0.2;     // continuous boost the coil holds; +0.2s per environment upgrade
 const MECH_HOOK_BASE=96, MECH_HOOK_STEP=36, MECH_HOOK_MAX=264;  // hook reach scales like the air line
 const MECH_DRILL_COST=1.0, MECH_SAW_COST=1.5, MECH_HOOK_COST=0.8; // battery seconds per action
 const MECH_BAT_QTY=4;                               // battery recipe: 4× each of the layer's 3 ores + 3 floats
@@ -1669,6 +1669,8 @@ const MECH_DROP_CHANCE=0.35;                        // saw-killed deceivers spil
 const MECH_W=13, MECH_H=14, MECH_R=18;              // hitbox + board/interact radius
 const MECH_GRAV=0.12, MECH_ACC=0.5, MECH_MAXV=1.7, MECH_JUMP=2.9;
 const MECH_BOOST_ACC=0.24, MECH_BOOST_MAXUP=2.3, MECH_REEL=4.2;
+const MECH_BOOST_REGEN=0.6;   // coil seconds recovered per second whenever the thruster ISN'T firing —
+                              // mid-air, hanging on the hook, or standing still. Touchdown still snaps it full.
 const INFEST_CHANCE=0.22, INFEST_MUL=3;             // infested layers: swarm density the saw was made for
 
 const canvas=document.getElementById('c'), ctx=canvas.getContext('2d');
@@ -3932,7 +3934,8 @@ function updateMechPiloted(dt){const m=mech,p=player;
   if(ax<-0.05)m.dir=-1;else if(ax>0.05)m.dir=1;
   if(ax||ay){const ll=Math.hypot(ax,ay)||1;m.aimX=ax/ll;m.aimY=ay/ll;p.lookX=m.aimX;p.lookY=m.aimY;}
   const grounded=mechOnGround(m)&&!m.hookAnchor;
-  if(grounded)m.boostT=mechBoostMax();   // the boost coil recharges the moment a foot touches down
+  if(grounded)m.boostT=mechBoostMax();   // a foot on solid ground still snaps the coil straight back to full
+  let boosting=false;                    // set by the thruster branch below; anything else means it's recovering
   // --- grappling hook: fire / reel / hang / release ---
   if(m.hookAnchor){
     if(actionEdge){actionEdge=false;m.hookAnchor=null;m.hanging=false;}
@@ -3951,6 +3954,7 @@ function updateMechPiloted(dt){const m=mech,p=player;
       if(grounded&&!m.jumpHeld){m.vy=-MECH_JUMP;m.jumpHeld=true;sfx.dash();
         bubbleBurst(m.x,m.y+7,4,20,-10,10,0.8,2);}
       else if(!grounded&&m.boostT>0&&m.battery>0){
+        boosting=true;
         m.boostT=Math.max(0,m.boostT-dt);mechDrain(dt);   // boost is the only continuous battery cost
         m.vy-=MECH_BOOST_ACC;if(m.vy<-MECH_BOOST_MAXUP)m.vy=-MECH_BOOST_MAXUP;m.boostFx=3;
         if(state.tick%3===0)burst(m.x,m.y+8,2,40,0.3,'#7fe6ff',1);}
@@ -3961,6 +3965,11 @@ function updateMechPiloted(dt){const m=mech,p=player;
     m.y+=m.vy;if(mechColl(m)){m.y-=m.vy;const s=Math.sign(m.vy)||0;let g=0;
       while(g<16&&s&&!mechCollAt(m.x,m.y+s)){m.y+=s;g++;}m.vy=0;}
   }
+  // --- thruster coil: recharges the instant it stops firing, wherever the MULE is ---
+  // Airborne, hanging off the hook or parked — if you aren't burning it, it's coming back. Free
+  // (the coil is a rate limiter, not a fuel tank); the battery stays the only thing boosting spends.
+  if(!boosting){const bmx=mechBoostMax();
+    if(m.boostT<bmx)m.boostT=Math.min(bmx,(m.boostT||0)+MECH_BOOST_REGEN*dt);}
   m.boostFx=Math.max(0,(m.boostFx||0)-1);m.drillFx=Math.max(0,(m.drillFx||0)-1);m.sawFx=Math.max(0,(m.sawFx||0)-1);
   // keep the diver riding the cockpit so camera/tier/oxygen logic sees the right position
   p.x=m.x-4;p.y=m.y-4;p.vx=0;p.vy=0;p.rooted=0;
@@ -4497,7 +4506,7 @@ function divContent(tab,div,T0){
    else{
     const pct=Math.round(100*mech.battery/mechBatMax());
     h+='<div class="gearnote">MULE status \u2014 battery '+(mech.battery>0?pct+'%':'<span style="color:#ff4d5e">DEAD</span>')+' \u00b7 cap '+mechBatMax().toFixed(0)+'s \u00b7 boost '+mechBoostMax().toFixed(1)+'s \u00b7 hook '+mechHookReach()+'u'+(mech.off?' \u00b7 <span style="color:#ff9a3c">LEFT BEHIND \u2014 call it below</span>':'')+'</div>';
-    h+='<div class="gearnote">the cell drains only while the MULE works \u2014 drill '+MECH_DRILL_COST.toFixed(0)+'s a vein \u00b7 saw '+MECH_SAW_COST.toFixed(1)+'s a kill \u00b7 hook '+MECH_HOOK_COST.toFixed(1)+'s a shot \u00b7 boost 1s/s \u00b7 walking is free. the cockpit is <b>sealed</b> \u2014 your tank holds while you pilot, so the cell is the only thing you spend</div>';
+    h+='<div class="gearnote">the cell drains only while the MULE works \u2014 drill '+MECH_DRILL_COST.toFixed(0)+'s a vein \u00b7 saw '+MECH_SAW_COST.toFixed(1)+'s a kill \u00b7 hook '+MECH_HOOK_COST.toFixed(1)+'s a shot \u00b7 boost 1s/s \u00b7 walking is free. the thruster coil <b>recharges whenever it isn\u2019t firing</b> (+'+MECH_BOOST_REGEN.toFixed(1)+'s a second, free) \u2014 the battery is what limits your flying. the cockpit is <b>sealed</b> \u2014 your tank holds while you pilot, so the cell is the only thing you spend</div>';
     const bc=mechBatteryCost(T0),carrying=(player.mechBattery||0)>=1,ok=!carrying&&canPay(bc);
     h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+batIcon(30)+'<span class="nm">Battery cell <span style="color:#5b8095;font-size:9px">4\u00d7 each of this layer\u2019s ores &amp; floats \u00b7 carry max 1</span></span></div><div class="rin">'+(carrying?'<span style="color:#5dff8a;font-size:9px">STOWED 1/1</span>':need(bc,T0))+'</div><button class="cbtn '+(ok?'go':'')+'" data-craft="mbat"'+(ok?'':' disabled')+'>Cell</button></div>';
     const cc=mechCallCost(T0),cok=!!cc&&canPay(cc);
@@ -4887,7 +4896,7 @@ const TITLE_HTML=`
       <li><b>THE CITY UPDATE:</b> each city is a stack of environments, every environment with its own suit line. At the bottom of the final layer waits the <b>transit gate</b> — swim in, pick your next city on the <b>grid map</b>, and dive again, one environment deeper each time.</li>
       <li><b>SECTOR OBJECTIVES</b> gate the last level of every environment. The pink readout under your depth names the current task and its machine, all worked with <b>F</b>: <b>HACK</b> glowing wall terminals (an octagon ICE puzzle — steer the cursor to each shining side to fold a glyph, then find it in the 3-row grid and input; break 3 glyphs), <b>STRIKE</b> pulsing spore pods (hit, dodge the toxin cloud, hit again), <b>CRANK</b> pressure valves (tap F while the gauge reads green — the vents scald). Clear the chain, then throw the <b>AIRLOCK</b> lever beside the sealed bulkhead — or ride the transit gate on a city's finale.</li>
       <li><b>The dark deceives.</b> Eels coil on ledges, anglers and fungus fake the glow of treasure and ore, and "stranded divers" aren't. Craft <b>patch kits</b> (auto-saves you once if you'd die, or <b>Q</b> to top up), and in the <b>SHOP</b> tab sell salvage for coin to buy parts and build machines — even a <b>scrappy robot</b> that grabs loot for you.</li>
-      <li><b>THE MECH UPDATE:</b> assemble the <b>DV-8 "MULE"</b> in the shop's machine bay — a pilotable heavy frame with an <b>insta-drill</b> (no minigame, no gas), a <b>kill-saw</b> that removes eels and deceivers <b>permanently</b> (deceivers can spill valuable salvage), a <b>boost jump</b> and a <b>grappling hook</b> that hangs from ceilings. It runs on crafted <b>battery cells</b> (4× each of the layer's ores &amp; floats, one carried, drains <b>only while it works</b>). The cockpit is <b>sealed</b>: piloting costs <b>no oxygen at all</b> — your tank simply holds until you climb out. A dead MULE seizes in place until you bring another cell, and a base can <b>call</b> it over for 10× one floating kind. Mech Lab upgrades, one per environment: <b>+2s cell</b>, <b>+0.2s boost</b>, <b>+hook reach</b>. Some layers are <b>INFESTED</b> — swarms the saw was made for.</li>
+      <li><b>THE MECH UPDATE:</b> assemble the <b>DV-8 "MULE"</b> in the shop's machine bay — a pilotable heavy frame with an <b>insta-drill</b> (no minigame, no gas), a <b>kill-saw</b> that removes eels and deceivers <b>permanently</b> (deceivers can spill valuable salvage), a <b>boost jump</b> and a <b>grappling hook</b> that hangs from ceilings. It runs on crafted <b>battery cells</b> (4× each of the layer's ores &amp; floats, one carried, drains <b>only while it works</b>). The cockpit is <b>sealed</b>: piloting costs <b>no oxygen at all</b> — your tank simply holds until you climb out. A dead MULE seizes in place until you bring another cell, and a base can <b>call</b> it over for 10× one floating kind. The thruster coil <b>recharges the moment you stop holding ↑</b> — in the air, on the hook, anywhere — so the battery, not the coil, is what limits your flying. Mech Lab upgrades, one per environment: <b>+2s cell</b>, <b>+0.2s boost</b>, <b>+hook reach</b>. Some layers are <b>INFESTED</b> — swarms the saw was made for.</li>
     </ul>
     <div class="legend"><span><b>JOYSTICK</b> swim · aim</span><span><b>F</b> mine · <b>X</b> clip / power base · <b>I</b> pack</span><span><b>E</b> ⚙ workshop (at base)</span></div>
   </div>
@@ -6077,7 +6086,7 @@ function drawHUD(tier){
     px(ctx,mbx,mby,Math.round(mbw*bf),mbh,bf>0.5?'#ffd23c':bf>0.25?'#ff9a3c':'#ff4d5e');
     px(ctx,mbx,mby,Math.round(mbw*bf),1,'rgba(255,255,255,0.25)');
     if(bf<=0.25&&(state.tick>>3)%2===0)px(ctx,mbx,mby,mbw,mbh,'rgba(255,77,94,0.25)');
-    // boost coil: thin cyan strip under the battery, refills on touchdown
+    // boost coil: thin cyan strip under the battery — recharges whenever it isn't firing
     const bof=clamp((mech.boostT||0)/mechBoostMax(),0,1);
     px(ctx,mbx-1,mby+mbh+1,mbw+2,4,'#081019');px(ctx,mbx,mby+mbh+2,mbw,2,'#0e1d28');
     px(ctx,mbx,mby+mbh+2,Math.round(mbw*bof),2,'#7fe6ff');
