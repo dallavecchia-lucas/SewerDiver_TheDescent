@@ -4031,7 +4031,7 @@ function mechPowerDown(){const m=mech;
     burst(m.x,m.y,14,120,0.5,'#ffd23c');showMsg('cell spent — the spare slams in');return;}
   m.hookAnchor=null;m.hanging=false;
   if(m.piloted){m.piloted=false;player.x=m.x-4;player.y=m.y-4;player.vx=0;player.vy=-0.4;
-    player.invuln=Math.max(player.invuln,40);}
+    player.invuln=Math.max(player.invuln,40);updateActionLabels();}
   sfx.lose();shake=Math.max(shake,6);
   showMsg('battery dead — the MULE seizes where it stands. bring it a fresh cell');}
 // X near the mech: slot a carried cell into a dead frame, or climb in
@@ -4045,6 +4045,7 @@ function mechInteract(){const m=mech;
   if(player.attached){player.attached=false;const cb=player.attachedBase||curBase();
     if(cb){cb.endX=player.x+4;cb.endY=player.y+4;}player.attachedBase=null;}
   player.x=m.x-4;player.y=m.y-4;player.vx=0;player.vy=0;player.rooted=0;
+  updateActionLabels();
   sfx.start();showMsg('piloting the MULE — F drill · SPACE hook · hold ↑ boost · X exit · sealed: no O₂ drain');}
 // dormant frame keeps honest physics: a mech that dies mid-air falls, lands, and stays put
 function updateMechIdle(dt){const m=mech;
@@ -4068,6 +4069,7 @@ function mechCallTo(b){const m=mech;if(!m||!b)return;
   for(const s of spots){const xx=b.x+s[0],yy=b.y+s[1];
     if(!mechCollAt(xx,yy)){px0=xx;py0=yy;break;}}
   m.x=px0;m.y=py0;m.vx=0;m.vy=0;m.off=false;m.piloted=false;m.hookAnchor=null;m.hanging=false;
+  updateActionLabels();
   burst(m.x,m.y,22,150,0.7,'#7fe6ff');bubbleBurst(m.x,m.y-4,8,24,-24,14,1.1,2);sfx.build();
   showMsg(m.battery>0?'the MULE stomps in — battery at '+Math.round(100*m.battery/mechBatMax())+'%'
                      :'the MULE is hauled in — dead, its bay waiting for a cell');}
@@ -4159,6 +4161,7 @@ function updateMechPiloted(dt){const m=mech,p=player;
   if(clipEdge){clipEdge=false;
     m.piloted=false;m.hookAnchor=null;m.hanging=false;
     p.x=m.x-4;p.y=m.y-4;p.vx=0;p.vy=0;p.invuln=Math.max(p.invuln,30);
+    updateActionLabels();
     sfx.back();showMsg('stepped out — the MULE holds position');return;}
   // --- world interactions the diver path normally handles ---
   const _tb=bases[tAt(p.y)];
@@ -4350,7 +4353,9 @@ function bindBtn(id,fn){const el=document.getElementById(id);if(!el)return;
   el.addEventListener('pointerup',up);el.addEventListener('pointerleave',up);el.addEventListener('pointercancel',up);}
 bindBtn('minebtn',()=>{if(state.mode==='craft'||state.mode==='inv')menuConfirm();else if(state.mode==='sub')subFire();else if(state.mode==='play'||state.mode==='mine'||state.mode==='crank')mineEdge=true;else if(state.mode==='objectives')closeObjectives();});
 bindBtn('clipbtn',()=>{if(state.mode==='play')clipEdge=true;});
-bindBtn('ropebtn',()=>{if(state.mode==='sub'){subDropMine(-1);return;}queueCraft=true;});
+bindBtn('ropebtn',()=>{if(state.mode==='sub'){subDropMine(-1);return;}
+  if(state.mode==='play'&&mech&&mech.piloted){actionEdge=true;return;}   // piloted MULE: this is the hook trigger
+  queueCraft=true;});
 // BOOST is an emergency-thrust trigger, not a held control: one press lights the whole
 // coil, which then burns to empty on its own. The clip button just needs the press edge.
 (function(){const cb=document.getElementById('clipbtn');if(!cb)return;
@@ -5086,6 +5091,20 @@ function loseHTML(){const r=state.loseReason;const T={air:['OUT OF AIR','your ta
   <div class="stat" style="color:#7fd0ee;font-size:13px;margin-top:8px">you dived <b style="color:var(--tox)">${state.maxDepth||0}m</b> — ${tierTop.length} levels deep · city ${CITY} (${CITY_NAME})</div>
   <div class="prompt">press mine / space to try again</div></div>`;}
 const ABORT_SVG='<svg class="bico" viewBox="0 0 16 16" width="100%" height="100%" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg"><g fill="currentColor"><rect x="7" y="0" width="2" height="1"/><rect x="7" y="1" width="2" height="1"/><rect x="6" y="2" width="4" height="1"/><rect x="6" y="3" width="4" height="1"/><rect x="5" y="4" width="6" height="1"/><rect x="5" y="5" width="6" height="1"/><rect x="4" y="6" width="8" height="1"/><rect x="4" y="7" width="8" height="1"/><rect x="3" y="8" width="10" height="1"/><rect x="3" y="9" width="10" height="1"/><rect x="2" y="10" width="12" height="1"/><rect x="2" y="11" width="12" height="1"/><rect x="1" y="12" width="14" height="1"/><rect x="1" y="13" width="14" height="1"/><rect x="0" y="14" width="16" height="1"/></g><g fill="#1a0a02"><rect x="7" y="5" width="2" height="5"/><rect x="7" y="11" width="2" height="2"/></g></svg>';
+// the four right-hand action buttons mean different things depending on what's being
+// piloted: on foot they're mine/clip/craft/pack, in the sub they're torpedo/boost/mine
+// bay, in the MULE they're drill/exit/hook (pack stays inventory). Called on every mode
+// change and on entering/leaving the mech, since piloting toggles without a mode change.
+function updateActionLabels(){
+  const lbls=document.querySelectorAll('#right-controls .ab .lbl');
+  if(lbls.length!==4)return;
+  if(!lbls[0].dataset.def)for(const L of lbls)L.dataset.def=L.textContent;
+  const piloted=state.mode==='play'&&mech&&mech.piloted;
+  const sub=['torpedo · F','boost · X','mine ▲ · Q','mine ▼ · E'];
+  const mechL=['drill · F','exit · X','hook · SPACE','pack · I'];
+  const set=(state.mode==='sub')?sub:(piloted?mechL:null);
+  for(let i=0;i<4;i++)lbls[i].textContent=set?set[i]:lbls[i].dataset.def;
+}
 function setMode(m){state.mode=m;
   if(m!=='play'&&m!=='mine'&&m!=='flame'&&m!=='sub'){mineEdge=false;input.joy=false;input.jx=0;input.jy=0;}if(m!=='play')clipEdge=false;
   if(m!=='play'&&m!=='flame'&&m!=='sub'){input.joy=false;input.jx=0;input.jy=0;const dp=document.getElementById('dpad');if(dp)dp.classList.remove('active');}
@@ -5108,12 +5127,9 @@ function setMode(m){state.mode=m;
   const bl=document.getElementById('backLbl');if(bl){bl.textContent=canvasGame?'ABORT':'back';bl.classList.toggle('abortlbl',canvasGame);}
   const bb=document.getElementById('backbtn');if(bb){if(canvasGame){if(!bb.dataset.def)bb.dataset.def=bb.innerHTML;bb.innerHTML=ABORT_SVG;bb.classList.add('abortbtn');}else{if(bb.dataset.def)bb.innerHTML=bb.dataset.def;bb.classList.remove('abortbtn');}}
   const crt=document.getElementById('crt');if(crt)crt.style.display=(m==='play'||canvasGame||m==='sub')?'none':'';   // CRT on menu screens only
-  // the transversal keeps the four play buttons but they mean different things in a boat
-  {const lbls=document.querySelectorAll('#right-controls .ab .lbl');
-   if(lbls.length===4){
-     if(!lbls[0].dataset.def)for(const L of lbls)L.dataset.def=L.textContent;
-     const sub=['torpedo · F','boost · X','mine ▲ · Q','mine ▼ · E'];
-     for(let i=0;i<4;i++)lbls[i].textContent=(m==='sub')?sub[i]:lbls[i].dataset.def;}}
+  // the transversal / the piloted MULE keep the four play buttons but they mean
+  // different things in a boat or a mech — see updateActionLabels()
+  updateActionLabels();
   overlayEl.classList.toggle('hidden',!(m==='title'||m==='win'||m==='lose'||m==='pause'||m==='objectives'));
   mineEl.classList.toggle('hidden',m!=='mine');
   if(m!=='craft')craftEl.classList.add('hidden');
