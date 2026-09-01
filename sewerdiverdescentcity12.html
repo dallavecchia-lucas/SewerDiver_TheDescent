@@ -3810,13 +3810,44 @@ function updateCreatures(dt){
   }
   if(creatures.some(c=>c.dead))creatures=creatures.filter(c=>!c.dead);
 }
+/* the lantern's live reach: base radius, +10% per lens grind, wider from the MULE's floods.
+ * The murk cut, the visible beam and the scrappy robot's work area all read from this. */
+function lanternRadius(){return player.lightRadius*(1+0.10*(player.lanternLevel||0))*((mech&&mech.piloted)?1.25:1);}
+
+const COMP_SPEED=118;   // px/s while hauling itself to a target
+const COMP_GRAB=8;      // how close it has to get before the claw closes
+// nearest floating resource / valuable scrap inside the lit area — the robot only works
+// what the lantern shows, so a wider beam (lens grinds, floodlight) is a wider sweep.
+function companionTarget(co){
+  const R=lanternRadius(),px0=player.x+4,py0=player.y+4,elo=entTierLo(),ehi=entTierHi();
+  let best=null,bd=Infinity;
+  for(const list of [scraps,mixers])
+    for(const it of list){
+      if(it.tier<elo||it.tier>ehi)continue;
+      if(Math.hypot(px0-it.x,py0-it.y)>R)continue;              // leashed to the diver's light
+      const d=Math.hypot(co.x-it.x,co.y-it.y);
+      if(d<bd){bd=d;best=it;}
+    }
+  return best;
+}
 function updateCompanion(dt){if(!companion)return;const co=companion;
-  // follow the player with a trailing lag
-  const tx=player.x+4-12*player.dir,ty=player.y+4-10;
-  co.x+=(tx-co.x)*0.08;co.y+=(ty-co.y)*0.08;co.ph=(co.ph||0)+dt;
-  // auto-collect nearby loot
-  collectNear(mixers,co.x,co.y,22,m=>{addInv(m.resId,1);sfx.pop();});
-  collectNear(scraps,co.x,co.y,22,s=>{scrapInv[s.kind]=(scrapInv[s.kind]||0)+1;sfx.pop();});
+  co.ph=(co.ph||0)+dt;
+  // a fresh scan every frame — the diver may have grabbed the old target out from under it
+  const tgt=companionTarget(co);
+  if(tgt){ // fly at it
+    const dx=tgt.x-co.x,dy=tgt.y-co.y,d=Math.hypot(dx,dy)||1,step=Math.min(COMP_SPEED*dt,d);
+    co.x+=dx/d*step;co.y+=dy/d*step;
+    if(dx<-0.5)co.dir=-1;else if(dx>0.5)co.dir=1;
+  }else{   // nothing lit worth grabbing — trail the diver
+    const tx=player.x+4-12*player.dir,ty=player.y+4-10;
+    co.x+=(tx-co.x)*0.08;co.y+=(ty-co.y)*0.08;co.dir=player.dir;
+  }
+  co.busy=!!tgt;
+  // whatever it is sitting on goes in the hold, same haul as the diver's own pickup
+  collectNear(mixers,co.x,co.y,COMP_GRAB,m=>{addInv(m.resId,1);sfx.pop();burst(m.x,m.y,8,90,0.5,RES[m.resId].col);co.grabFx=0.35;});
+  collectNear(scraps,co.x,co.y,COMP_GRAB,s=>{const sd=SCRAPBYID[s.kind];scrapInv[s.kind]=(scrapInv[s.kind]||0)+1;sfx.pop();
+    burst(s.x,s.y,12,110,0.6,sd.col);showMsg('robot · '+sd.name+' ('+sd.coin+' coin)');co.grabFx=0.35;});
+  if(co.grabFx>0)co.grabFx=Math.max(0,co.grabFx-dt);
 }
 
 // ====== MECH — DV-8 "MULE" (pilotable heavy frame) ======
@@ -5346,7 +5377,7 @@ function render(){
   mctx.globalCompositeOperation='source-over';const mw=hex2rgb(w[2]);mctx.fillStyle='rgba('+(mw[0]*0.55|0)+','+(mw[1]*0.55|0)+','+(mw[2]*0.55|0)+',0.66)';mctx.fillRect(0,0,VW,VH);
   mctx.globalCompositeOperation='destination-out';
   const pgx=player.x+4-RCX,pgy=player.y+4-RCY;
-  const lx=player.lookX||1,ly=player.lookY||0,LR=player.lightRadius*(1+0.10*(player.lanternLevel||0))*((mech&&mech.piloted)?1.25:1);
+  const lx=player.lookX||1,ly=player.lookY||0,LR=lanternRadius();
   const flick=1+Math.sin(state.tick*0.5)*0.015+Math.sin(state.tick*0.21)*0.02;  // subtle lantern flicker
   radial(mctx,pgx,pgy,SELF_R,'rgba(0,0,0,1)','rgba(0,0,0,0)');                   // small pool around you
   cutCone(mctx,pgx-lx*5,pgy-ly*5,lx,ly,LR*flick,LANT_HALF);                       // forward lantern cone
@@ -5790,11 +5821,13 @@ function drawMermaid(c,X,Y){
     gl(c.x,c.y,12,'200,120,160',0.2);}
 }
 function drawCompanion(){if(!companion)return;const co=companion,X=Math.round(co.x-RCX),Y=Math.round(co.y-RCY);
-  if(X<-20||X>VW+20||Y<-20||Y>VH+20)return;const bob=Math.round(Math.sin((co.ph||0)*4));
+  if(X<-20||X>VW+20||Y<-20||Y>VH+20)return;
+  const bob=Math.round(Math.sin((co.ph||0)*(co.busy?7:4))),d=co.dir||1,gf=co.grabFx||0;
   px(ctx,X-4,Y-3+bob,8,6,'#3a4a57');px(ctx,X-3,Y-2+bob,6,4,'#566a78');
-  px(ctx,X-2,Y-1+bob,2,2,'#46d0ff');px(ctx,X+2,Y-1+bob,1,1,'#ffd23c');
+  px(ctx,X-2,Y-1+bob,2,2,co.busy?'#ffd23c':'#46d0ff');px(ctx,X+2,Y-1+bob,1,1,'#ffd23c');
   px(ctx,X-5,Y+2+bob,2,1,'#2a3742');px(ctx,X+3,Y+2+bob,2,1,'#2a3742');
-  gl(co.x,co.y,12,'70,208,255',0.22);
+  px(ctx,X+d*5,Y+bob,1,2,'#8a96a2');                       // the claw, out front on its heading
+  gl(co.x,co.y,gf>0?18:12,'70,208,255',0.22+gf*0.5);
 }
 
 // ---- DV-8 "MULE" mech: one sprite, three moods (piloted / parked-live / dead) ----
