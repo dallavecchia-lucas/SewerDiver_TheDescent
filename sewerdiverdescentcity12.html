@@ -7485,11 +7485,13 @@ function subMobTick(m,dt,flow){
   m.x-=flow*dt;
   const dx=m.x-subS.sx, dy=m.y-subS.y;
   if(m.st==='close'){
-    // it does not just home onto the boat's depth — it weaves up and down as it comes on,
-    // only loosely tracking, so a torpedo (dead level, no steering) has to be timed for the
-    // moment the weave crosses the boat's own depth rather than fired the instant it's ahead
-    const weave=Math.sin(m.t*(m.kind==='squid'?3.4:2.1)+m.ph)*K.close*(m.kind==='squid'?0.95:1.15);
-    m.vx=-K.close;m.vy=clamp((subS.y-m.y)*0.65+weave,-K.close*1.3,K.close*1.3);
+    // it does not just home onto the boat's depth — it weaves hard up and down as it comes
+    // on, two harmonics stacked so the swing never quite repeats, only loosely tracking, so
+    // a torpedo (dead level, no steering) has to be timed for the moment the weave crosses
+    // the boat's own depth rather than fired the instant it's ahead
+    const weave=Math.sin(m.t*(m.kind==='squid'?4.6:3.1)+m.ph)*K.close*(m.kind==='squid'?1.9:2.3)
+               +Math.sin(m.t*(m.kind==='squid'?9.7:6.4)+m.ph*1.7)*K.close*(m.kind==='squid'?0.7:0.85);
+    m.vx=-K.close;m.vy=clamp((subS.y-m.y)*0.4+weave,-K.close*2.4,K.close*2.4);
     if(m.kind==='squid'){m.vx-=Math.sin(m.t*7+m.ph)*22;m.vy+=Math.cos(m.t*5+m.ph)*26;}   // mantle-jet stutter
     if(dx<SUB_W*0.9){                                    // abeam the bow: commit to a side and swing wide
       m.st='flank';
@@ -7498,9 +7500,9 @@ function subMobTick(m,dt,flow){
       if(Math.random()<0.25)m.side=-m.side;
     }
   } else if(m.st==='flank'){
-    const stand=K.stand+Math.sin(m.t*(m.kind==='meg'?2:2.6)+m.ph)*(m.kind==='meg'?10:14);   // bobs at standoff too
+    const stand=K.stand+Math.sin(m.t*(m.kind==='meg'?2.8:3.6)+m.ph)*(m.kind==='meg'?22:28);   // bobs wide at standoff too
     const ty=subS.y+m.side*stand;
-    m.vy=clamp((ty-m.y)*3.2,-K.flank,K.flank);
+    m.vy=clamp((ty-m.y)*3.2,-K.flank*1.4,K.flank*1.4);
     m.vx=-K.flank*0.85;
     // it has to be WELL past the stern before it turns, so the bite is a run back up the
     // wake rather than a sideswipe the moment it draws level with the screws
