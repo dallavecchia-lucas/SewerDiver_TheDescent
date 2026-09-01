@@ -3875,6 +3875,15 @@ function mechBoostRegen(){return MECH_BOOST_REGEN+MECH_REGEN_STEP*mUpgCount(play
 // seconds a burnt-out thruster stays dead: a full rebuild from empty at the current recharge rate
 function mechBoostRebuild(){return mechBoostMax()*MECH_BOOST_RESET/mechBoostRegen();}
 function mechHookReach(){return Math.min(MECH_HOOK_MAX,MECH_HOOK_BASE+MECH_HOOK_STEP*mUpgCount(player.mechHookUpg||{}));}
+/* Mech fittings are ONE PER ENVIRONMENT — and an environment means every environment ever descended,
+ * which is what envGlobalIndex counts (the suit curve already rides it). envOfTier alone is the
+ * CITY-LOCAL index: it restarts at 0 through every transit gate, so keying the slots on it would read
+ * city 2's first five environments as already fitted from city 1 and weld the Mech Lab shut for the
+ * rest of the run. All four branches — cell, coil capacity, coil recharge, hook — key on this. */
+function mechUpgEnv(t){return envGlobalIndex(CITY,envOfTier(t));}
+// deeper environments charge more for the same fitting; g is the global index, so the curve keeps
+// climbing across cities instead of resetting to pocket change at every transit
+function mechUpgCost(kind,g){return kind==='bat'?(40+g*10):(24+g*8);}
 // battery recipe scales with the dive by construction: it always draws on the CURRENT layer's resources
 function mechBatteryCost(t){const c={};for(const s of SLOTS){c['t'+(t+1)+'r'+s]=MECH_BAT_QTY;c['t'+(t+1)+'m'+s]=MECH_BAT_QTY;}return c;}
 // quick-spawn toll: 10× ONE floating kind of this layer — whichever the player holds most of
@@ -4555,13 +4564,13 @@ function divContent(tab,div,T0){
   else if(div==='mechlab'){
    if(!mech)h+='<div class="emptyhold">build the DV-8 “MULE” first — Machines, one shelf over</div>';
    else{
-    const e=envOfTier(T0);
-    h+='<div class="gearnote">one of each fitting per environment — permanent, welded to the MULE’s frame</div>';
+    const e=mechUpgEnv(T0);
+    h+='<div class="gearnote">one of each fitting per <b>environment</b> — all four layers of an environment share one slot, and every new environment opens a fresh set. permanent, welded to the MULE’s frame</div>';
     const rows=[
-     ['bat','Battery cell +'+MECH_BAT_STEP+'s','cap '+mechBatMax().toFixed(0)+'s → '+(mechBatMax()+MECH_BAT_STEP).toFixed(0)+'s',40+e*10,(player.mechBatUpg||{})[e],false,batIcon(30)],
-     ['boost','Coil capacity +'+MECH_BOOST_STEP.toFixed(1)+'s','how long you can hold \u2191 \u00b7 '+mechBoostMax().toFixed(1)+'s \u2192 '+(mechBoostMax()+MECH_BOOST_STEP).toFixed(1)+'s',24+e*8,(player.mechBoostUpg||{})[e],false,machIcon('thruster',30)],
-     ['regen','Coil recharge +'+MECH_REGEN_STEP.toFixed(2)+'/s','how fast it winds back \u00b7 '+mechBoostRegen().toFixed(2)+'/s \u2192 '+(mechBoostRegen()+MECH_REGEN_STEP).toFixed(2)+'/s \u00b7 burnout '+mechBoostRebuild().toFixed(1)+'s \u2192 '+(mechBoostMax()*MECH_BOOST_RESET/(mechBoostRegen()+MECH_REGEN_STEP)).toFixed(1)+'s',24+e*8,(player.mechRegenUpg||{})[e],false,scrapIcon('coil',30)],
-     ['hook','Hook drum +'+MECH_HOOK_STEP+'u','reach '+mechHookReach()+'u → '+Math.min(MECH_HOOK_MAX,mechHookReach()+MECH_HOOK_STEP)+'u',24+e*8,(player.mechHookUpg||{})[e],mechHookReach()>=MECH_HOOK_MAX,ropeIcon(30)]];
+     ['bat','Battery cell +'+MECH_BAT_STEP+'s','cap '+mechBatMax().toFixed(0)+'s → '+(mechBatMax()+MECH_BAT_STEP).toFixed(0)+'s',mechUpgCost('bat',e),(player.mechBatUpg||{})[e],false,batIcon(30)],
+     ['boost','Coil capacity +'+MECH_BOOST_STEP.toFixed(1)+'s','how long you can hold \u2191 \u00b7 '+mechBoostMax().toFixed(1)+'s \u2192 '+(mechBoostMax()+MECH_BOOST_STEP).toFixed(1)+'s',mechUpgCost('boost',e),(player.mechBoostUpg||{})[e],false,machIcon('thruster',30)],
+     ['regen','Coil recharge +'+MECH_REGEN_STEP.toFixed(2)+'/s','how fast it winds back \u00b7 '+mechBoostRegen().toFixed(2)+'/s \u2192 '+(mechBoostRegen()+MECH_REGEN_STEP).toFixed(2)+'/s \u00b7 burnout '+mechBoostRebuild().toFixed(1)+'s \u2192 '+(mechBoostMax()*MECH_BOOST_RESET/(mechBoostRegen()+MECH_REGEN_STEP)).toFixed(1)+'s',mechUpgCost('regen',e),(player.mechRegenUpg||{})[e],false,scrapIcon('coil',30)],
+     ['hook','Hook drum +'+MECH_HOOK_STEP+'u','reach '+mechHookReach()+'u → '+Math.min(MECH_HOOK_MAX,mechHookReach()+MECH_HOOK_STEP)+'u',mechUpgCost('hook',e),(player.mechHookUpg||{})[e],mechHookReach()>=MECH_HOOK_MAX,ropeIcon(30)]];
     for(const[kind,nm,sub,cost,fitted,maxed,icon]of rows){
      const ok=!fitted&&!maxed&&coins>=cost;
      h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+icon+'<span class="nm">'+nm+' <span style="color:#5b8095;font-size:9px">'+(maxed?'MAXED':fitted?'fitted this environment':sub+' · '+cost+' coin')+'</span></span></div><button class="cbtn '+(ok?'go':'')+'" data-craft="mup:'+kind+'"'+(ok?'':' disabled')+'>'+(fitted||maxed?'✓':'Fit')+'</button></div>';}
@@ -4826,12 +4835,12 @@ craftEl.addEventListener('click',e=>{const b=e.target.closest('[data-craft]');if
   else if(v==='mcall'){const t=tAt(player.y),cc=mechCallCost(t);
     if(!mech||!cc||!canPay(cc)){craftDeny();return;}
     pay(cc);mechCallTo(bases[t]);buildCraft();}
-  else if(p[0]==='mup'){const kind=p[1],e=envOfTier(tAt(player.y));
+  else if(p[0]==='mup'){const kind=p[1],e=mechUpgEnv(tAt(player.y));
     if(!mech){craftDeny();return;}
     const key=kind==='bat'?'mechBatUpg':kind==='boost'?'mechBoostUpg':kind==='regen'?'mechRegenUpg':'mechHookUpg';
     player[key]=player[key]||{};
     if(player[key][e]||(kind==='hook'&&mechHookReach()>=MECH_HOOK_MAX)){craftDeny();return;}
-    const cost=kind==='bat'?(40+e*10):(24+e*8);
+    const cost=mechUpgCost(kind,e);
     if(coins<cost){showMsg('need '+cost+' coin');craftDeny();return;}
     coins-=cost;player[key][e]=true;
     if(kind==='bat'&&mech.battery>0)mech.battery=Math.min(mech.battery+MECH_BAT_STEP,mechBatMax());  // a bigger cell tops up a live one
