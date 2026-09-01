@@ -4330,6 +4330,9 @@ const ctabsEl=document.getElementById('ctabs');
 let mDiv=null, mZone='tab', mIdx=0, mGridIdx=0;
 let baseIntroSeen=false;
 let mineIntroSeen=false, mineIntroActive=false;
+/* answer to the studio intro's FIRST TIME HERE prompt: NO turns every tutorial deck
+ * off for the whole run (boot manual, base briefing, mining primer). */
+let tutorialsOn=true;
 
 function resChip(id,nd){
  const have=invGet(id), ok=(nd==null)?true:(have>=nd);
@@ -4803,7 +4806,7 @@ function showReward(resId,count){
     setTimeout(()=>{rewardEl.classList.add('hidden');rewardEl.classList.remove('out');},340);},1050);
 }
 function _openCraft(){setMode('craft');craftEl.classList.remove('hidden');mDiv=null;mZone='tab';mIdx=(craftTab==='shop'?1:0);mGridIdx=0;buildCraft();sfx.uiopen();}
-function toggleCraft(open){if(open){if(!baseIntroSeen){baseIntroSeen=true;startBaseIntro(_openCraft);return;}_openCraft();}else{setMode('play');sfx.back();}}
+function toggleCraft(open){if(open){if(tutorialsOn&&!baseIntroSeen){baseIntroSeen=true;startBaseIntro(_openCraft);return;}_openCraft();}else{setMode('play');sfx.back();}}
 
 // ============ DAMAGE ============
 // HP-bar damage flash: env=true shows radioactive yellow-green chunk + ☢ symbol; else red chunk
@@ -6191,7 +6194,7 @@ function openMine(o){
   mgPrev.up=mgPrev.down=mgPrev.left=mgPrev.right=true; // swallow held dpad
   mgFx.length=0; setMode('mine'); orePrompt.style.display='none';
   clearTimeout(rewardTimer); rewardEl.classList.add('hidden'); rewardEl.classList.remove('show','out'); sfx.start();
-  if(!mineIntroSeen){mineIntroSeen=true;startMineIntro();}
+  if(tutorialsOn&&!mineIntroSeen){mineIntroSeen=true;startMineIntro();}
 }
 function hideMine(){mineEl.classList.add('hidden');}
 function closeMine(){const o=mgOre;mgOre=null;setMode('play');sfx.back();
@@ -7089,6 +7092,7 @@ function startStudioIntro(){
 
   function finish(playTutorial){
     running=false;
+    tutorialsOn=!!playTutorial;                                // NO here = no tutorial decks anywhere in the run
     stage.removeEventListener('pointerdown',onTap);
     if(ctl)ctl.removeEventListener('pointerdown',onCtlPress,true);
     if(crtEl)crtEl.style.display='';
