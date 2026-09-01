@@ -1716,7 +1716,7 @@ const SUB_LIFT=210, SUB_VDRAG=0.90, SUB_VMAX=78;    // plane authority / water d
 const SUB_BOOST_MAX=2.6;                            // seconds of continuous boost the coil holds
 const SUB_BOOST_REGEN=0.22, SUB_REGEN_STEP=0.09;    // coil-seconds recovered per second; +0.09 per fitting — a full burn costs a long wait back
 const SUB_TORP_SPD=170, SUB_TORP_STEP=22, SUB_TORP_DMG=2;
-const SUB_RELOAD=2.55, SUB_RELOAD_MUL=0.87, SUB_RELOAD_MIN=0.84;
+const SUB_RELOAD=1.8, SUB_RELOAD_MUL=0.87, SUB_RELOAD_MIN=0.84;
 const SUB_SPLASH_R=14, SUB_SPLASH_STEP=7, SUB_SPLASH_DMG=1, SUB_SPLASH_DSTEP=0.25;
 const SUB_MINE_R=18, SUB_MINE_RSTEP=6, SUB_MINE_DMG=2, SUB_MINE_DSTEP=0.5;
 const SUB_MINE_BASE=1, SUB_MINE_STEP=1;             // the bay is fitted from the first run — with ONE charge
@@ -7450,7 +7450,7 @@ function subHurtMob(m,d){
 // below 80 or the coil stops being the answer to a predator at the back.
 const SUB_MOB={
   squid:{hp:2, r:9,  close:52, flank:74, lunge:82, stand:26, dmg:1, turn:0.95, win:1.1},
-  meg:  {hp:6, r:15, close:36, flank:50, lunge:68, stand:42, dmg:2, turn:1.25, win:1.5}
+  meg:  {hp:2, r:15, close:36, flank:50, lunge:68, stand:42, dmg:2, turn:1.25, win:1.5}
 };
 function subSpawnMob(kind,yFrac){
   const K=SUB_MOB[kind], x=VW+24+Math.random()*40;
