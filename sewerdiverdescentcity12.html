@@ -6358,7 +6358,14 @@ function drawMinimap(tier){
 }
 
 // ============ LOOP ============
-function resize(){const stage=document.getElementById('stage'),w=stage.clientWidth,h=stage.clientHeight;
+// #stage's decorative "plastic frame" bezel (see #stage::before in the GUNMETAL/NEON-NOIR
+// skin passes) is an absolutely-positioned overlay painted directly on top of the canvas,
+// not a real border the layout reserves space for — so without this the frame's own border
+// width sits right over the outer ring of the canvas and can eclipse HUD elements drawn
+// close to an edge (e.g. the sub's hull pips). Shrink the rendered canvas by that much on
+// every side so the frame always has bare glass under it, never live HUD.
+const STAGE_FRAME_PAD=8;
+function resize(){const stage=document.getElementById('stage'),w=stage.clientWidth-STAGE_FRAME_PAD*2,h=stage.clientHeight-STAGE_FRAME_PAD*2;
   if(!w||!h)return;                                   // no layout yet (e.g. headless) — keep defaults
   const gba=window.matchMedia('(orientation:landscape) and (max-height:600px)').matches;
   if(document.body.classList.contains('pc-mode')){
@@ -7448,9 +7455,9 @@ function subHurtMob(m,d){
 // slower than that CANNOT close on a boosting stern — it stalls, the window runs out, and the
 // thing peels off. Unboosted the same lunge is a fast, unanswerable bite. Keep both kinds
 // below 80 or the coil stops being the answer to a predator at the back.
-const SUB_MOB={
-  squid:{hp:2, r:9,  close:52, flank:74, lunge:82, stand:26, dmg:1, turn:0.95, win:1.1},
-  meg:  {hp:2, r:15, close:36, flank:50, lunge:68, stand:42, dmg:2, turn:1.25, win:1.5}
+const SUB_MOB={   // close/flank/lunge cut 25% across the board — slower predators, same shapes
+  squid:{hp:2, r:9,  close:39,   flank:55.5, lunge:61.5, stand:26, dmg:1, turn:0.95, win:1.1},
+  meg:  {hp:2, r:15, close:27,   flank:37.5, lunge:51,   stand:42, dmg:2, turn:1.25, win:1.5}
 };
 function subSpawnMob(kind,yFrac){
   const K=SUB_MOB[kind], x=VW+24+Math.random()*40;
