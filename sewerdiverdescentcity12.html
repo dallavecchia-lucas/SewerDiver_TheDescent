@@ -324,6 +324,9 @@
   /* menu-mode action cluster (confirm / back) + central quick-exit, shown only in menus & the mining minigame */
   #right-controls.hidden,#menu-controls.hidden,#center-controls.hidden{display:none;}
   #menu-controls{display:flex;flex-direction:column;gap:12px;align-items:center;}
+  /* the main action button (glyph select / crank actuate / torch fire / mine dig) is the one thing every
+     minigame is built around — sized up well past the standard cap so a right thumb never has to hunt for it */
+  #confirmbtn{width:88px;height:88px;font-size:32px;}
   .b-confirm{background:radial-gradient(circle at 50% 33%,#9affc0,#23b46a 76%);color:#04210f;
     box-shadow:0 4px 0 #157a44,0 6px 7px rgba(0,0,0,.45),inset 0 2px 0 rgba(255,255,255,.45),inset 0 -4px 7px rgba(8,80,45,.45),0 0 0 4px rgba(8,14,20,.92),0 0 16px rgba(60,230,150,.3);}
   .b-back{background:radial-gradient(circle at 50% 33%,#9fc2d6,#4f6f86 76%);color:#0a1c27;
@@ -342,9 +345,9 @@
   @keyframes exitpulse{0%,100%{box-shadow:0 0 14px rgba(255,60,80,.55),0 0 26px rgba(255,40,60,.28),inset 0 1px 0 rgba(255,170,180,.3),inset 0 -3px 6px rgba(0,0,0,.5),0 2px 4px rgba(0,0,0,.5);}
     50%{box-shadow:0 0 20px rgba(255,70,90,.8),0 0 38px rgba(255,40,60,.45),inset 0 1px 0 rgba(255,180,190,.4),inset 0 -3px 6px rgba(0,0,0,.5),0 2px 4px rgba(0,0,0,.5);}}
   #controls.menumode::after{opacity:0;}
-  @media (max-width:520px){#dpad{width:128px;height:128px}#minepad{width:152px;height:152px;padding:7px}.btn{width:54px;height:54px;font-size:21px}.dot span{width:56px;height:56px}.mk{font-size:23px}}
-  @media (max-height:680px){#controls{padding-top:8px;padding-bottom:max(20px,calc(env(safe-area-inset-bottom) + 12px))}#dpad{width:114px;height:114px}#minepad{width:138px;height:138px;padding:6px}.btn{width:50px;height:50px;font-size:19px}.dot span{width:48px;height:48px}.mk{font-size:21px}.mhub{width:28px;height:28px}.ab .lbl{font-size:7px}#brand{padding:2px 5px 4px}.bm-name{font-size:13px}}
-  @media (max-width:374px){#dpad{width:116px;height:116px}.dot span{width:50px;height:50px}.btn{width:50px;height:50px;font-size:19px}#right-controls{column-gap:2px;row-gap:2px}}
+  @media (max-width:520px){#dpad{width:128px;height:128px}#minepad{width:152px;height:152px;padding:7px}.btn{width:54px;height:54px;font-size:21px}.dot span{width:56px;height:56px}.mk{font-size:23px}#confirmbtn{width:80px;height:80px;font-size:29px}}
+  @media (max-height:680px){#controls{padding-top:8px;padding-bottom:max(20px,calc(env(safe-area-inset-bottom) + 12px))}#dpad{width:114px;height:114px}#minepad{width:138px;height:138px;padding:6px}.btn{width:50px;height:50px;font-size:19px}.dot span{width:48px;height:48px}.mk{font-size:21px}.mhub{width:28px;height:28px}.ab .lbl{font-size:7px}#brand{padding:2px 5px 4px}.bm-name{font-size:13px}#confirmbtn{width:74px;height:74px;font-size:27px}}
+  @media (max-width:374px){#dpad{width:116px;height:116px}.dot span{width:50px;height:50px}.btn{width:50px;height:50px;font-size:19px}#right-controls{column-gap:2px;row-gap:2px}#confirmbtn{width:72px;height:72px;font-size:26px}}
   .kbdhint{position:absolute;top:8px;left:50%;transform:translateX(-50%);font-size:10px;letter-spacing:2px;color:#3c5365;text-transform:uppercase;z-index:3;pointer-events:none;white-space:nowrap;}
   #mine{position:absolute;inset:0;z-index:6;display:flex;flex-direction:column;pointer-events:none;}
   #mine.hidden{display:none;}
@@ -1142,6 +1145,7 @@
     .mk{font-size:21px;}
     .mhub{width:26px;height:26px;}
     #menu-controls{gap:14px;}
+    #confirmbtn{width:72px;height:72px;font-size:26px;}
   }
   @media (orientation:landscape) and (max-height:600px){
     /* mining: hide the top header bar — its info (resource / sens / vents) plus the oxygen & HP bars are redrawn as a dashboard in the empty space left of the grid, so nothing covers the gauges */
@@ -6661,7 +6665,8 @@ let crankObj=null;
 // three moving bands on the track: SAFE (green) window + HAZARD (red) window each oscillate; the
 // marker sweeps. Safe zone = marker inside green AND outside red (red wins on overlap).
 const crankS={need:7,turns:0,p:0,dir:1,speed:0.5,bt:0,gSpd:0.85,rSpd:1.25,gAmp:0.26,rAmp:0.30,gH:0.12,rH:0.09,rPhase:1.4,
-  psiMax:280,actY:0,rotor:0,spin:0,streak:0,flash:0,hitFlash:0,doneT:0,burnT:0,fx:[],hint:0};
+  psiMax:280,actY:0,rotor:0,spin:0,streak:0,flash:0,hitFlash:0,doneT:0,burnT:0,fx:[],hint:0,
+  time:0,limit:16,bust:false};
 function crankNeed(tier){return 6+Math.min(tier||0,3);}   // a couple more turns the deeper the layer
 function crankBands(){                                     // normalized [0,1] edges of the two moving windows
   const gc=0.5+Math.sin(crankS.bt*crankS.gSpd)*crankS.gAmp;
@@ -6684,8 +6689,18 @@ function openCrank(o){
   crankS.rPhase=1.3+tier*0.4;crankS.psiMax=240+tier*70;
   crankS.rotor=o.ph||0;crankS.spin=0;crankS.streak=0;
   crankS.flash=0;crankS.hitFlash=0;crankS.doneT=0;crankS.burnT=0;crankS.hint=3.0;crankS.fx.length=0;
+  crankS.time=0;crankS.limit=16+tier*1.5;crankS.bust=false;
   mineEdge=false;actionEdge=false;
   setMode('crank');sfx.start();
+}
+// timer runs out before the valve is fully turned: it blows in the diver's face — same shape as the
+// biohazard sac's bust, and same rule: it still counts the step complete, the failure just costs a heart
+function crankBust(){
+  if(crankS.doneT>0)return;
+  crankS.bust=true;crankS.doneT=1.0;crankS.spin+=10;crankS.flash=0.5;crankS.burnT=0.8;
+  crankS.streak=0;shake=Math.max(shake,8);sfx.boom();hurt(1);
+  const ay=crankS.actY||Math.round(VH*0.4),cx=Math.round(VW/2);
+  for(let i=0;i<14;i++)crankSpark(cx+(Math.random()-.5)*30,ay,'#ff6a3c',110);
 }
 function closeCrank(){if(!crankObj){if(state.mode==='crank')setMode('play');return;}
   const o=crankObj;o.crankTurns=crankS.turns;o.prog=Math.round(crankS.turns/crankS.need*100);   // keep the world sprite's gauge in step
@@ -6715,7 +6730,11 @@ function crankInput(){
   player.drown=0;
   if(crankS.hint>0)crankS.hint-=1/60;
   if(crankS.doneT>0){crankS.doneT-=1/60;crankS.rotor+=crankS.spin/60;crankS.spin*=0.9;
-    if(crankS.doneT<=0){crankObj=null;o.crankTurns=0;completeMissionObj(o);setMode('play');}return;}
+    if(crankS.doneT<=0){const bust=crankS.bust;crankObj=null;o.crankTurns=0;completeMissionObj(o);setMode('play');
+      if(bust)showMsg('TIMER OUT — the valve blows in your face!');}
+    return;}
+  crankS.time+=1/60;
+  if(crankS.time>=crankS.limit){crankBust();return;}
   // sweep the marker (ping-pong) + slide the two windows; marker speeds up a touch as pressure bleeds
   const sp=Math.min(1.1,crankS.speed+crankS.turns*0.04);
   crankS.p+=crankS.dir*sp/60;
@@ -6772,6 +6791,11 @@ function renderCrank(){
   px(ctx,8,hbY,1,4,'#39c6ff');px(ctx,8,hbY,4,1,'#39c6ff');px(ctx,VW-9,hbY,1,4,'#39c6ff');px(ctx,VW-12,hbY,4,1,'#39c6ff');   // corner brackets
   pxText(ctx,'VALVE CTRL',14,hbY+3,'#7fe0ff');
   {const lvX=VW-14;pxText(ctx,'LIVE',lvX-16,hbY+3,'#2f9a6a');if((t>>4)&1)px(ctx,lvX,hbY+3,4,4,'#3dff9a');}
+  // countdown to a blowout — mirrors the biohazard sac's purge window
+  {const left=Math.max(0,crankS.limit-crankS.time),cfrac=clamp(left/crankS.limit,0,1),
+     tcol=cfrac>0.5?'#3dff9a':cfrac>0.25?'#ffcf3a':'#ff4d5e',ts=left.toFixed(1)+'s';
+   pxText(ctx,ts,Math.round(cx-pxTextW(ts)/2),hbY+3,tcol);
+   if(cfrac<0.25&&(t>>2&1))px(ctx,8,hbY,VW-16,11,'rgba(255,77,94,0.14)');}
   // ==== ENGINEER DECK: sector gas-grid schematic ====
   const barY=VH-82;                                   // timing track top — everything below anchored here
   const panX=8,panT=hbY+15,panW=VW-16,panB=barY-8,panH=Math.max(46,panB-panT);
@@ -6841,8 +6865,10 @@ function renderCrank(){
   else pxTextC('FIRE ON GREEN',cx,VH-13,'#3a5a6a');
   // ==== BURN / RELEASE OVERLAYS ====
   if(crankS.burnT>0){ctx.fillStyle='rgba(255,60,90,'+(0.22*clamp(crankS.burnT/0.6,0,1)).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);}
-  if(crankS.doneT>0){const k=clamp(crankS.doneT/1.2,0,1);ctx.fillStyle='rgba(61,255,154,'+(0.22*k).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);
-    glowAt(cx,pipeY,40,'61,255,154',0.4*k);pxTextGhost(ctx,'RELEASED',cx,pipeY,3,'#0e2a1c',1);pxTextXL(ctx,'RELEASED',cx,pipeY,3,'#9dffc0',1);}
+  if(crankS.doneT>0){const busting=crankS.bust,k=clamp(crankS.doneT/(busting?1.0:1.2),0,1),
+    col=busting?'255,106,60':'61,255,154',txt=busting?'BLOWOUT':'RELEASED';
+    ctx.fillStyle='rgba('+col+','+(0.22*k).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);
+    glowAt(cx,pipeY,40,col,0.4*k);pxTextGhost(ctx,txt,cx,pipeY,3,busting?'#2a1006':'#0e2a1c',1);pxTextXL(ctx,txt,cx,pipeY,3,busting?'#ffb27a':'#9dffc0',1);}
   if(shake>0)shake-=0.6;
 }
 canvas.addEventListener('pointerdown',e=>{if(state.mode!=='crank')return;e.preventDefault();audioInit();crankTurn();});
@@ -6863,7 +6889,8 @@ const HACK_ROWS=3, HACK_COLS=6, HACK_TOTAL=3;
 const hackS={phase:'build',tier:0,cx:0,cy:0,R:60,
   ptr:0,need:3,target:[],targetSet:[],collected:[],shineIdx:0,
   grid:[],gcur:0,targetCell:0,
-  shapesDone:0,formT:0,doneT:0,flash:0,hitFlash:0,wrongT:0,hint:0,pulse:0,banner:'',bannerT:0,fx:[]};
+  shapesDone:0,formT:0,doneT:0,flash:0,hitFlash:0,wrongT:0,hint:0,pulse:0,banner:'',bannerT:0,fx:[],
+  time:0,limit:28,bust:false};
 // geometry — a flat-topped regular octagon; side k runs from vertex k to vertex k+1
 function hackVert(cx,cy,r,k){const a=Math.PI/8+k*(Math.PI/4);return [cx+Math.cos(a)*r,cy+Math.sin(a)*r];}
 function hackSideMid(cx,cy,r,k){const a=hackVert(cx,cy,r,k),b=hackVert(cx,cy,r,(k+1)%8);return [(a[0]+b[0])/2,(a[1]+b[1])/2];}
@@ -6897,9 +6924,18 @@ function openHack(o){
   S.tier=tier;S.cx=Math.round(VW/2);S.cy=Math.round(VH*0.42);
   S.R=Math.round(Math.min(VW*0.30,VH*0.17,64));
   S.shapesDone=0;S.doneT=0;S.formT=0;S.flash=0;S.hitFlash=0;S.wrongT=0;S.hint=3.5;S.pulse=0;S.banner='';S.bannerT=0;S.fx.length=0;
+  S.time=0;S.limit=28+tier*2;S.bust=false;
   mineEdge=false;actionEdge=false;input.action=false;
   hackStartBuild();
   setMode('hack');sfx.start();
+}
+// timer runs out before all layers crack: the console arcs in the diver's face — same shape as the
+// crank and the biohazard sac, and same rule: it still counts the node cracked, the failure just costs a heart
+function hackBust(){const S=hackS;
+  if(S.doneT>0)return;
+  S.bust=true;S.phase='bust';S.doneT=1.0;S.flash=0.5;
+  shake=Math.max(shake,8);sfx.boom();hurt(1);
+  hackSpark(S.cx,S.cy,'#ff6a3c',110,16);
 }
 function closeHack(){if(!hackObj){if(state.mode==='hack')setMode('play');return;}
   hackObj=null;setMode('play');sfx.back();
@@ -6953,6 +6989,11 @@ function hackInput(){const S=hackS,o=hackObj;if(!o){if(state.mode==='hack')setMo
     s.x+=s.vx/60;s.y+=s.vy/60;s.vx*=0.94;s.vy*=0.96;s.vy+=0.25;}
   if(S.phase==='form'){S.formT-=1/60;if(S.formT<=0)hackBuildGrid(S.targetSet);return;}
   if(S.phase==='done'){S.doneT-=1/60;if(S.doneT<=0){hackObj=null;completeMissionObj(o);setMode('play');}return;}
+  if(S.phase==='bust'){S.doneT-=1/60;
+    if(S.doneT<=0){hackObj=null;completeMissionObj(o);setMode('play');showMsg('TIMER OUT — the console arcs in your face!');}
+    return;}
+  S.time+=1/60;
+  if(S.time>=S.limit){hackBust();return;}
   if(mineEdge||actionEdge){mineEdge=false;actionEdge=false;hackConfirm();}
   if(queueCraft){queueCraft=false;closeHack();}
 }
@@ -6996,6 +7037,11 @@ function renderHack(){
   px(ctx,8,hbY,1,4,'#39c6ff');px(ctx,8,hbY,4,1,'#39c6ff');px(ctx,VW-9,hbY,1,4,'#39c6ff');px(ctx,VW-12,hbY,4,1,'#39c6ff');
   pxText(ctx,S.phase==='input'?'MATCH GLYPH':'ICE BREAK',14,hbY+3,'#7fe0ff');
   {const lvX=VW-14;pxText(ctx,'ICE',lvX-12,hbY+3,'#2f9a6a');if((t>>4)&1)px(ctx,lvX,hbY+3,4,4,'#3dff9a');}
+  // countdown to a blowout — mirrors the crank valve's and the biohazard sac's timers
+  {const left=Math.max(0,S.limit-S.time),cfrac=clamp(left/S.limit,0,1),
+     tcol=cfrac>0.5?'#3dff9a':cfrac>0.25?'#ffcf3a':'#ff4d5e',ts=left.toFixed(1)+'s';
+   pxText(ctx,ts,Math.round(cx-pxTextW(ts)/2),hbY+3,tcol);
+   if(cfrac<0.25&&(t>>2&1))px(ctx,8,hbY,VW-16,11,'rgba(255,77,94,0.14)');}
   // node-break progress pips (3 glyphs to crack)
   {const pw=8,pg=4,tot=HACK_TOTAL,rw=tot*(pw+pg)-pg,px0=Math.round(cx-rw/2),py=hbY+14;
    for(let i=0;i<tot;i++){const on=i<S.shapesDone;px(ctx,px0+i*(pw+pg),py,pw,3,on?'#3dff9a':'#12283a');if(on)px(ctx,px0+i*(pw+pg),py,pw,1,'#9dffcf');}}
@@ -7062,10 +7108,16 @@ function renderHack(){
     hackDrawRing(cx,S.cy,S.R,'#0e2230');hackGlow(cx,S.cy,S.R+10,'61,255,154',0.4*k);
     pxTextGhost(ctx,'GRANTED',cx,S.cy,3,'#0e2a1c',1);pxTextXL(ctx,'GRANTED',cx,S.cy,3,'#9dffc0',1);
     pxTextC('ACCESS',cx,S.cy-24,'#3dff9a');
+  } else if(S.phase==='bust'){
+    const k=clamp(S.doneT/1.0,0,1);
+    hackDrawRing(cx,S.cy,S.R,'#2a1414');hackGlow(cx,S.cy,S.R+16,'255,106,60',0.5*k);
+    pxTextGhost(ctx,'BREACH',cx,S.cy,3,'#2a1006',1);pxTextXL(ctx,'BREACH',cx,S.cy,3,'#ffb27a',1);
+    pxTextC('CONSOLE ARCS BACK',cx,S.cy-24,'#ff6a3c');
   }
   // ==== flashes / banners ====
-  if(S.flash>0){const isW=S.wrongT>0;ctx.fillStyle=(isW?'rgba(255,60,90,':'rgba(127,230,255,')+(0.18*clamp(S.flash/0.45,0,1)).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);}
-  if(S.doneT>0){ctx.fillStyle='rgba(61,255,154,'+(0.2*clamp(S.doneT/1.3,0,1)).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);}
+  if(S.flash>0){const isW=S.wrongT>0||S.phase==='bust';ctx.fillStyle=(isW?'rgba(255,60,90,':'rgba(127,230,255,')+(0.18*clamp(S.flash/0.45,0,1)).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);}
+  if(S.doneT>0){const busting=S.phase==='bust';
+    ctx.fillStyle=(busting?'rgba(255,106,60,':'rgba(61,255,154,')+(0.2*clamp(S.doneT/(busting?1.0:1.3),0,1)).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);}
   if(S.bannerT>0){const a=clamp(S.bannerT/0.5,0,1),bw=S.wrongT>0,col=bw?'#ff6a7f':'#9dffcf';
     ctx.globalAlpha=a;pxTextC(S.banner,cx,hbY+26,col);ctx.globalAlpha=1;}
   if(shake>0)shake-=0.6;
@@ -7084,6 +7136,17 @@ canvas.addEventListener('pointerdown',e=>{if(state.mode!=='hack')return;e.preven
     if(best>=0){S.gcur=best;hackConfirm();}
   } else hackConfirm();
 });
+// touch: drag the reticle straight to wherever a thumb lands on the vat and burn while held —
+// tapping the game screen itself now aims AND fires, instead of needing the joystick plus the
+// confirm button
+(function(){let active=false;
+  const aim=e=>{const B=flameS,r=canvas.getBoundingClientRect(),mx=(e.clientX-r.left)/r.width*VW,my=(e.clientY-r.top)/r.height*VH;
+    B.aimX=clamp(mx,B.bx,B.bx+B.bw);B.aimY=clamp(my,B.by,B.by+B.bh);B.vx=0;B.vy=0;};
+  canvas.addEventListener('pointerdown',e=>{if(state.mode!=='flame')return;e.preventDefault();audioInit();active=true;flameFire=true;aim(e);});
+  canvas.addEventListener('pointermove',e=>{if(state.mode!=='flame'||!active)return;e.preventDefault();aim(e);});
+  const stop=()=>{if(!active)return;active=false;flameFire=false;};
+  canvas.addEventListener('pointerup',stop);canvas.addEventListener('pointercancel',stop);canvas.addEventListener('pointerleave',stop);
+})();
 
 /* ===== BIOLOGICAL GAS-SAC: HIGH-PRECISION FLAMETHROWER MINIGAME =====================================
  * Opening a gas sac drops the diver into a focused, full-canvas console: a pixel cyberpunk metal urn
