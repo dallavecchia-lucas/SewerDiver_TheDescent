@@ -3814,8 +3814,14 @@ function updateCreatures(dt){
  * The murk cut, the visible beam and the scrappy robot's work area all read from this. */
 function lanternRadius(){return player.lightRadius*(1+0.10*(player.lanternLevel||0))*((mech&&mech.piloted)?1.25:1);}
 
-const COMP_SPEED=118;   // px/s while hauling itself to a target
+const COMP_CRAWL=24;    // px/s floor, so it can still finish a grab while you hold station
 const COMP_GRAB=8;      // how close it has to get before the claw closes
+// the robot paces the diver exactly — its speed is whatever you are swimming at this frame
+// (the MULE's, when you are piloting it), never faster. Velocities are per-frame, hence ×60.
+function companionSpeed(){
+  const src=(mech&&mech.piloted)?mech:player;
+  return Math.max(COMP_CRAWL,Math.hypot(src.vx||0,src.vy||0)*60);
+}
 // nearest floating resource / valuable scrap inside the lit area — the robot only works
 // what the lantern shows, so a wider beam (lens grinds, floodlight) is a wider sweep.
 function companionTarget(co){
@@ -3833,14 +3839,15 @@ function companionTarget(co){
 function updateCompanion(dt){if(!companion)return;const co=companion;
   co.ph=(co.ph||0)+dt;
   // a fresh scan every frame — the diver may have grabbed the old target out from under it
-  const tgt=companionTarget(co);
-  if(tgt){ // fly at it
-    const dx=tgt.x-co.x,dy=tgt.y-co.y,d=Math.hypot(dx,dy)||1,step=Math.min(COMP_SPEED*dt,d);
+  const tgt=companionTarget(co),spd=companionSpeed();
+  if(tgt){ // swim at it, at the diver's own pace
+    const dx=tgt.x-co.x,dy=tgt.y-co.y,d=Math.hypot(dx,dy)||1,step=Math.min(spd*dt,d);
     co.x+=dx/d*step;co.y+=dy/d*step;
     if(dx<-0.5)co.dir=-1;else if(dx>0.5)co.dir=1;
-  }else{   // nothing lit worth grabbing — trail the diver
+  }else{   // nothing lit worth grabbing — trail the diver, same speed cap on the catch-up
     const tx=player.x+4-12*player.dir,ty=player.y+4-10;
-    co.x+=(tx-co.x)*0.08;co.y+=(ty-co.y)*0.08;co.dir=player.dir;
+    const dx=tx-co.x,dy=ty-co.y,d=Math.hypot(dx,dy)||1,step=Math.min(d*0.08,spd*dt,d);
+    co.x+=dx/d*step;co.y+=dy/d*step;co.dir=player.dir;
   }
   co.busy=!!tgt;
   // whatever it is sitting on goes in the hold, same haul as the diver's own pickup
