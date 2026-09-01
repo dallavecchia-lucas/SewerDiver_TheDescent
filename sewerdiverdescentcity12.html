@@ -7150,9 +7150,9 @@ canvas.addEventListener('pointerdown',e=>{if(state.mode!=='hack')return;e.preven
 
 /* ===== BIOLOGICAL GAS-SAC: HIGH-PRECISION FLAMETHROWER MINIGAME =====================================
  * Opening a gas sac drops the diver into a focused, full-canvas console: a pixel cyberpunk metal urn
- * holds 3 glowing green slimes spread across separate pockets. Steer the aim with the STICK (WASD /
+ * holds 3 mutant angler-fish pups curled up in separate pockets. Steer the aim with the STICK (WASD /
  * arrows on desktop) and HOLD FIRE (the confirm button / space) to spit a thin blue high-precision
- * flame at a slime; six pips of sustained burn kill it. Underwater, so the jet trails bubbles. The aim
+ * flame at one; six pips of sustained burn kill it. Underwater, so the jet trails bubbles. The aim
  * carries a little momentum (drag) and a gentle autonomous sway, so you can never fully let go of it.
  * Torch all three before an 8s timer busts. A clean WIN burns the sac out with no blowback at all; a
  * BUST rides an almost-instant fuse (podBlasts, out in the world) so the gas erupts right in the diver's face. */
@@ -7283,27 +7283,45 @@ function drawVase(cx,sv){
   {const hw=Math.round(vaseHW(knots,74));px(ctx,cx-hw,73+sv,hw*2,1,'#4d7f92');px(ctx,cx-hw,74+sv,hw*2,2,'#3a5f6f');}
   pxTextC('CONTAINMENT URN',cx,304+sv,'#2f5a6a');
 }
-// pulsating green splat (not a plain circle): a central lobe plus several breathing satellite lobes
-// (metaball splash), a dark rim, and — while it registers the flame — a bright green bleed flash.
+// a mutant angler-fish pup, curled up and clinging to its pocket of the urn: a bulbous
+// hunched body, an underbite full of needle teeth, and a bioluminescent lure that bobs
+// on a thin stalk. Same contract as the old blob it replaces — s.x/s.y/s.r drive the
+// hitbox and never change here, s.ph/s.burn/s.hitT still drive all the animation — this
+// is a pure reskin, nothing about how it's targeted or killed moved.
 function drawSlime(s,t,ox,oy){
   const X=s.x+(ox||0), Y=s.y+(oy||0), heat=clamp(s.burn/6,0,1);
-  if(s.dead){pxDisc(ctx,X,Y,3,'#2a2412');px(ctx,X-5,Y,10,2,'#242e1a');px(ctx,X-1,Y-2,2,1,'#3a2a12');px(ctx,X+2,Y-1,1,1,'#4a3414');return;}
-  const breathe=1+Math.sin(t*0.12+s.ph)*0.06-heat*0.18;        // gentle body pulse; shrinks as it chars
+  if(s.dead){                                                    // charred little skeleton left curled in place
+    px(ctx,X-4,Y-1,8,2,'#241a12');px(ctx,X-5,Y,2,2,'#1c1410');px(ctx,X+3,Y-2,3,2,'#1c1410');
+    px(ctx,X-2,Y-2,1,1,'#3a2a12');px(ctx,X+1,Y-3,1,1,'#3a2a12');px(ctx,X-1,Y+1,1,1,'#2a1e0c');
+    return;}
+  const breathe=1+Math.sin(t*0.10+s.ph)*0.05-heat*0.14;           // slow gulping breath; hunches in as it chars
   const R=Math.max(3,s.r*breathe), hitOn=s.hitT>0;
   const gcol=heat>0.45?'150,235,220':'110,240,90';
   ctx.globalCompositeOperation='lighter';
-  radial(ctx,X,Y,R+13,'rgba('+gcol+','+(0.24+heat*0.20+(hitOn?0.28:0)).toFixed(2)+')','rgba(0,0,0,0)');
+  radial(ctx,X,Y,R+13,'rgba('+gcol+','+(0.20+heat*0.18+(hitOn?0.28:0)).toFixed(2)+')','rgba(0,0,0,0)');
   ctx.globalCompositeOperation='source-over';
-  const base=heat>0.5?'#7ee0bf':'#5fdd3f', edge=heat>0.5?'#356f62':'#2f7a1f', hi=heat>0.5?'#dafff2':'#c8ff90';
-  const lobes=s.lobes||[];
-  const pos=lobes.map(L=>{const pulse=0.8+Math.sin(t*0.10+L.ph)*0.22,ang=L.a+s.ph*0.3;
-    return {x:X+Math.cos(ang)*R*L.d*pulse, y:Y+Math.sin(ang)*R*L.d*pulse, r:Math.max(2,R*L.r*pulse)};});
-  pxDisc(ctx,X,Y,R+1,edge);for(const L of pos)pxDisc(ctx,L.x,L.y,L.r+1,edge);   // dark rim pass
-  pxDisc(ctx,X,Y,R,base);  for(const L of pos)pxDisc(ctx,L.x,L.y,L.r,base);       // green fill pass
-  const hs=Math.max(2,Math.round(R*0.22));
-  px(ctx,Math.round(X-R*0.34),Math.round(Y-R*0.4),hs,hs,hi);                      // wet highlight
-  for(let i=0;i<Math.floor(s.burn);i++){const a=s.ph+i*1.7,d=R*0.5;px(ctx,(X+Math.cos(a)*d)|0,(Y+Math.sin(a)*d)|0,2,2,'#243018');}
-  if(hitOn){const k=clamp(s.hitT/0.18,0,1);                                       // HIT-REGISTERED green flash
+  const base=heat>0.5?'#7ee0bf':'#4fbf5a', edge=heat>0.5?'#356f62':'#1f5a24', belly=heat>0.5?'#c8fff0':'#a8f08a';
+  // hunched teardrop body — wider at the head, tapering to a short tail flick
+  pxDisc(ctx,X-1,Y,R+1,edge);pxDisc(ctx,X-1,Y,R,base);
+  px(ctx,Math.round(X+R*0.5),Math.round(Y-2),Math.max(2,Math.round(R*0.6)),4,edge);   // tail-flick silhouette
+  px(ctx,Math.round(X+R*0.5),Math.round(Y-1),Math.max(1,Math.round(R*0.5)),2,base);
+  px(ctx,Math.round(X-R*0.35),Math.round(Y-R*0.55),Math.round(R*0.7),Math.max(2,Math.round(R*0.3)),belly); // pale belly patch
+  // dorsal mutation-spikes along the back
+  for(let i=0;i<3;i++){const sx=Math.round(X-R*0.5+i*R*0.5),sy=Math.round(Y-R*0.85);
+    px(ctx,sx,sy,1,3,edge);px(ctx,sx,sy,1,1,belly);}
+  // underbite jaw, bristling with needle teeth
+  const jy=Math.round(Y+R*0.35);
+  px(ctx,Math.round(X-R*0.55),jy,Math.round(R*1.0),Math.max(2,Math.round(R*0.3)),'#1a2a1c');
+  for(let i=0;i<4;i++)px(ctx,Math.round(X-R*0.45+i*R*0.32),jy,1,2,'#eafcef');
+  // eye — small and mean
+  px(ctx,Math.round(X-R*0.15),Math.round(Y-R*0.15),2,2,'#0a1208');px(ctx,Math.round(X-R*0.15),Math.round(Y-R*0.15),1,1,'#ff4d5e');
+  // the lure: a thin stalk off the crown, bright bioluminescent bulb bobbing at the tip
+  const lp=0.55+0.45*Math.sin(t*0.16+s.ph*1.6),lx=Math.round(X-R*0.5),ly=Math.round(Y-R-3-lp*2),lbase=Math.round(Y-R-2);
+  px(ctx,lx,ly,1,Math.max(2,lbase-ly),'#2f7a34');
+  ctx.globalCompositeOperation='lighter';radial(ctx,lx,ly,6+lp*3,'rgba(210,255,120,'+(0.5+lp*0.35).toFixed(2)+')','rgba(0,0,0,0)');ctx.globalCompositeOperation='source-over';
+  px(ctx,lx-1,ly-1,2,2,lp>0.5?'#fbffcf':'#d8ff9a');
+  for(let i=0;i<Math.floor(s.burn);i++){const a=s.ph+i*1.7,d=R*0.5;px(ctx,(X+Math.cos(a)*d)|0,(Y+Math.sin(a)*d)|0,2,2,'#1c2814');}
+  if(hitOn){const k=clamp(s.hitT/0.18,0,1);                                       // HIT-REGISTERED flash
     ctx.globalCompositeOperation='lighter';radial(ctx,X,Y,R+7,'rgba(190,255,150,'+(0.55*k).toFixed(2)+')','rgba(0,0,0,0)');ctx.globalCompositeOperation='source-over';
     px(ctx,Math.round(X)-1,Math.round(Y)-1,2,2,'#ffffff');}
   for(let i=0;i<6;i++){const a=-1.5708+i/6*6.283,on=i<Math.round(s.burn);         // 6-pip burn meter ("6 presses")
@@ -7373,7 +7391,7 @@ function renderFlame(){
   ctx.globalAlpha=1;
   // hint / status line + fire button glyph
   if(B.hint>0){const a=clamp(B.hint/3,0,1);ctx.globalAlpha=a;pxTextC('STICK TO AIM  ·  HOLD FIRE TO BURN',cx,VH-34,'#6f93a6');ctx.globalAlpha=1;}
-  else pxTextC(B.onTarget?(B.firing?'BURNING':'ON TARGET — HOLD FIRE'):'MOVE ONTO A SLIME',cx,VH-34,B.onTarget?'#9fe0a0':'#3a5a6a');
+  else pxTextC(B.onTarget?(B.firing?'BURNING':'ON TARGET — HOLD FIRE'):'MOVE ONTO A PUP',cx,VH-34,B.onTarget?'#9fe0a0':'#3a5a6a');
   // end overlays
   if(B.doneT>0){const k=clamp(B.doneT/1.0,0,1);
     if(B.won){ctx.fillStyle='rgba(194,255,95,'+(0.22*k).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);
