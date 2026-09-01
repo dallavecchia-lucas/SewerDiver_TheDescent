@@ -3410,13 +3410,13 @@ function missionSim(dt){
     if(s.t>=s.life){sporeFx.splice(i,1);continue;}
     if(s.t>0.28&&Math.hypot(cx-s.x,cy-s.y)<s.r)hurt(1,s.x,s.y);
   }
-  // fused gas-sac detonations left behind when the flamethrower minigame ends. A WIN plants a slow
-  // 2s fuse (flashing warning) so the diver can swim clear; a BUST rides an almost-instant fuse so the
-  // gas erupts right in the diver's face. Either way it finally vents a damaging cloud (a big sporeFx).
+  // fused gas-sac detonations left behind when the flamethrower minigame ends in a BUST — a clean
+  // win never reaches here. Rides an almost-instant fuse so the gas erupts right in the diver's
+  // face, then vents a damaging cloud (a big sporeFx).
   for(let i=podBlasts.length-1;i>=0;i--){const b=podBlasts[i];b.t+=dt;
-    shake=Math.max(shake,b.win?1.2:2.0);
+    shake=Math.max(shake,2.0);
     const fl=Math.abs(Math.sin(b.t*(7+ (b.t/b.fuse)*24)));            // flash quickens toward the blast
-    if((state.tick%3)===0)burst(b.x,b.y,1,50,0.3,b.win?'#c2ff5f':'#ff6a3c');
+    if((state.tick%3)===0)burst(b.x,b.y,1,50,0.3,'#ff6a3c');
     if(fl>0.85&&(state.tick%2)===0)particles.push({type:'bubble',x:b.x-4+Math.random()*8,y:b.y-8,vx:(Math.random()-.5)*20,vy:-34-Math.random()*24,life:0.5,max:0.5,size:1.5,col:'#9fd8ef'});
     if(b.t>=b.fuse){
       burst(b.x,b.y,26,180,0.7,'#c2ff5f');burst(b.x,b.y,14,120,0.5,'#ffe27a');
@@ -6699,8 +6699,8 @@ function crankTurn(){const o=crankObj;if(!o||crankS.doneT>0)return;
     o.crankTurns=crankS.turns;o.prog=Math.round(crankS.turns/crankS.need*100);
     crankS.gSpd+=0.02;crankS.rSpd+=0.03;   // each pulse tightens the timing a touch
     if(crankS.turns>=crankS.need){crankS.doneT=1.2;crankS.spin+=8;sfx.mix();sfx.build();}
-  } else if(z==='vent'){                 // fired into the hazard window: scalding blowout — burn air, servo kicks back
-    player.oxygen=Math.max(0,player.oxygen-player.maxOxygen*0.15);
+  } else if(z==='vent'){                 // fired into the hazard window: scalding blowout — servo kicks back
+    hurt(1);
     crankS.spin-=3.6;crankS.streak=0;crankS.flash=0.42;crankS.burnT=0.6;shake=Math.max(shake,7);sfx.zap();
     for(let i=0;i<12;i++)crankSpark(cx+(Math.random()-.5)*28,ay,'#ff3b6b',96);
   } else {                              // fired on a closed valve — no effect, just a denial blip
@@ -6923,7 +6923,7 @@ function hackConfirm(){const S=hackS,o=hackObj;if(!o||S.doneT>0||S.formT>0)retur
         const c=hackSideMid(S.cx,S.cy,S.R*0.42,want);hackSpark(c[0],c[1],'#9dffe0',70,10);}
     } else {                                             // wrong side: the whole build scrambles
       S.collected=[];S.shineIdx=0;_shuffle(S.target);S.wrongT=0.5;S.flash=0.4;shake=Math.max(shake,5);sfx.zap();
-      player.oxygen=Math.max(0,player.oxygen-player.maxOxygen*0.05);
+      hurt(1);
       hackSpark(m[0],m[1],'#ff3b6b',80,10);hackBanner('SEQUENCE RESET',1.0);
     }
   } else if(S.phase==='input'){
@@ -6933,7 +6933,7 @@ function hackConfirm(){const S=hackS,o=hackObj;if(!o||S.doneT>0||S.formT>0)retur
       else{hackBanner('LAYER CRACKED  '+S.shapesDone+'/'+HACK_TOTAL,1.0);hackStartBuild();}
     } else {                                             // wrong cell: glyph scrambles, build again
       S.wrongT=0.6;S.flash=0.45;shake=Math.max(shake,6);sfx.zap();
-      player.oxygen=Math.max(0,player.oxygen-player.maxOxygen*0.07);
+      hurt(1);
       hackBanner('WRONG NODE — REBUILD',1.1);hackStartBuild();
     }
   }
@@ -7091,8 +7091,8 @@ canvas.addEventListener('pointerdown',e=>{if(state.mode!=='hack')return;e.preven
  * arrows on desktop) and HOLD FIRE (the confirm button / space) to spit a thin blue high-precision
  * flame at a slime; six pips of sustained burn kill it. Underwater, so the jet trails bubbles. The aim
  * carries a little momentum (drag) and a gentle autonomous sway, so you can never fully let go of it.
- * Torch all three before an 8s timer busts. WIN or BUST the sac blows and the step counts — a win just
- * flashes first and hands back a 2s window to swim clear (both handled by podBlasts out in the world). */
+ * Torch all three before an 8s timer busts. A clean WIN burns the sac out with no blowback at all; a
+ * BUST rides an almost-instant fuse (podBlasts, out in the world) so the gas erupts right in the diver's face. */
 let flameObj=null;
 const flameS={slimes:[],cx:110,rimTop:70,baseBot:300,bx:46,by:104,bw:128,bh:150,
   aimX:110,aimY:180,vx:0,vy:0,rx:110,ry:180,swx:0,swy:0,nozX:110,nozY:294,
@@ -7157,9 +7157,9 @@ function flameInput(){
   if(B.doneT>0){B.doneT-=1/60;updateFlameFx();
     if(B.doneT<=0){const win=B.won;flameObj=null;flameFire=false;setMode('play');
       completeMissionObj(o);
-      podBlasts.push({x:o.x,y:o.y,tier:o.tier,t:0,fuse:win?2.0:0.4,win});
-      if(win)showMsg('SAC IGNITED — 2 SECONDS, GET CLEAR!');else showMsg('TIMER BUST — the sac ruptures on you!');
-      shake=Math.max(shake,win?4:8);}
+      if(win){showMsg('SAC BURNED CLEAN — no blowback');shake=Math.max(shake,2);}
+      else{podBlasts.push({x:o.x,y:o.y,tier:o.tier,t:0,fuse:0.4,win:false});   // bust: gas erupts right in the diver's face
+        showMsg('TIMER BUST — the sac ruptures on you!');shake=Math.max(shake,8);}}
     return;}
   // ==== aim: analog input + arrows, momentum (drag) + gentle autonomous sway ====
   let ix=(input.jx||0)+((input.right?1:0)-(input.left?1:0));
