@@ -1714,8 +1714,7 @@ const SUB_FWD=64;                                   // px/s the current carries 
 const SUB_BOOST_MUL=2.25;                           // forward multiplier while the coil fires
 const SUB_LIFT=210, SUB_VDRAG=0.90, SUB_VMAX=78;    // plane authority / water drag / terminal climb
 const SUB_BOOST_MAX=2.6;                            // seconds of continuous boost the coil holds
-const SUB_BOOST_REGEN=0.5, SUB_REGEN_STEP=0.18;     // coil-seconds recovered per second; +0.18 per fitting
-const SUB_BOOST_RESET=0.55;                         // a dry coil stays dead until rebuilt to this fraction
+const SUB_BOOST_REGEN=0.22, SUB_REGEN_STEP=0.09;    // coil-seconds recovered per second; +0.09 per fitting — a full burn costs a long wait back
 const SUB_TORP_SPD=170, SUB_TORP_STEP=22, SUB_TORP_DMG=2;
 const SUB_RELOAD=0.85, SUB_RELOAD_MUL=0.87, SUB_RELOAD_MIN=0.28;
 const SUB_SPLASH_R=14, SUB_SPLASH_STEP=7, SUB_SPLASH_DMG=1, SUB_SPLASH_DSTEP=0.25;
@@ -3506,7 +3505,7 @@ function ensureDepth(){const pt=tierAtY(player.y); while(generatedTiers<=pt+1&&g
 const state={mode:'title', loseReason:'', tick:0};
 const input={up:false,down:false,left:false,right:false,action:false,joy:false,jx:0,jy:0};
 let pendingCity=null;          // the transit choice waiting at the far end of the pipe run
-let subBoostHeld=false;        // the ONE held control in the game — see the transversal section
+let subBoostTrig=false;        // emergency-thrust trigger: a press, not a hold — see the transversal section
 const TUT={active:false,joyLive:false};
 let actionEdge=false, queueCraft=false, queueStart=false, mineEdge=false, clipEdge=false;
 let MW, MH, map, pctx;
@@ -4352,14 +4351,11 @@ function bindBtn(id,fn){const el=document.getElementById(id);if(!el)return;
 bindBtn('minebtn',()=>{if(state.mode==='craft'||state.mode==='inv')menuConfirm();else if(state.mode==='sub')subFire();else if(state.mode==='play'||state.mode==='mine'||state.mode==='crank')mineEdge=true;else if(state.mode==='objectives')closeObjectives();});
 bindBtn('clipbtn',()=>{if(state.mode==='play')clipEdge=true;});
 bindBtn('ropebtn',()=>{if(state.mode==='sub'){subDropMine(-1);return;}queueCraft=true;});
-// BOOST is the one held control in the game: the clip button becomes the coil trigger inside
-// the transversal, so it needs the press/release pair bindBtn's edge-only callback can't give.
+// BOOST is an emergency-thrust trigger, not a held control: one press lights the whole
+// coil, which then burns to empty on its own. The clip button just needs the press edge.
 (function(){const cb=document.getElementById('clipbtn');if(!cb)return;
-  const dn=e=>{if(state.mode==='sub'){e.preventDefault();subBoostHeld=true;}};
-  const up=e=>{if(subBoostHeld){if(e)e.preventDefault();subBoostHeld=false;}};
+  const dn=e=>{if(state.mode==='sub'){e.preventDefault();subBoostTrig=true;}};
   cb.addEventListener('pointerdown',dn);
-  cb.addEventListener('pointerup',up);cb.addEventListener('pointerleave',up);cb.addEventListener('pointercancel',up);
-  window.addEventListener('blur',()=>{subBoostHeld=false;});
 })();
 // menu/minigame cluster: confirm activates (dig in the mine), back & the red EXIT pill both bail out
 function menuConfirmAct(){if(state.mode==='craft'||state.mode==='inv')menuConfirm();else if(state.mode==='mine')mineDigSel();else if(state.mode==='crank')crankTurn();else if(state.mode==='hack')hackConfirm();}
@@ -4424,7 +4420,7 @@ window.addEventListener('keydown',e=>{audioInit();
   if(state.mode==='sub'){
     if(keymap[e.code]){input[keymap[e.code]]=true;e.preventDefault();return;}
     if(!e.repeat&&(e.code==='Space'||e.code==='Enter'||e.code==='KeyF')){subFire();e.preventDefault();return;}
-    if(e.code==='KeyX'||e.code==='ShiftLeft'||e.code==='ShiftRight'){subBoostHeld=true;e.preventDefault();return;}
+    if(!e.repeat&&(e.code==='KeyX'||e.code==='ShiftLeft'||e.code==='ShiftRight')){subBoostTrig=true;e.preventDefault();return;}
     if(!e.repeat&&e.code==='KeyQ'){subDropMine(-1);e.preventDefault();return;}
     if(!e.repeat&&(e.code==='KeyE'||e.code==='KeyC')){subDropMine(1);e.preventDefault();return;}
     if(e.code==='Escape'){pauseGame();e.preventDefault();return;}
@@ -4462,7 +4458,6 @@ window.addEventListener('keydown',e=>{audioInit();
   if(e.code==='Escape'){if(state.mode==='play')pauseGame();else if(state.mode==='pause')resumeGame();else if(state.mode==='mine'||state.mode==='craft'||state.mode==='inv'||state.mode==='crank'||state.mode==='flame')menuBack();e.preventDefault();}
 });
 window.addEventListener('keyup',e=>{if(keymap[e.code]){input[keymap[e.code]]=false;e.preventDefault();}
-  if(e.code==='KeyX'||e.code==='ShiftLeft'||e.code==='ShiftRight')subBoostHeld=false;
   if(e.code==='Space'||e.code==='Enter')input.action=false;});
 
 // ============ INVENTORY + CRAFT ============
@@ -5094,7 +5089,7 @@ const ABORT_SVG='<svg class="bico" viewBox="0 0 16 16" width="100%" height="100%
 function setMode(m){state.mode=m;
   if(m!=='play'&&m!=='mine'&&m!=='flame'&&m!=='sub'){mineEdge=false;input.joy=false;input.jx=0;input.jy=0;}if(m!=='play')clipEdge=false;
   if(m!=='play'&&m!=='flame'&&m!=='sub'){input.joy=false;input.jx=0;input.jy=0;const dp=document.getElementById('dpad');if(dp)dp.classList.remove('active');}
-  if(m!=='sub'){subBoostHeld=false;input.up=false;input.down=false;}
+  if(m!=='sub'){subBoostTrig=false;input.up=false;input.down=false;}
   const dpad=document.getElementById('dpad'),mpad=document.getElementById('minepad');
   const padMenu=(m==='mine'||m==='craft'||m==='inv'||m==='hack');   // discrete arrow pad drives mining, menus AND the ICE ring
   const cluster=(padMenu||m==='crank'||m==='flame');    // uses the confirm/back cluster
@@ -7321,7 +7316,7 @@ function renderFlame(){
 // ============================================================================
 const subS={
   seed:0, t:0, dist:0, len:0, sx:0, y:0, vy:0, roll:0,
-  hull:0, maxHull:0, boost:0, boostMax:0, dead:0, reload:0, mines:0, minesMax:0,
+  hull:0, maxHull:0, boost:0, boostMax:0, boosting:false, reload:0, mines:0, minesMax:0,
   torps:[], bombs:[], mobs:[], loot:[], obs:[], fx:[], bub:[], lamps:[],
   scrap:0, doneT:0, killT:0, hitFlash:0, warn:0, hint:0, nextWave:0, wave:0,
   scrapeCD:0, burst:0, gateFlash:0
@@ -7369,13 +7364,13 @@ function subLaunch(ch){
   subS.sx=Math.round(VW*0.27);
   const b=subBore(0);subS.y=(b.top+b.bot)/2;subS.vy=0;subS.roll=0;
   subS.maxHull=subMaxHull();subS.hull=subS.maxHull;
-  subS.boostMax=SUB_BOOST_MAX;subS.boost=SUB_BOOST_MAX;subS.dead=0;
+  subS.boostMax=SUB_BOOST_MAX;subS.boost=SUB_BOOST_MAX;subS.boosting=false;
   subS.reload=0;subS.minesMax=subMinesMax();subS.mines=subS.minesMax;
   subS.torps.length=0;subS.bombs.length=0;subS.mobs.length=0;subS.fx.length=0;subS.bub.length=0;
   subS.scrap=0;subS.doneT=0;subS.killT=0;subS.hitFlash=0;subS.warn=0;subS.hint=4.2;
   subS.wave=0;subS.nextWave=340;subS.scrapeCD=0;subS.burst=0;subS.gateFlash=0;subS.gateSeen=false;
   subSeedPipe();
-  subBoostHeld=false;mineEdge=false;actionEdge=false;clipEdge=false;
+  subBoostTrig=false;mineEdge=false;actionEdge=false;clipEdge=false;
   input.up=false;input.down=false;input.left=false;input.right=false;
   setMode('sub');sfx.start();
 }
@@ -7490,7 +7485,11 @@ function subMobTick(m,dt,flow){
   m.x-=flow*dt;
   const dx=m.x-subS.sx, dy=m.y-subS.y;
   if(m.st==='close'){
-    m.vx=-K.close;m.vy=clamp((subS.y-m.y)*1.4,-K.close*0.8,K.close*0.8);
+    // it does not just home onto the boat's depth — it weaves up and down as it comes on,
+    // only loosely tracking, so a torpedo (dead level, no steering) has to be timed for the
+    // moment the weave crosses the boat's own depth rather than fired the instant it's ahead
+    const weave=Math.sin(m.t*(m.kind==='squid'?3.4:2.1)+m.ph)*K.close*(m.kind==='squid'?0.95:1.15);
+    m.vx=-K.close;m.vy=clamp((subS.y-m.y)*0.65+weave,-K.close*1.3,K.close*1.3);
     if(m.kind==='squid'){m.vx-=Math.sin(m.t*7+m.ph)*22;m.vy+=Math.cos(m.t*5+m.ph)*26;}   // mantle-jet stutter
     if(dx<SUB_W*0.9){                                    // abeam the bow: commit to a side and swing wide
       m.st='flank';
@@ -7499,7 +7498,7 @@ function subMobTick(m,dt,flow){
       if(Math.random()<0.25)m.side=-m.side;
     }
   } else if(m.st==='flank'){
-    const stand=K.stand+(m.kind==='meg'?Math.sin(m.t*2)*6:0);
+    const stand=K.stand+Math.sin(m.t*(m.kind==='meg'?2:2.6)+m.ph)*(m.kind==='meg'?10:14);   // bobs at standoff too
     const ty=subS.y+m.side*stand;
     m.vy=clamp((ty-m.y)*3.2,-K.flank,K.flank);
     m.vx=-K.flank*0.85;
@@ -7564,16 +7563,16 @@ function subInput(){
     return;
   }
 
-  // ---- boost: a coil that runs dry CUTS OUT and stays dead until it has rebuilt.
-  // Same rule the MULE's thruster taught (MECH_BOOST_RESET) — no stutter-boosting.
+  // ---- boost: EMERGENCY THRUST. It is a trigger, not a throttle — one press with a
+  // full coil lights the burn, and it runs wide open on its own until the coil is bone
+  // dry, no early cutoff and no topping it up mid-run. Then it rebuilds slowly, so
+  // lighting it is a real commitment: use it to make an exit, not to nudge position.
+  if(subBoostTrig&&!subS.boosting&&subS.boost>=subS.boostMax){subS.boosting=true;sfx.dash();}
+  subBoostTrig=false;
   let boosting=false;
-  if(subS.dead>0){
-    subS.dead-=dt;
-    subS.boost=Math.min(subS.boostMax,subS.boost+subBoostRegen()*dt);
-    if(subS.dead<=0)subS.boost=Math.max(subS.boost,subS.boostMax*SUB_BOOST_RESET);
-  } else if(subBoostHeld&&subS.boost>0){
+  if(subS.boosting){
     boosting=true;subS.boost-=dt;
-    if(subS.boost<=0){subS.boost=0;subS.dead=(subS.boostMax*SUB_BOOST_RESET)/subBoostRegen();sfx.deny();}
+    if(subS.boost<=0){subS.boost=0;subS.boosting=false;sfx.deny();}
   } else {
     subS.boost=Math.min(subS.boostMax,subS.boost+subBoostRegen()*dt);
   }
@@ -7860,7 +7859,7 @@ function renderSub(){
     ctx.globalAlpha=1;
   }
   // ---- the boat itself
-  const boosting=subBoostHeld&&subS.boost>0&&subS.dead<=0&&subS.killT<=0;
+  const boosting=subS.boosting&&subS.killT<=0;
   if(subS.killT<=0||((state.tick>>1)&1))
     drawSubBoat(subS.sx+shx,subS.y+shy,subS.roll,boosting,t,subS.hitFlash>0.28);
   // ---- bubbles + blast fx
@@ -7912,12 +7911,14 @@ function subHUD(){
   // ---- bottom strip: the coil, the tubes, the mine bay — the three things you spend
   const by=B+5;
   let x=4;
-  if(wide){pxText(ctx,'BOOST',x,by,subS.dead>0?'#7a2530':'#5b8095');x+=22;}
+  const bReady=subS.boost>=subS.boostMax;
+  if(wide){pxText(ctx,'BOOST',x,by,subS.boosting?'#3dff9a':(bReady?'#ffd23c':'#5b8095'));x+=22;}
   const cw=wide?48:40;
   px(ctx,x,by,cw,5,'#0c1a22');
   const cf=clamp(subS.boost/subS.boostMax,0,1);
-  px(ctx,x,by,Math.round(cw*cf),5,subS.dead>0?'#7a2530':'#3dff9a');
-  if(subS.dead>0&&((state.tick>>3)&1))pxText(ctx,'DRY',x+cw+3,by,'#ff4d5e');
+  px(ctx,x,by,Math.round(cw*cf),5,subS.boosting?'#3dff9a':(bReady?'#ffd23c':'#1e6a80'));
+  if(subS.boosting&&((state.tick>>2)&1))pxText(ctx,'!',x+cw+3,by,'#3dff9a');
+  else if(!bReady&&((state.tick>>3)&1))pxText(ctx,'DRY',x+cw+3,by,'#ff4d5e');
   x+=cw+8;
   const rf=clamp(1-subS.reload/subReload(),0,1);
   if(wide){pxText(ctx,'TUBE',x,by,rf>=1?'#3dff9a':'#5b8095');x+=18;}
@@ -7943,7 +7944,7 @@ function subHUD(){
     px(ctx,0,hy,VW,1,'#123848');px(ctx,0,hy+43,VW,1,'#123848');
     pxTextC('THE STREAM CARRIES YOU',VW/2,hy+6,'#7fd0ee');
     pxTextC('UP DOWN - FIRE FORWARD',VW/2,hy+16,'#8fb6c2');
-    pxTextC('BOOST OUTRUNS THE STERN',VW/2,hy+26,'#8fb6c2');
+    pxTextC('FULL BOOST: ONE BURN, NO BRAKES',VW/2,hy+26,'#8fb6c2');
     pxTextC('MINES DROP UP AND DOWN',VW/2,hy+36,'#ffd23c');
     ctx.globalAlpha=1;
   }
