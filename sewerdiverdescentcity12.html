@@ -1716,7 +1716,7 @@ const SUB_LIFT=210, SUB_VDRAG=0.90, SUB_VMAX=78;    // plane authority / water d
 const SUB_BOOST_MAX=2.6;                            // seconds of continuous boost the coil holds
 const SUB_BOOST_REGEN=0.22, SUB_REGEN_STEP=0.09;    // coil-seconds recovered per second; +0.09 per fitting — a full burn costs a long wait back
 const SUB_TORP_SPD=170, SUB_TORP_STEP=22, SUB_TORP_DMG=2;
-const SUB_RELOAD=0.85, SUB_RELOAD_MUL=0.87, SUB_RELOAD_MIN=0.28;
+const SUB_RELOAD=2.55, SUB_RELOAD_MUL=0.87, SUB_RELOAD_MIN=0.84;
 const SUB_SPLASH_R=14, SUB_SPLASH_STEP=7, SUB_SPLASH_DMG=1, SUB_SPLASH_DSTEP=0.25;
 const SUB_MINE_R=18, SUB_MINE_RSTEP=6, SUB_MINE_DMG=2, SUB_MINE_DSTEP=0.5;
 const SUB_MINE_BASE=1, SUB_MINE_STEP=1;             // the bay is fitted from the first run — with ONE charge
@@ -7489,9 +7489,9 @@ function subMobTick(m,dt,flow){
     // on, two harmonics stacked so the swing never quite repeats, only loosely tracking, so
     // a torpedo (dead level, no steering) has to be timed for the moment the weave crosses
     // the boat's own depth rather than fired the instant it's ahead
-    const weave=Math.sin(m.t*(m.kind==='squid'?4.6:3.1)+m.ph)*K.close*(m.kind==='squid'?1.9:2.3)
-               +Math.sin(m.t*(m.kind==='squid'?9.7:6.4)+m.ph*1.7)*K.close*(m.kind==='squid'?0.7:0.85);
-    m.vx=-K.close;m.vy=clamp((subS.y-m.y)*0.4+weave,-K.close*2.4,K.close*2.4);
+    const weave=Math.sin(m.t*(m.kind==='squid'?6.8:4.7)+m.ph)*K.close*(m.kind==='squid'?3.0:3.6)
+               +Math.sin(m.t*(m.kind==='squid'?14.5:9.8)+m.ph*1.7)*K.close*(m.kind==='squid'?1.2:1.5);
+    m.vx=-K.close;m.vy=clamp((subS.y-m.y)*0.25+weave,-K.close*3.8,K.close*3.8);
     if(m.kind==='squid'){m.vx-=Math.sin(m.t*7+m.ph)*22;m.vy+=Math.cos(m.t*5+m.ph)*26;}   // mantle-jet stutter
     if(dx<SUB_W*0.9){                                    // abeam the bow: commit to a side and swing wide
       m.st='flank';
@@ -7500,9 +7500,9 @@ function subMobTick(m,dt,flow){
       if(Math.random()<0.25)m.side=-m.side;
     }
   } else if(m.st==='flank'){
-    const stand=K.stand+Math.sin(m.t*(m.kind==='meg'?2.8:3.6)+m.ph)*(m.kind==='meg'?22:28);   // bobs wide at standoff too
+    const stand=K.stand+Math.sin(m.t*(m.kind==='meg'?4.2:5.4)+m.ph)*(m.kind==='meg'?36:44);   // bobs wide at standoff too
     const ty=subS.y+m.side*stand;
-    m.vy=clamp((ty-m.y)*3.2,-K.flank*1.4,K.flank*1.4);
+    m.vy=clamp((ty-m.y)*3.2,-K.flank*2.0,K.flank*2.0);
     m.vx=-K.flank*0.85;
     // it has to be WELL past the stern before it turns, so the bite is a run back up the
     // wake rather than a sideswipe the moment it draws level with the screws
