@@ -1660,7 +1660,7 @@ const MAP_COST=60;   // coin price of the sector-nav minimap (bought at the shop
 // Overpowered on purpose, rationed by the battery: the cell only drains when the mech WORKS
 // (drill / saw / boost / hook) — walking and hanging are free. One cell carried, no refunds.
 const MECH_BAT_BASE=10, MECH_BAT_STEP=2;            // seconds of work per cell; +2s per environment upgrade
-const MECH_BOOST_BASE=2.0, MECH_BOOST_STEP=0.2;     // continuous boost the coil holds; +0.2s per environment upgrade
+const MECH_BOOST_BASE=2.0, MECH_BOOST_STEP=0.2;     // CAPACITY branch: continuous boost the coil holds; +0.2s per fitting
 const MECH_HOOK_BASE=96, MECH_HOOK_STEP=36, MECH_HOOK_MAX=264;  // hook reach scales like the air line
 const MECH_DRILL_COST=1.0, MECH_SAW_COST=1.5, MECH_HOOK_COST=0.8; // battery seconds per action
 const MECH_BAT_QTY=4;                               // battery recipe: 4× each of the layer's 3 ores + 3 floats
@@ -1669,8 +1669,9 @@ const MECH_DROP_CHANCE=0.35;                        // saw-killed deceivers spil
 const MECH_W=13, MECH_H=14, MECH_R=18;              // hitbox + board/interact radius
 const MECH_GRAV=0.12, MECH_ACC=0.5, MECH_MAXV=1.7, MECH_JUMP=2.9;
 const MECH_BOOST_ACC=0.24, MECH_BOOST_MAXUP=2.3, MECH_REEL=4.2;
-const MECH_BOOST_REGEN=0.6;   // coil seconds recovered per second whenever the thruster ISN'T firing —
-                              // mid-air, hanging on the hook, or standing still. Touchdown still snaps it full.
+const MECH_BOOST_REGEN=0.6, MECH_REGEN_STEP=0.15;   // RECHARGE branch: coil seconds recovered per second
+                              // whenever the thruster ISN'T firing — mid-air, hanging on the hook, standing
+                              // still; +0.15/s per fitting. Touchdown still snaps the coil straight to full.
 const MECH_BOOST_RESET=1.0;   // burn the coil to empty and the thruster CUTS OUT: it stays dead until the coil
                               // has rebuilt to this fraction of full (1.0 = all of it). No stutter-hovering.
 const INFEST_CHANCE=0.22, INFEST_MUL=3;             // infested layers: swarm density the saw was made for
@@ -3869,6 +3870,10 @@ function updateCompanion(dt){if(!companion)return;const co=companion;
 function mUpgCount(m){let c=0;for(const k in m)if(m[k])c++;return c;}
 function mechBatMax(){return MECH_BAT_BASE+MECH_BAT_STEP*mUpgCount(player.mechBatUpg||{});}
 function mechBoostMax(){return MECH_BOOST_BASE+MECH_BOOST_STEP*mUpgCount(player.mechBoostUpg||{});}
+// the coil's two halves upgrade apart: how much boost it HOLDS (above) vs how fast it COMES BACK (here)
+function mechBoostRegen(){return MECH_BOOST_REGEN+MECH_REGEN_STEP*mUpgCount(player.mechRegenUpg||{});}
+// seconds a burnt-out thruster stays dead: a full rebuild from empty at the current recharge rate
+function mechBoostRebuild(){return mechBoostMax()*MECH_BOOST_RESET/mechBoostRegen();}
 function mechHookReach(){return Math.min(MECH_HOOK_MAX,MECH_HOOK_BASE+MECH_HOOK_STEP*mUpgCount(player.mechHookUpg||{}));}
 // battery recipe scales with the dive by construction: it always draws on the CURRENT layer's resources
 function mechBatteryCost(t){const c={};for(const s of SLOTS){c['t'+(t+1)+'r'+s]=MECH_BAT_QTY;c['t'+(t+1)+'m'+s]=MECH_BAT_QTY;}return c;}
@@ -3975,7 +3980,7 @@ function updateMechPiloted(dt){const m=mech,p=player;
   // Airborne, hanging off the hook or parked — if you aren't burning it, it's coming back. Free
   // (the coil is a rate limiter, not a fuel tank); the battery stays the only thing boosting spends.
   if(!boosting){const bmx=mechBoostMax();
-    if(m.boostT<bmx)m.boostT=Math.min(bmx,(m.boostT||0)+MECH_BOOST_REGEN*dt);
+    if(m.boostT<bmx)m.boostT=Math.min(bmx,(m.boostT||0)+mechBoostRegen()*dt);
     if(m.boostOut&&m.boostT>=bmx*MECH_BOOST_RESET){m.boostOut=false;sfx.pop();}}   // coil rebuilt — thruster back online
   m.boostFx=Math.max(0,(m.boostFx||0)-1);m.drillFx=Math.max(0,(m.drillFx||0)-1);m.sawFx=Math.max(0,(m.sawFx||0)-1);
   // keep the diver riding the cockpit so camera/tier/oxygen logic sees the right position
@@ -4512,8 +4517,8 @@ function divContent(tab,div,T0){
    if(!mech)h+='<div class="emptyhold">no mech aboard \u2014 build the DV-8 \u201cMULE\u201d in the SHOP\u2019s machine bay</div>';
    else{
     const pct=Math.round(100*mech.battery/mechBatMax());
-    h+='<div class="gearnote">MULE status \u2014 battery '+(mech.battery>0?pct+'%':'<span style="color:#ff4d5e">DEAD</span>')+' \u00b7 cap '+mechBatMax().toFixed(0)+'s \u00b7 boost '+mechBoostMax().toFixed(1)+'s \u00b7 hook '+mechHookReach()+'u'+(mech.off?' \u00b7 <span style="color:#ff9a3c">LEFT BEHIND \u2014 call it below</span>':'')+'</div>';
-    h+='<div class="gearnote">the cell drains only while the MULE works \u2014 drill '+MECH_DRILL_COST.toFixed(0)+'s a vein \u00b7 saw '+MECH_SAW_COST.toFixed(1)+'s a kill \u00b7 hook '+MECH_HOOK_COST.toFixed(1)+'s a shot \u00b7 boost 1s/s \u00b7 walking is free. the thruster coil <b>recharges whenever it isn\u2019t firing</b> (+'+MECH_BOOST_REGEN.toFixed(1)+'s a second, free), but burn it to <b>empty</b> and the thruster <b>cuts out</b> until the coil is full again \u2014 land, or ride the fall. the cockpit is <b>sealed</b> \u2014 your tank holds while you pilot, so the cell is the only thing you spend</div>';
+    h+='<div class="gearnote">MULE status \u2014 battery '+(mech.battery>0?pct+'%':'<span style="color:#ff4d5e">DEAD</span>')+' \u00b7 cap '+mechBatMax().toFixed(0)+'s \u00b7 coil '+mechBoostMax().toFixed(1)+'s @ +'+mechBoostRegen().toFixed(2)+'/s (burnout '+mechBoostRebuild().toFixed(1)+'s) \u00b7 hook '+mechHookReach()+'u'+(mech.off?' \u00b7 <span style="color:#ff9a3c">LEFT BEHIND \u2014 call it below</span>':'')+'</div>';
+    h+='<div class="gearnote">the cell drains only while the MULE works \u2014 drill '+MECH_DRILL_COST.toFixed(0)+'s a vein \u00b7 saw '+MECH_SAW_COST.toFixed(1)+'s a kill \u00b7 hook '+MECH_HOOK_COST.toFixed(1)+'s a shot \u00b7 boost 1s/s \u00b7 walking is free. the thruster coil <b>recharges whenever it isn\u2019t firing</b> (+'+mechBoostRegen().toFixed(2)+'s a second, free), but burn it to <b>empty</b> and the thruster <b>cuts out</b> for '+mechBoostRebuild().toFixed(1)+'s while it rebuilds \u2014 land to clear it instantly. the Mech Lab upgrades <b>how much it holds</b> and <b>how fast it winds back</b> separately. the cockpit is <b>sealed</b> \u2014 your tank holds while you pilot, so the cell is the only thing you spend</div>';
     const bc=mechBatteryCost(T0),carrying=(player.mechBattery||0)>=1,ok=!carrying&&canPay(bc);
     h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+batIcon(30)+'<span class="nm">Battery cell <span style="color:#5b8095;font-size:9px">4\u00d7 each of this layer\u2019s ores &amp; floats \u00b7 carry max 1</span></span></div><div class="rin">'+(carrying?'<span style="color:#5dff8a;font-size:9px">STOWED 1/1</span>':need(bc,T0))+'</div><button class="cbtn '+(ok?'go':'')+'" data-craft="mbat"'+(ok?'':' disabled')+'>Cell</button></div>';
     const cc=mechCallCost(T0),cok=!!cc&&canPay(cc);
@@ -4554,7 +4559,8 @@ function divContent(tab,div,T0){
     h+='<div class="gearnote">one of each fitting per environment — permanent, welded to the MULE’s frame</div>';
     const rows=[
      ['bat','Battery cell +'+MECH_BAT_STEP+'s','cap '+mechBatMax().toFixed(0)+'s → '+(mechBatMax()+MECH_BAT_STEP).toFixed(0)+'s',40+e*10,(player.mechBatUpg||{})[e],false,batIcon(30)],
-     ['boost','Boost coil +'+MECH_BOOST_STEP.toFixed(1)+'s','burn '+mechBoostMax().toFixed(1)+'s → '+(mechBoostMax()+MECH_BOOST_STEP).toFixed(1)+'s',24+e*8,(player.mechBoostUpg||{})[e],false,machIcon('thruster',30)],
+     ['boost','Coil capacity +'+MECH_BOOST_STEP.toFixed(1)+'s','how long you can hold \u2191 \u00b7 '+mechBoostMax().toFixed(1)+'s \u2192 '+(mechBoostMax()+MECH_BOOST_STEP).toFixed(1)+'s',24+e*8,(player.mechBoostUpg||{})[e],false,machIcon('thruster',30)],
+     ['regen','Coil recharge +'+MECH_REGEN_STEP.toFixed(2)+'/s','how fast it winds back \u00b7 '+mechBoostRegen().toFixed(2)+'/s \u2192 '+(mechBoostRegen()+MECH_REGEN_STEP).toFixed(2)+'/s \u00b7 burnout '+mechBoostRebuild().toFixed(1)+'s \u2192 '+(mechBoostMax()*MECH_BOOST_RESET/(mechBoostRegen()+MECH_REGEN_STEP)).toFixed(1)+'s',24+e*8,(player.mechRegenUpg||{})[e],false,scrapIcon('coil',30)],
      ['hook','Hook drum +'+MECH_HOOK_STEP+'u','reach '+mechHookReach()+'u → '+Math.min(MECH_HOOK_MAX,mechHookReach()+MECH_HOOK_STEP)+'u',24+e*8,(player.mechHookUpg||{})[e],mechHookReach()>=MECH_HOOK_MAX,ropeIcon(30)]];
     for(const[kind,nm,sub,cost,fitted,maxed,icon]of rows){
      const ok=!fitted&&!maxed&&coins>=cost;
@@ -4822,7 +4828,7 @@ craftEl.addEventListener('click',e=>{const b=e.target.closest('[data-craft]');if
     pay(cc);mechCallTo(bases[t]);buildCraft();}
   else if(p[0]==='mup'){const kind=p[1],e=envOfTier(tAt(player.y));
     if(!mech){craftDeny();return;}
-    const key=kind==='bat'?'mechBatUpg':kind==='boost'?'mechBoostUpg':'mechHookUpg';
+    const key=kind==='bat'?'mechBatUpg':kind==='boost'?'mechBoostUpg':kind==='regen'?'mechRegenUpg':'mechHookUpg';
     player[key]=player[key]||{};
     if(player[key][e]||(kind==='hook'&&mechHookReach()>=MECH_HOOK_MAX)){craftDeny();return;}
     const cost=kind==='bat'?(40+e*10):(24+e*8);
@@ -4831,7 +4837,8 @@ craftEl.addEventListener('click',e=>{const b=e.target.closest('[data-craft]');if
     if(kind==='bat'&&mech.battery>0)mech.battery=Math.min(mech.battery+MECH_BAT_STEP,mechBatMax());  // a bigger cell tops up a live one
     sfx.build();burst(player.x+4,player.y+4,16,110,0.6,'#7fe6ff');
     showMsg(kind==='bat'?'battery cell upgraded — '+mechBatMax().toFixed(0)+'s cap'
-           :kind==='boost'?'boost coil wound — '+mechBoostMax().toFixed(1)+'s burn'
+           :kind==='boost'?'coil rewound deeper — '+mechBoostMax().toFixed(1)+'s of boost held'
+           :kind==='regen'?'coil charger uprated — '+mechBoostRegen().toFixed(2)+'/s back, '+mechBoostRebuild().toFixed(1)+'s to clear a burnout'
            :'hook drum extended — '+mechHookReach()+'u reach');
     buildCraft();}
 });
@@ -4903,7 +4910,7 @@ const TITLE_HTML=`
       <li><b>THE CITY UPDATE:</b> each city is a stack of environments, every environment with its own suit line. At the bottom of the final layer waits the <b>transit gate</b> — swim in, pick your next city on the <b>grid map</b>, and dive again, one environment deeper each time.</li>
       <li><b>SECTOR OBJECTIVES</b> gate the last level of every environment. The pink readout under your depth names the current task and its machine, all worked with <b>F</b>: <b>HACK</b> glowing wall terminals (an octagon ICE puzzle — steer the cursor to each shining side to fold a glyph, then find it in the 3-row grid and input; break 3 glyphs), <b>STRIKE</b> pulsing spore pods (hit, dodge the toxin cloud, hit again), <b>CRANK</b> pressure valves (tap F while the gauge reads green — the vents scald). Clear the chain, then throw the <b>AIRLOCK</b> lever beside the sealed bulkhead — or ride the transit gate on a city's finale.</li>
       <li><b>The dark deceives.</b> Eels coil on ledges, anglers and fungus fake the glow of treasure and ore, and "stranded divers" aren't. Craft <b>patch kits</b> (auto-saves you once if you'd die, or <b>Q</b> to top up), and in the <b>SHOP</b> tab sell salvage for coin to buy parts and build machines — even a <b>scrappy robot</b> that grabs loot for you.</li>
-      <li><b>THE MECH UPDATE:</b> assemble the <b>DV-8 "MULE"</b> in the shop's machine bay — a pilotable heavy frame with an <b>insta-drill</b> (no minigame, no gas), a <b>kill-saw</b> that removes eels and deceivers <b>permanently</b> (deceivers can spill valuable salvage), a <b>boost jump</b> and a <b>grappling hook</b> that hangs from ceilings. It runs on crafted <b>battery cells</b> (4× each of the layer's ores &amp; floats, one carried, drains <b>only while it works</b>). The cockpit is <b>sealed</b>: piloting costs <b>no oxygen at all</b> — your tank simply holds until you climb out. A dead MULE seizes in place until you bring another cell, and a base can <b>call</b> it over for 10× one floating kind. The thruster coil <b>recharges the moment you stop holding ↑</b> — in the air, on the hook, anywhere — but run it flat and the thruster <b>shuts down</b> until the coil has rebuilt in full, so watch the strip and pace your climbs. Mech Lab upgrades, one per environment: <b>+2s cell</b>, <b>+0.2s boost</b>, <b>+hook reach</b>. Some layers are <b>INFESTED</b> — swarms the saw was made for.</li>
+      <li><b>THE MECH UPDATE:</b> assemble the <b>DV-8 "MULE"</b> in the shop's machine bay — a pilotable heavy frame with an <b>insta-drill</b> (no minigame, no gas), a <b>kill-saw</b> that removes eels and deceivers <b>permanently</b> (deceivers can spill valuable salvage), a <b>boost jump</b> and a <b>grappling hook</b> that hangs from ceilings. It runs on crafted <b>battery cells</b> (4× each of the layer's ores &amp; floats, one carried, drains <b>only while it works</b>). The cockpit is <b>sealed</b>: piloting costs <b>no oxygen at all</b> — your tank simply holds until you climb out. A dead MULE seizes in place until you bring another cell, and a base can <b>call</b> it over for 10× one floating kind. The thruster coil <b>recharges the moment you stop holding ↑</b> — in the air, on the hook, anywhere — but run it flat and the thruster <b>shuts down</b> until the coil has rebuilt in full, so watch the strip and pace your climbs. Mech Lab upgrades, one of each per environment: <b>+2s cell</b>, <b>+0.2s coil capacity</b>, <b>+0.15/s coil recharge</b> (two separate thruster branches — fly longer, or recover faster), <b>+hook reach</b>. Some layers are <b>INFESTED</b> — swarms the saw was made for.</li>
     </ul>
     <div class="legend"><span><b>JOYSTICK</b> swim · aim</span><span><b>F</b> mine · <b>X</b> clip / power base · <b>I</b> pack</span><span><b>E</b> ⚙ workshop (at base)</span></div>
   </div>
@@ -5002,7 +5009,7 @@ function applySave(d){
   // migrate pre-rework saves: coin-era oxyUpg becomes env-0 regulators, lanternLevel maps to env-0 grinds
   player.o2tank=player.o2tank||{};player.o2reg=player.o2reg||{};player.lensUpg=player.lensUpg||{};
   player.mechBattery=player.mechBattery||0;
-  player.mechBatUpg=player.mechBatUpg||{};player.mechBoostUpg=player.mechBoostUpg||{};player.mechHookUpg=player.mechHookUpg||{};
+  player.mechBatUpg=player.mechBatUpg||{};player.mechBoostUpg=player.mechBoostUpg||{};player.mechRegenUpg=player.mechRegenUpg||{};player.mechHookUpg=player.mechHookUpg||{};
   if(player.oxyUpg){const a=progFlags(player,'o2reg',0);for(let i=0;i<4;i++)if(player.oxyUpg[i])a[i]=true;delete player.oxyUpg;}
   if((player.lanternLevel||0)>0&&!Object.keys(player.lensUpg).length){const a=progFlags(player,'lensUpg',0);for(let i=0;i<Math.min(4,player.lanternLevel);i++)a[i]=true;}
   recalcOxyDrain();
@@ -5068,7 +5075,7 @@ function startGame(){
   CITY=1;CITY_ID=0;CITY_NAME='OLD MIRE';cityExit=null;   // a fresh dive starts back at the founding city
   inv={};gearLevel=0;coins=0;partsInv={};companion=null;mech=null;craftTab='work';respT=0;genWorld();
   player={x:(MW/2)*TS,y:(tierTop[0]+3)*TS,w:9,h:9,vx:0,vy:0,dir:1,
-    oxygen:110,maxOxygen:110,hearts:5,maxHearts:5,invuln:0,dashCD:0,drown:0,bub:0,accMul:1,maxvMul:1,lightRadius:80,thermalR:0,pollutionR:0,sensitivity:1,burn:0,tint:0,tintCol:'',attached:true,attachedBase:null,regen:0,tankBonus:0,filterBonus:0,rooted:0,medkits:0,lightBonus:0,mvBonus:0,builtFloodlight:false,builtThruster:false,seals:[false,false,false,false],lookX:1,lookY:0,lanternLevel:0,oxyDrainMul:1,o2tank:{},o2reg:{},lensUpg:{},hasMap:false,dmgFx:null,mechBattery:0,mechBatUpg:{},mechBoostUpg:{},mechHookUpg:{}};
+    oxygen:110,maxOxygen:110,hearts:5,maxHearts:5,invuln:0,dashCD:0,drown:0,bub:0,accMul:1,maxvMul:1,lightRadius:80,thermalR:0,pollutionR:0,sensitivity:1,burn:0,tint:0,tintCol:'',attached:true,attachedBase:null,regen:0,tankBonus:0,filterBonus:0,rooted:0,medkits:0,lightBonus:0,mvBonus:0,builtFloodlight:false,builtThruster:false,seals:[false,false,false,false],lookX:1,lookY:0,lanternLevel:0,oxyDrainMul:1,o2tank:{},o2reg:{},lensUpg:{},hasMap:false,dmgFx:null,mechBattery:0,mechBatUpg:{},mechBoostUpg:{},mechRegenUpg:{},mechHookUpg:{}};
   particles=[];camera.x=clamp(player.x-VW/2,0,MW*TS-VW);camera.y=clamp(player.y-VH/2,0,MH*TS-VH);
   shake=0;lockMsgCD=0;miningCell=null;state.maxDepth=0;sfx.start();setMode('play');
 }
@@ -6234,7 +6241,7 @@ function enterGame(){
 }
 function init(){
   genWorld();
-  player={x:(MW/2)*TS,y:(tierTop[0]+3)*TS,w:9,h:9,vx:0,vy:0,dir:1,oxygen:110,maxOxygen:110,hearts:5,maxHearts:5,invuln:0,dashCD:0,drown:0,bub:0,accMul:1,maxvMul:1,lightRadius:80,thermalR:0,pollutionR:0,sensitivity:1,burn:0,tint:0,tintCol:'',attached:true,attachedBase:null,regen:0,tankBonus:0,filterBonus:0,rooted:0,medkits:0,lightBonus:0,mvBonus:0,builtFloodlight:false,builtThruster:false,seals:[false,false,false,false],lookX:1,lookY:0,lanternLevel:0,oxyDrainMul:1,o2tank:{},o2reg:{},lensUpg:{},hasMap:false,dmgFx:null,mechBattery:0,mechBatUpg:{},mechBoostUpg:{},mechHookUpg:{}};
+  player={x:(MW/2)*TS,y:(tierTop[0]+3)*TS,w:9,h:9,vx:0,vy:0,dir:1,oxygen:110,maxOxygen:110,hearts:5,maxHearts:5,invuln:0,dashCD:0,drown:0,bub:0,accMul:1,maxvMul:1,lightRadius:80,thermalR:0,pollutionR:0,sensitivity:1,burn:0,tint:0,tintCol:'',attached:true,attachedBase:null,regen:0,tankBonus:0,filterBonus:0,rooted:0,medkits:0,lightBonus:0,mvBonus:0,builtFloodlight:false,builtThruster:false,seals:[false,false,false,false],lookX:1,lookY:0,lanternLevel:0,oxyDrainMul:1,o2tank:{},o2reg:{},lensUpg:{},hasMap:false,dmgFx:null,mechBattery:0,mechBatUpg:{},mechBoostUpg:{},mechRegenUpg:{},mechHookUpg:{}};
   camera.x=clamp(player.x-VW/2,0,MW*TS-VW);camera.y=clamp(player.y-VH/2,0,MH*TS-VH);
   resize();startStudioIntro();
 }
