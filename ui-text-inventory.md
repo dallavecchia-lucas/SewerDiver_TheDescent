@@ -390,6 +390,10 @@ space where it matters: the live HUD shrinks while its type gets bigger.
      and spare-cell counts, the MULE key line, the infested / pollution flags and the minimap's
      NAV caption. Toasts and the context prompt are OSD lines too.
    - Text is drawn at 1× or 2× so its capitals stay at or above the 8 px floor on every phone.
+   - **Task compass**: the clipboard rides the screen edge toward the next task (the nearest
+     unfinished machine of the current step, then the airlock / transit gate), sliding along it
+     in real time, and hovers over the task once it is in view. A small arrow orbits the
+     clipboard, always pointing at the task. It hides while that task's own prompt is up.
 3. **Keyboard words on touch** (`press space`, menu footers, map hints). Mostly CSS
    `.pconly` toggles, which already exist.
 4. **Minigame state words → symbols**, and first-attempt-only hints.

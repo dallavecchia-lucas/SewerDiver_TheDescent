@@ -4691,7 +4691,7 @@ const OSD_ICON={
   cell: ['0011100','1111111','1000001','1011101','1011101','1000001','1111111'],
   city: ['0000010','0010010','0010111','1011101','1010111','1111101','1011111','1111111'],                    // skyline, antenna, lit windows
   clip: ['0011100','0100010','1111111','1000001','1011101','1000001','1011001','1000001','1111111']};  // the clip ring gripping the page
-let osdC=null,osdX=null,osdB=null,osdBX=null,osdS=null,osdSX=null,osdPrompt=null,osdBtn=null;
+let osdC=null,osdX=null,osdB=null,osdBX=null,osdS=null,osdSX=null,osdPrompt=null,osdBtn=null,osdNav=null;
 // font pixel size in world px: 1 where a world px is already >= 1.6 CSS px, else 2 (8px cap floor)
 function osdScale(){return UIPX*((typeof TH!=='undefined'&&TH)?0.94:1)>=1.6?1:2;}
 function osdTextW(str,s){let w=0;for(const ch of str)w+=(glyphW(ch)+1)*s;return Math.max(0,w-s);}
@@ -4728,6 +4728,21 @@ function osdBtnIcon(kind){
   return osdBtn[kind]=rows;}
 // view px -> OSD px (the 3D build maps the point through the bulb's optics)
 function osdAt(x,y){return (TH&&TH.ready)?TH.viewToHud(3,x,y):[x,y];}
+// where the task compass points: the nearest unfinished machine of the layer's current step, or,
+// once the chain is done, the airlock lever (the transit gate on a city's finale layer)
+function navTarget(t){const m=layerMissions[t];if(!m)return null;
+  const px=player.x+4,py=player.y+4;let best=null,bd=Infinity;
+  const pick=o=>{const d=(o.x-px)*(o.x-px)+(o.y-py)*(o.y-py);if(d<bd){bd=d;best=o;}};
+  if(!m.complete){for(const o of missionObjs)if(o.tier===t&&o.step===m.progress&&!o.done&&o.type!=='gate')pick(o);}
+  else{for(const o of missionObjs)if(o.tier===t&&o.type==='gate'&&!o.done)pick(o);
+    if(!best&&cityExit&&cityExit.tier===t)best=cityExit;}
+  return best;}
+// a chunky OSD triangle: every s-grid cell whose centre falls inside (ax,ay)-(bx,by)-(cx,cy)
+function osdTri(c,ax,ay,bx,by,cx,cy,s,col){c.fillStyle=col;
+  const x0=Math.floor(Math.min(ax,bx,cx)/s)*s,x1=Math.max(ax,bx,cx),y0=Math.floor(Math.min(ay,by,cy)/s)*s,y1=Math.max(ay,by,cy);
+  const e=(x,y,px,py,qx,qy)=>(qx-px)*(y-py)-(qy-py)*(x-px);
+  for(let y=y0;y<=y1;y+=s)for(let x=x0;x<=x1;x+=s){const mx=x+s/2,my=y+s/2,d1=e(mx,my,ax,ay,bx,by),d2=e(mx,my,bx,by,cx,cy),d3=e(mx,my,cx,cy,ax,ay);
+    if((d1>=0&&d2>=0&&d3>=0)||(d1<=0&&d2<=0&&d3<=0))c.fillRect(x,y,s,s);}}
 function drawHUD(tier){
   if(player.hasMap&&state.mode==='play')drawMinimap(tier);
   const c=osdBegin(),s=osdScale(),G=OSD_G;
@@ -4763,6 +4778,24 @@ function drawHUD(tier){
    c.fillStyle=OSD_DIM;c.fillRect(bx,cy,cw,s);
    if(!mech.boostOut||((state.tick>>2)&1)){c.fillStyle=G;c.fillRect(bx,cy,Math.round(cw*cf),s);}   // burnt out: the strip blinks
    y+=rowH+gap;}
+  // ---- task compass: the clipboard rides the screen edge toward the next task and slides along it
+  // as you swim; once the task is in view it hovers over it. A small arrow orbits the clipboard,
+  // always pointing at the task. Hidden while the task's own prompt is up (you're already there).
+  {const T=navTarget(tier);
+   if(!T||(osdPrompt&&nearMission===T))osdNav=null;
+   else{const tk=state.tick,vx=T.x-RCX,vy=T.y-RCY,m=12*s;   // margin clears the whole orbit, arrow tip included
+    const L=m,R=VW-m-(player.hasMap?28:0),Tp=top+2*(rowH+gap)+2*s+m,B=VH-m;
+    let gx,gy,ang;
+    if(vx>L&&vx<R&&vy>Tp&&vy<B){const q=osdAt(vx,vy-24-Math.round(Math.sin(tk*0.08)*2*s/2));gx=q[0];gy=q[1];ang=Math.PI/2;}   // in view: hover above it, arrow down
+    else{const ox=clamp(player.x+4-RCX,L,R),oy=clamp(player.y+4-RCY,Tp,B),dx=vx-ox,dy=vy-oy;ang=Math.atan2(dy,dx);   // off screen: the ray player -> task, clipped to the frame
+     const kx=dx>0?(R-ox)/dx:dx<0?(L-ox)/dx:Infinity,ky=dy>0?(B-oy)/dy:dy<0?(Tp-oy)/dy:Infinity,k=Math.min(kx,ky);gx=ox+dx*k;gy=oy+dy*k;}
+    if(!osdNav)osdNav={x:gx,y:gy,a:ang};
+    osdNav.x+=(gx-osdNav.x)*0.3;osdNav.y+=(gy-osdNav.y)*0.3;
+    let da=ang-osdNav.a;while(da>Math.PI)da-=2*Math.PI;while(da<-Math.PI)da+=2*Math.PI;osdNav.a+=da*0.25;   // the arrow orbits, never jumps
+    const nx=Math.round(osdNav.x),ny=Math.round(osdNav.y),a=osdNav.a,ca=Math.cos(a),sa=Math.sin(a);
+    osdIcon(c,OSD_ICON.clip,nx-Math.round(3.5*s),ny-Math.round(3.5*s),s,G);
+    const r=7*s+Math.sin(tk*0.12)*s*0.75,tip=r+3.5*s,hw=2.2*s;
+    osdTri(c,nx+ca*tip,ny+sa*tip,nx+ca*r-sa*hw,ny+sa*r+ca*hw,nx+ca*r+sa*hw,ny+sa*r-ca*hw,s,G);}}
   // ---- context prompt: the button to press + the verb, over the thing it acts on
   if(osdPrompt){const q=osdAt(osdPrompt.x,osdPrompt.y),k=osdPrompt.kind,t=osdPrompt.text;
    const key=(k&&pcMode)?((pcSrc==='pad'?IP_PAD:IP_KEY)[k]||''):'',ic=(k&&!pcMode)?osdBtnIcon(k):null;
