@@ -38,7 +38,7 @@ export class TheatreScene {
       pollution: 0, pollTarget: 0, murk: 0,
       dye: [0.45, 0.62, 0.16],
     };
-    this.grime = 0.08;
+    this.grime = 0.12;
     this.t = 0;
   }
 
@@ -127,7 +127,10 @@ export class TheatreScene {
     const L = [];
     // room key light: far above the viewer's shoulder, shining down through the faceplate.
     // Big angular size -> soft, distance-true penumbrae. Warm-white, attenuated by the water.
-    L.push({ p: [-46, 82, 235], r: 26, c: [1.0 * 4.4, 0.95 * 4.4, 0.86 * 4.4], range: -1, dir: null, k: -1 });
+    // the stage's key light dims with every environment you descend (darkness is a mechanic
+    // in this game); the Floodlight Rig upgrade lifts it again
+    const kI = 4.4 * (info.keyScale == null ? 1 : info.keyScale);
+    L.push({ p: [-46, 82, 235], r: 26, c: [1.0 * kI, 0.95 * kI, 0.86 * kI], range: -1, dir: null, k: -1 });
     const lan = info.lantern;
     if (lan) {
       // the helmet lamp hangs just in front of the actors plate and throws its cone back into
@@ -146,19 +149,29 @@ export class TheatreScene {
       L.push({ p: P, r: 1.4, c: [0.85 * 3.6, 0.9 * 3.6, 1.0 * 3.6], range: 140 * this.plates[P_ACT].s, dir: [0.96, 0, -0.28, Math.cos(0.55)], k: P_ACT });
       L.push({ p: [P[0] - 6, P[1], P[2] + 1], r: 1, c: [0.4, 0.5, 0.6], range: 30 * this.plates[P_ACT].s, dir: null, k: P_ACT });
     }
-    // glows -> small area lights hovering just in front of their plate
-    const gl = (info.glows || []).slice();
-    for (const g of gl) g._w = (g.a || 0) * (g.r || 0);
-    gl.sort((a, b) => b._w - a._w);
-    for (const g of gl) {
-      if (L.length >= MAX_LIGHTS) break;
+    // glows -> small area lights hovering just in front of their plate. Neighbouring glows
+    // (a row of sludge tiles, a lamp column) merge into one light per 40 px cell with a
+    // sub-linear intensity, so dense glow fields light the stage instead of flooding it.
+    const cells = new Map();
+    for (const g of info.glows || []) {
       if (!(g.a > 0.02) || !(g.r > 1)) continue;
-      const k = g.k == null ? P_ACT : g.k;
       if (g.x < -60 || g.y < -60 || g.x > this.vw + 60 || g.y > this.vh + 60) continue;
-      const P = this.viewToBox(k, g.x, g.y, 2.6);
+      const k = g.k == null ? P_ACT : g.k;
+      const key = k + ':' + Math.floor(g.x / 40) + ':' + Math.floor(g.y / 40);
       const rgb = String(g.col || '255,255,255').split(',').map((n) => (+n || 0) / 255);
-      const s = this.plates[k].s, I = Math.min(2.2, g.a) * 2.6;
-      L.push({ p: P, r: Math.min(2.5, 0.6 + g.r * s * 0.08), c: [srgb2lin(rgb[0]) * I, srgb2lin(rgb[1]) * I, srgb2lin(rgb[2]) * I], range: g.r * s * 2.2 + 6, dir: null, k });
+      let c = cells.get(key);
+      if (!c) { c = { k, x: 0, y: 0, w: 0, a2: 0, r: 0, c: [0, 0, 0] }; cells.set(key, c); }
+      const wgt = g.a * g.r;
+      c.x += g.x * wgt; c.y += g.y * wgt; c.w += wgt; c.a2 += g.a * g.a; c.r = Math.max(c.r, g.r);
+      for (let i = 0; i < 3; i++) c.c[i] += srgb2lin(rgb[i]) * wgt;
+    }
+    const merged = [...cells.values()].map((c) => ({ ...c, x: c.x / c.w, y: c.y / c.w, a: Math.sqrt(c.a2), cc: c.c.map((v) => v / c.w) }));
+    merged.sort((p, q) => q.a * q.r - p.a * p.r);
+    for (const g of merged) {
+      if (L.length >= MAX_LIGHTS) break;
+      const P = this.viewToBox(g.k, g.x, g.y, 2.6);
+      const s = this.plates[g.k].s, I = Math.min(1.6, g.a) * 1.7;
+      L.push({ p: P, r: Math.min(2.5, 0.6 + g.r * s * 0.08), c: [g.cc[0] * I, g.cc[1] * I, g.cc[2] * I], range: g.r * s * 2.2 + 6, dir: null, k: g.k });
     }
     this.lights = L;
     return L;
@@ -184,7 +197,7 @@ export class TheatreScene {
     for (let i = 0; i < 3; i++) this.water.base[i] += (this.water.target[i] - this.water.base[i]) * k;
     this.water.pollution += (this.water.pollTarget - this.water.pollution) * Math.min(1, dt / 2.5);
     // the inside of the glass slowly films over in dirty water, and clears a little in clean water
-    const gt = 0.07 + Math.min(1, this.water.pollution) * 0.42;
+    const gt = 0.12 + Math.min(1, this.water.pollution) * 0.5;
     this.grime += (gt - this.grime) * Math.min(1, dt / 40);
   }
   uploadWater(G) {

@@ -163,7 +163,12 @@ function loop(now) {
   prevKind = kind;
 
   scene.step(dt);
-  const lights = { glows: B && kind !== 'flat' ? B.glows : [], lantern: kind === 'world' ? TH.lantern : null, boat: kind === 'sub' && B ? { x: B.subS.sx, y: B.subS.y } : null };
+  let keyScale = 1;
+  if (B && B.player && kind === 'world') {
+    const env = B.envOfTier(B.tAt(B.player.y)) || 0;
+    keyScale = Math.max(0.3, Math.pow(0.78, env)) * (B.player.builtFloodlight ? 1.3 : 1);
+  }
+  const lights = { glows: B && kind !== 'flat' ? B.glows : [], lantern: kind === 'world' ? TH.lantern : null, boat: kind === 'sub' && B ? { x: B.subS.sx, y: B.subS.y } : null, keyScale };
   scene.buildLights(lights);
   const only = window.__theatreLights || params.get('lights');   // debug: isolate light groups
   if (only) scene.lights = scene.lights.filter((l, i) => (only.includes('key') && i === 0) || (only.includes('lantern') && (i === 1 || i === 2)) || (only.includes('glows') && i > 2));
@@ -181,7 +186,7 @@ function loop(now) {
   if (kind === 'world' && TH.lantern) fy = scene.viewToBox(P_ACT, TH.lantern.x, TH.lantern.y)[1];
   else if (kind === 'sub' && B) fy = scene.viewToBox(P_ACT, B.subS.sx, B.subS.y)[1];
   else fy = scene.plates[P_CARD].cy;
-  const k = 9, c = 2 * Math.sqrt(k) * 0.92;
+  const k = 30, c = 2 * Math.sqrt(k) * 0.9;           // ~0.7 s rack focus with a hint of overshoot
   focus.v += (k * (fy - focus.y) - c * focus.v) * dt; focus.y += focus.v * dt;
   focus.z = kind === 'flat' ? scene.plates[P_CARD].z : PLATES[P_ACT].z;
   f.focus = [0, focus.y, focus.z];
@@ -247,7 +252,7 @@ function mapPlateToStage(k, vx, vy) {
 
 // debug hooks for automated checks
 window.__theatre = {
-  TH, get scene() { return scene; }, get renderer() { return renderer; }, get quality() { return quality; }, get water() { return water; },
+  TH, focus, get scene() { return scene; }, get renderer() { return renderer; }, get quality() { return quality; }, get water() { return water; },
   async snapshot() {
     if (!renderer) return null;
     TH.paused = true;

@@ -29,6 +29,7 @@ for (const p of scene.plates) p.tilt = 0;
 let t = 0;
 function frame() {
   paint(); t += 1 / 60;
+  { const hx = +(new URLSearchParams(location.search).get('head') || 0); scene.head.tx = hx; scene.head.ty = 0; }
   scene.step(1 / 60);
   for (const p of scene.plates) { for (const s of [p.hx, p.hy, p.hz, p.rx, p.ry, p.rz]) { s.x = 0; s.v = 0; } }
   scene.buildLights({ glows: [], lantern: null });

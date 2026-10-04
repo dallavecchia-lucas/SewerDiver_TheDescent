@@ -184,6 +184,14 @@ export function makeCompose(G, T, U) {
     If(G.bulbRadius(w).lessThan(1.02), () => {
       const R = G.glassRay(w);
       const o = R.o.toVar(), d = R.d.toVar();
+      // refractive shimmer: warm vent water and currents bend the ray a hair (index of
+      // refraction follows temperature), so the theatre wavers like it sits in real water
+      const pm = o.add(d.mul(float(o.z).sub(24.0).div(d.z.negate())));
+      const fc = G.sampleField(T.density, pm);
+      const fx = G.sampleField(T.density, pm.add(vec3(1.6, 0, 0))).z.sub(fc.z);
+      const fy = G.sampleField(T.density, pm.add(vec3(0, 1.6, 0))).z.sub(fc.z);
+      const fv = G.sampleField(T.vel, pm).xyz;
+      d.assign(normalize(d.add(vec3(fx.mul(0.006).add(fv.x.mul(0.00012)), fy.mul(0.006).add(fv.y.mul(0.00012)), 0))));
       const A = G.uAtlas;
       const hitK = int(-1).toVar(), side = float(0).toVar();
       const hitT = float(0).toVar(), hvx = float(0).toVar(), hvy = float(0).toVar();
@@ -367,7 +375,13 @@ export function makeFinal(G, T, U) {
     const w = G.windowCoord(px).toVar();
     const rr = G.bulbRadius(w).toVar();
     const m = G.bulbMask(w).toVar();
-    const col = texture(T.dof, screenUV).level(0).rgb.toVar();
+    // lateral dispersion of the thick curved faceplate: red lands a touch wider than blue,
+    // growing toward the rim (stable, so it never shimmers frame to frame)
+    const cen = vec2(G.uWin.x, G.uWin.y).div(G.uCanvas);
+    const disp = pow(saturate(rr), 3.0).mul(0.0035);
+    const uvR = cen.add(screenUV.sub(cen).mul(float(1).sub(disp)));
+    const uvB = cen.add(screenUV.sub(cen).mul(float(1).add(disp)));
+    const col = vec3(texture(T.dof, uvR).level(0).r, texture(T.dof, screenUV).level(0).g, texture(T.dof, uvB).level(0).b).toVar();
 
     // --- bubbles stuck to the inside of the faceplate: tiny plano-convex lenses
     loop(U.uNB, 'gbb', (i) => {
@@ -386,11 +400,15 @@ export function makeFinal(G, T, U) {
     });
 
     // --- grime film on the inner glass: out of focus by nature (it sits in front of the focal plane)
-    const g1 = fbm(w.mul(0.06)), g2 = fbm(w.mul(0.17).add(13.1));
+    const gt = texture(T.grime, w.div(120.0).add(0.5)).level(0);     // baked once (makeGrimeBake)
+    const g1 = gt.r, g2 = gt.g;
     const top = smoothstep(float(0.2), float(1.0), w.y.div(G.uBulb.y)).mul(0.6).add(0.4);
     const rimDirt = smoothstep(float(0.78), float(1.0), rr).mul(0.7);
     const film = saturate(g1.mul(0.75).add(g2.mul(0.35)).sub(0.42).mul(1.7).add(rimDirt)).mul(top).mul(U.uGrime).toVar();
-    const streak = smoothstep(float(0.6), float(0.95), fbm(vec2(w.x.mul(0.5), w.y.mul(0.03)).add(4.2))).mul(top).mul(U.uGrime).mul(0.5);
+    // tide lines: thin dried-silt contours where the film's edge once sat
+    const tide = smoothstep(float(0.035), float(0.0), abs(fract(g1.mul(7.0).add(w.y.mul(0.01))).sub(0.5)).sub(0.46)).mul(U.uGrime).mul(0.35).mul(smoothstep(float(0.3), float(0.6), g2));
+    film.addAssign(tide);
+    const streak = smoothstep(float(0.6), float(0.95), gt.b).mul(top).mul(U.uGrime).mul(0.5);
     film.addAssign(streak);
     const vol = texture(T.vol, screenUV).level(0).rgb;
     const grimeTint = vec3(0.42, 0.38, 0.22).mul(G.uWaterCol.mul(0.6).add(vec3(0.4, 0.43, 0.3)));
@@ -409,7 +427,7 @@ export function makeFinal(G, T, U) {
     const hv = px.sub(U.uHudRect.xy).div(U.uHudRect.zw);
     const hud = texture(T.hud, hv).level(0);
     const inH = hv.x.greaterThan(0.0).and(hv.x.lessThan(1.0)).and(hv.y.greaterThan(0.0)).and(hv.y.lessThan(1.0));
-    If(inH, () => { col.assign(mix(col, hud.rgb.mul(1.1), hud.a.mul(U.uHudOn))); });
+    const hudA = select(inH, hud.a.mul(U.uHudOn), float(0));
     const dbgHud = vec4(fract(hv), select(inH, float(1), float(0)), 1);
 
     // --- tone map (filmic) + miniature grade: a touch of saturation and contrast, lens vignette
@@ -419,7 +437,11 @@ export function makeFinal(G, T, U) {
     const sat = mix(vec3(lum), tm, float(1.12));
     const con = sat.sub(0.5).mul(1.05).add(0.5);
     const vig = float(1).sub(smoothstep(float(0.55), float(1.05), rr).mul(0.32));
-    const graded = saturate(con.mul(vig));
+    const graded0 = saturate(con.mul(vig));
+    // the HUD is printed on the glass: blended after tone mapping, in display (sRGB) space,
+    // exactly like the original canvas did it (a damage tint must not flood the scene)
+    const gS = pow(graded0, vec3(1 / 2.2)), hS = pow(hud.rgb, vec3(1 / 2.2));
+    const graded = pow(mix(gS, hS, hudA), vec3(2.2));
 
     // --- CRT bezel: a dark rubber gasket hugging the tube face, fading into the console shell
     const gas = smoothstep(float(1.0), float(1.09), rr);
@@ -441,6 +463,14 @@ export function makeFinal(G, T, U) {
     If(dv.equal(10), () => { res.assign(vec4(abs(texture(T.vel, screenUV).level(0).xyz).mul(0.05), 1)); });
     If(dv.equal(7), () => { res.assign(vec4(texture(T.irr, screenUV).level(0).a, 0, 0, 1)); });
     return res;
+  })());
+}
+
+// The grime film's noise is static: bake it once into a texture (window mm -60..60).
+export function makeGrimeBake() {
+  return mat(Fn(() => {
+    const w = screenUV.mul(2.0).sub(1.0).mul(60.0);
+    return vec4(fbm(w.mul(0.06)), fbm(w.mul(0.17).add(13.1)), fbm(vec2(w.x.mul(0.5), w.y.mul(0.03)).add(4.2)), 1);
   })());
 }
 

@@ -2,7 +2,7 @@
 import * as THREE from 'three/webgpu';
 import { texture, uniform, uniformArray } from 'three/tsl';
 import { GPUState } from './gpu.js';
-import { makeIrradiance, makeVolume, makeCompose, makeCocTile, makeDof, makeFinal, passUniforms } from './passes.js';
+import { makeIrradiance, makeVolume, makeCompose, makeCocTile, makeDof, makeFinal, makeGrimeBake, passUniforms } from './passes.js';
 import { Fluid } from './fluid.js';
 import { Particles } from './particles.js';
 import { NPLATES, MARGIN } from './sheets.js';
@@ -43,7 +43,7 @@ export class TheatreRenderer {
     this.T = {
       albedo: texture(blank), emissive: texture(blank), hud: texture(blank),
       irr: texture(blank), irrHist: texture(blank), vol: texture(blank), volHist: texture(blank),
-      compose: texture(blank), tile: texture(blank), dof: texture(blank), density: texture(blank), vel: texture(blank),
+      compose: texture(blank), tile: texture(blank), dof: texture(blank), density: texture(blank), vel: texture(blank), grime: texture(blank),
     };
     this._makeAtlasTextures();
 
@@ -62,6 +62,12 @@ export class TheatreRenderer {
     this.mTile = makeCocTile(this.G, this.T, this.U);
     this.mDof = makeDof(this.G, this.T, this.U, Q.dofTaps);
     this.mFinal = makeFinal(this.G, this.T, this.U);
+
+    // bake the static grime noise once
+    this.grimeRT = new THREE.RenderTarget(512, 512, { type: HF, depthBuffer: false });
+    this.grimeRT.texture.wrapS = this.grimeRT.texture.wrapT = THREE.RepeatWrapping;
+    this.quad.material = makeGrimeBake(); r.setRenderTarget(this.grimeRT); this.quad.render(r); r.setRenderTarget(null);
+    this.T.grime.value = this.grimeRT.texture;
 
     this.particles = new Particles(r, this.G, this.quad, this.U, Q.particles);
     this.particles.build(this.velNode, this.T.compose);

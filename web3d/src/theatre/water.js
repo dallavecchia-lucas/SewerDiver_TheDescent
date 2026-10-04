@@ -105,6 +105,16 @@ export class WaterDirector {
         S.nudge(P_ACT, 0, 0, 1.2);
       }
     }
+    // ambient murk: faint silt puffs seeded around the box; the fluid's own churn and the
+    // plates' drag smear them into slowly drifting clouds (dirtier water, more of them)
+    this.puffT = (this.puffT || 0) - dt;
+    if (this.puffT <= 0 && kind !== 'flat') {
+      const pol = this.S.water.pollution;
+      this.puffT = 0.35 / (1 + pol * 2);
+      const fb = this.S.atDepth(20);
+      sp.push({ p: [(Math.random() - 0.5) * fb.s * B.VW, fb.cy + (Math.random() - 0.5) * fb.s * B.VH, 3 + Math.random() * 50], r: 7 + Math.random() * 6,
+        f: [(Math.random() - 0.5) * 30, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20], d: [2.5 + pol * 4, pol * 2, 0] });
+    }
     out.splats = sp;
     this._bubbles(dt, B, kind);
   }

@@ -9,7 +9,7 @@ import * as THREE from 'three/webgpu';
 import {
   Fn, uniform, texture, vec2, vec3, vec4, float, int,
   dot, length, max, min, clamp, mix, exp, floor, fract, mod, select, sin, cos, abs, smoothstep, saturate, pow,
-  screenUV, instanceIndex, uv, varying, normalize,
+  screenUV, instanceIndex, uv, varying, normalize, textureLoad, ivec2, screenCoordinate,
 } from 'three/tsl';
 
 export const MAX_BUBBLES = 96;
@@ -52,7 +52,9 @@ export class Particles {
     // ---- update pass
     this.mUpdate = new THREE.NodeMaterial();
     this.mUpdate.fragmentNode = Fn(() => {
-      const s = texture(self.tState, screenUV).level(0).toVar();
+      // float32 state is read with textureLoad (no sampler): works where float32 isn't filterable.
+      // Slots are interchangeable, so the read/write texel orientation doesn't matter.
+      const s = textureLoad(self.tState, ivec2(floor(screenCoordinate.xy))).toVar();
       const P = s.xyz.toVar();
       const B = G.uFluidBox;
       const v = G.sampleField(self.uVel, P).xyz;
@@ -100,8 +102,7 @@ export class Particles {
     // ---- silt sprites
     const sm = new THREE.SpriteNodeMaterial({ transparent: true, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending });
     const idx = float(instanceIndex);
-    const suv = vec2(mod(idx, self.px).add(0.5).div(self.px), floor(idx.div(self.px)).add(0.5).div(self.py));
-    const st = texture(self.tState, suv).level(0);
+    const st = textureLoad(self.tState, ivec2(int(mod(idx, self.px)), int(floor(idx.div(self.px)))));
     const P = st.xyz;
     const pj = proj(P);
     const sd = focusSd(P);
@@ -135,7 +136,7 @@ export class Particles {
     // ---- bubbles (CPU-driven positions, rising with the breath of the diver / vents)
     const bm = new THREE.SpriteNodeMaterial({ transparent: true, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending });
     const bi = float(instanceIndex);
-    const bd = texture(self.tBub, vec2(bi.add(0.5).div(MAX_BUBBLES), 0.5)).level(0);
+    const bd = textureLoad(self.tBub, ivec2(int(bi), int(0)));
     const bp = proj(bd.xyz);
     const bsd = focusSd(bd.xyz);
     const bcoc = min(abs(bsd.mul(self.U.uDof.x)), self.U.uDof.y.mul(2.0));
