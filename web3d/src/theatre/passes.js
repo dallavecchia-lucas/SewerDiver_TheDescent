@@ -160,7 +160,10 @@ export function makeVolume(G, T, uVolAlpha, steps) {
           const wa = exp(sigA.add(sigS).mul(dWater).negate());
           const LX = G.uLX.element(li);
           const near = select(LX.z.greaterThan(0.0), smoothstep(LX.z.mul(0.3), LX.z, dist), float(1));
-          const base = LC.rgb.mul(att.mul(spot).mul(near)).mul(wa).toVar();
+          // the room key light (range < 0, it shines in from outside the bulb) never scatters in
+          // the water: its shafts read as glare on the tube. Only lights inside the box do.
+          const inBox = select(rng.lessThan(0.0), float(0), float(1));
+          const base = LC.rgb.mul(att.mul(spot).mul(near).mul(inBox)).mul(wa).toVar();
           If(maxc(base).greaterThan(1e-4), () => {
             // Henyey-Greenstein, forward-scattering silt (g ~ 0.62)
             const g = float(0.62);
