@@ -324,6 +324,9 @@
   /* menu-mode action cluster (confirm / back) + central quick-exit, shown only in menus & the mining minigame */
   #right-controls.hidden,#menu-controls.hidden,#center-controls.hidden{display:none;}
   #menu-controls{display:flex;flex-direction:column;gap:12px;align-items:center;}
+  /* the main action button (glyph select / crank actuate / torch fire / mine dig) is the one thing every
+     minigame is built around — sized up well past the standard cap so a right thumb never has to hunt for it */
+  #confirmbtn{width:88px;height:88px;font-size:32px;}
   .b-confirm{background:radial-gradient(circle at 50% 33%,#9affc0,#23b46a 76%);color:#04210f;
     box-shadow:0 4px 0 #157a44,0 6px 7px rgba(0,0,0,.45),inset 0 2px 0 rgba(255,255,255,.45),inset 0 -4px 7px rgba(8,80,45,.45),0 0 0 4px rgba(8,14,20,.92),0 0 16px rgba(60,230,150,.3);}
   .b-back{background:radial-gradient(circle at 50% 33%,#9fc2d6,#4f6f86 76%);color:#0a1c27;
@@ -342,9 +345,9 @@
   @keyframes exitpulse{0%,100%{box-shadow:0 0 14px rgba(255,60,80,.55),0 0 26px rgba(255,40,60,.28),inset 0 1px 0 rgba(255,170,180,.3),inset 0 -3px 6px rgba(0,0,0,.5),0 2px 4px rgba(0,0,0,.5);}
     50%{box-shadow:0 0 20px rgba(255,70,90,.8),0 0 38px rgba(255,40,60,.45),inset 0 1px 0 rgba(255,180,190,.4),inset 0 -3px 6px rgba(0,0,0,.5),0 2px 4px rgba(0,0,0,.5);}}
   #controls.menumode::after{opacity:0;}
-  @media (max-width:520px){#dpad{width:128px;height:128px}#minepad{width:152px;height:152px;padding:7px}.btn{width:54px;height:54px;font-size:21px}.dot span{width:56px;height:56px}.mk{font-size:23px}}
-  @media (max-height:680px){#controls{padding-top:8px;padding-bottom:max(20px,calc(env(safe-area-inset-bottom) + 12px))}#dpad{width:114px;height:114px}#minepad{width:138px;height:138px;padding:6px}.btn{width:50px;height:50px;font-size:19px}.dot span{width:48px;height:48px}.mk{font-size:21px}.mhub{width:28px;height:28px}.ab .lbl{font-size:7px}#brand{padding:2px 5px 4px}.bm-name{font-size:13px}}
-  @media (max-width:374px){#dpad{width:116px;height:116px}.dot span{width:50px;height:50px}.btn{width:50px;height:50px;font-size:19px}#right-controls{column-gap:2px;row-gap:2px}}
+  @media (max-width:520px){#dpad{width:128px;height:128px}#minepad{width:152px;height:152px;padding:7px}.btn{width:54px;height:54px;font-size:21px}.dot span{width:56px;height:56px}.mk{font-size:23px}#confirmbtn{width:80px;height:80px;font-size:29px}}
+  @media (max-height:680px){#controls{padding-top:8px;padding-bottom:max(20px,calc(env(safe-area-inset-bottom) + 12px))}#dpad{width:114px;height:114px}#minepad{width:138px;height:138px;padding:6px}.btn{width:50px;height:50px;font-size:19px}.dot span{width:48px;height:48px}.mk{font-size:21px}.mhub{width:28px;height:28px}.ab .lbl{font-size:7px}#brand{padding:2px 5px 4px}.bm-name{font-size:13px}#confirmbtn{width:74px;height:74px;font-size:27px}}
+  @media (max-width:374px){#dpad{width:116px;height:116px}.dot span{width:50px;height:50px}.btn{width:50px;height:50px;font-size:19px}#right-controls{column-gap:2px;row-gap:2px}#confirmbtn{width:72px;height:72px;font-size:26px}}
   .kbdhint{position:absolute;top:8px;left:50%;transform:translateX(-50%);font-size:10px;letter-spacing:2px;color:#3c5365;text-transform:uppercase;z-index:3;pointer-events:none;white-space:nowrap;}
   #mine{position:absolute;inset:0;z-index:6;display:flex;flex-direction:column;pointer-events:none;}
   #mine.hidden{display:none;}
@@ -1100,6 +1103,44 @@
 #mi-next.go{color:#0a1a10;background:linear-gradient(180deg,#7dff6a,#36b13c);border-color:#9dff8a;text-shadow:none;box-shadow:0 0 10px rgba(90,230,90,.5);}
 #mi-skip{position:absolute;top:8px;right:8px;z-index:6;font:700 10px 'Courier New',monospace;letter-spacing:1px;color:#9fb6bf;background:rgba(8,20,28,.7);border:1px solid #234050;border-radius:5px;padding:4px 9px;cursor:pointer;}
 #mi-skip:active{filter:brightness(1.4);}
+/* shared minigame / transversal primer deck (valve, ICE console, torch, U-552).
+   Same CRT furniture as the base + mining primers — one id prefix so PC-mode key nav
+   (see DLG) only needs a single entry no matter how many decks get added later. */
+#deckintro{position:absolute;inset:0;z-index:36;overflow:hidden;}
+#dk-stage{position:relative;flex:1;width:100%;display:flex;align-items:center;justify-content:center;z-index:4;min-height:0;}
+.dk-sq{width:auto;height:36vh;max-width:80%;}
+.dk-wide{width:92%;max-width:min(92%,430px);height:auto;}
+/* landscape phones: bound the wide scenes by HEIGHT the way .mi-sq does, or the slide
+   title rides up over the deck header when the stage is short */
+@media (max-height:520px){.dk-wide{width:auto;height:34vh;max-width:92%;}.dk-sq{height:30vh;}}
+#dk-dots{display:flex;gap:10px;justify-content:center;margin:5px 0 3px;z-index:4;}
+#dk-nav{display:flex;gap:10px;justify-content:center;align-items:center;margin:2px 0;z-index:4;}
+#dk-nav button{font:700 11px 'Courier New',monospace;letter-spacing:1px;color:#bfeaff;background:linear-gradient(180deg,#14384a,#0c2433);border:1.5px solid #1f5870;border-radius:6px;padding:7px 14px;cursor:pointer;text-shadow:0 1px 2px #000;}
+#dk-nav button:active{filter:brightness(1.3);}
+#dk-nav button:disabled{opacity:.3;cursor:default;}
+#dk-next.go{color:#0a1a10;background:linear-gradient(180deg,#7dff6a,#36b13c);border-color:#9dff8a;text-shadow:none;box-shadow:0 0 10px rgba(90,230,90,.5);}
+#dk-skip{position:absolute;top:8px;right:8px;z-index:6;font:700 10px 'Courier New',monospace;letter-spacing:1px;color:#9fb6bf;background:rgba(8,20,28,.7);border:1px solid #234050;border-radius:5px;padding:4px 9px;cursor:pointer;}
+#dk-skip:active{filter:brightness(1.4);}
+/* extra bezel colours for the inline .tut-btn chips used by the new decks */
+.tb-confirm{background:radial-gradient(circle at 50% 33%,#a8ff9a,#2f9a3c 76%);color:#04220a;}
+.tb-back{background:radial-gradient(circle at 50% 33%,#ffb0b0,#b33a3a 76%);color:#2a0606;}
+.tb-pack{background:radial-gradient(circle at 50% 33%,#d8c0ff,#6b46b3 76%);color:#170a2a;}
+/* keycap twin of .tut-btn — decks show this instead of a thumb button once PC mode is on */
+.tut-key{display:inline-block;min-width:1.1em;padding:0 .28em;margin:0 .16em;border-radius:3px;vertical-align:-0.18em;
+  font:700 .82em 'Courier New',monospace;letter-spacing:1px;text-align:center;color:#eafcff;
+  background:linear-gradient(180deg,#20475c,#0d2130);border:1px solid #46a0c0;
+  box-shadow:0 1px 0 #071219,inset 0 1px 0 rgba(255,255,255,.22);text-shadow:0 1px 2px #000;}
+/* ===== FLOATING INTERACTION PROMPT (in-world "what do I press here") =====
+   The pill already said WHAT the thing does; the chip in front of it says what to press.
+   Handheld: a miniature of the real control button (same pixel SVG, same bezel colour, so
+   the eye matches it to the thumb without reading). PC: the keycap for that binding. */
+#oreprompt{display:none;align-items:center;gap:4px;}
+#oreprompt .ip-btn{flex:none;display:inline-block;width:14px;height:14px;border-radius:50%;
+  box-shadow:0 0 0 1px rgba(0,0,0,.6),0 1px 2px rgba(0,0,0,.55),inset 0 1px 1px rgba(255,255,255,.25);}
+#oreprompt .ip-btn svg{display:block;width:100%;height:100%;padding:15%;box-sizing:border-box;}
+#oreprompt .ip-key{flex:none;display:inline-block;min-width:9px;padding:0 3px;border-radius:2px;
+  font:700 8px 'Courier New',monospace;letter-spacing:1px;line-height:12px;color:#eafcff;
+  background:linear-gradient(180deg,#20475c,#0d2130);border:1px solid #46a0c0;text-shadow:0 1px 2px #000;}
 #sfxwipe{position:absolute;inset:0;z-index:44;pointer-events:none;}
 #sfxwipe canvas{position:absolute;inset:0;width:100%;height:100%;image-rendering:pixelated;image-rendering:crisp-edges;}
 #bootfx{position:absolute;inset:0;z-index:40;display:none;pointer-events:none;}
@@ -1142,6 +1183,7 @@
     .mk{font-size:21px;}
     .mhub{width:26px;height:26px;}
     #menu-controls{gap:14px;}
+    #confirmbtn{width:72px;height:72px;font-size:26px;}
   }
   @media (orientation:landscape) and (max-height:600px){
     /* mining: hide the top header bar — its info (resource / sens / vents) plus the oxygen & HP bars are redrawn as a dashboard in the empty space left of the grid, so nothing covers the gauges */
@@ -1714,10 +1756,9 @@ const SUB_FWD=64;                                   // px/s the current carries 
 const SUB_BOOST_MUL=2.25;                           // forward multiplier while the coil fires
 const SUB_LIFT=210, SUB_VDRAG=0.90, SUB_VMAX=78;    // plane authority / water drag / terminal climb
 const SUB_BOOST_MAX=2.6;                            // seconds of continuous boost the coil holds
-const SUB_BOOST_REGEN=0.5, SUB_REGEN_STEP=0.18;     // coil-seconds recovered per second; +0.18 per fitting
-const SUB_BOOST_RESET=0.55;                         // a dry coil stays dead until rebuilt to this fraction
+const SUB_BOOST_REGEN=0.22, SUB_REGEN_STEP=0.09;    // coil-seconds recovered per second; +0.09 per fitting — a full burn costs a long wait back
 const SUB_TORP_SPD=170, SUB_TORP_STEP=22, SUB_TORP_DMG=2;
-const SUB_RELOAD=0.85, SUB_RELOAD_MUL=0.87, SUB_RELOAD_MIN=0.28;
+const SUB_RELOAD=1.8, SUB_RELOAD_MUL=0.87, SUB_RELOAD_MIN=0.84;
 const SUB_SPLASH_R=14, SUB_SPLASH_STEP=7, SUB_SPLASH_DMG=1, SUB_SPLASH_DSTEP=0.25;
 const SUB_MINE_R=18, SUB_MINE_RSTEP=6, SUB_MINE_DMG=2, SUB_MINE_DSTEP=0.5;
 const SUB_MINE_BASE=1, SUB_MINE_STEP=1;             // the bay is fitted from the first run — with ONE charge
@@ -3411,13 +3452,13 @@ function missionSim(dt){
     if(s.t>=s.life){sporeFx.splice(i,1);continue;}
     if(s.t>0.28&&Math.hypot(cx-s.x,cy-s.y)<s.r)hurt(1,s.x,s.y);
   }
-  // fused gas-sac detonations left behind when the flamethrower minigame ends. A WIN plants a slow
-  // 2s fuse (flashing warning) so the diver can swim clear; a BUST rides an almost-instant fuse so the
-  // gas erupts right in the diver's face. Either way it finally vents a damaging cloud (a big sporeFx).
+  // fused gas-sac detonations left behind when the flamethrower minigame ends in a BUST — a clean
+  // win never reaches here. Rides an almost-instant fuse so the gas erupts right in the diver's
+  // face, then vents a damaging cloud (a big sporeFx).
   for(let i=podBlasts.length-1;i>=0;i--){const b=podBlasts[i];b.t+=dt;
-    shake=Math.max(shake,b.win?1.2:2.0);
+    shake=Math.max(shake,2.0);
     const fl=Math.abs(Math.sin(b.t*(7+ (b.t/b.fuse)*24)));            // flash quickens toward the blast
-    if((state.tick%3)===0)burst(b.x,b.y,1,50,0.3,b.win?'#c2ff5f':'#ff6a3c');
+    if((state.tick%3)===0)burst(b.x,b.y,1,50,0.3,'#ff6a3c');
     if(fl>0.85&&(state.tick%2)===0)particles.push({type:'bubble',x:b.x-4+Math.random()*8,y:b.y-8,vx:(Math.random()-.5)*20,vy:-34-Math.random()*24,life:0.5,max:0.5,size:1.5,col:'#9fd8ef'});
     if(b.t>=b.fuse){
       burst(b.x,b.y,26,180,0.7,'#c2ff5f');burst(b.x,b.y,14,120,0.5,'#ffe27a');
@@ -3506,7 +3547,7 @@ function ensureDepth(){const pt=tierAtY(player.y); while(generatedTiers<=pt+1&&g
 const state={mode:'title', loseReason:'', tick:0};
 const input={up:false,down:false,left:false,right:false,action:false,joy:false,jx:0,jy:0};
 let pendingCity=null;          // the transit choice waiting at the far end of the pipe run
-let subBoostHeld=false;        // the ONE held control in the game — see the transversal section
+let subBoostTrig=false;        // emergency-thrust trigger: a press, not a hold — see the transversal section
 const TUT={active:false,joyLive:false};
 let actionEdge=false, queueCraft=false, queueStart=false, mineEdge=false, clipEdge=false;
 let MW, MH, map, pctx;
@@ -4032,7 +4073,7 @@ function mechPowerDown(){const m=mech;
     burst(m.x,m.y,14,120,0.5,'#ffd23c');showMsg('cell spent — the spare slams in');return;}
   m.hookAnchor=null;m.hanging=false;
   if(m.piloted){m.piloted=false;player.x=m.x-4;player.y=m.y-4;player.vx=0;player.vy=-0.4;
-    player.invuln=Math.max(player.invuln,40);}
+    player.invuln=Math.max(player.invuln,40);updateActionLabels();}
   sfx.lose();shake=Math.max(shake,6);
   showMsg('battery dead — the MULE seizes where it stands. bring it a fresh cell');}
 // X near the mech: slot a carried cell into a dead frame, or climb in
@@ -4046,6 +4087,7 @@ function mechInteract(){const m=mech;
   if(player.attached){player.attached=false;const cb=player.attachedBase||curBase();
     if(cb){cb.endX=player.x+4;cb.endY=player.y+4;}player.attachedBase=null;}
   player.x=m.x-4;player.y=m.y-4;player.vx=0;player.vy=0;player.rooted=0;
+  updateActionLabels();
   sfx.start();showMsg('piloting the MULE — F drill · SPACE hook · hold ↑ boost · X exit · sealed: no O₂ drain');}
 // dormant frame keeps honest physics: a mech that dies mid-air falls, lands, and stays put
 function updateMechIdle(dt){const m=mech;
@@ -4069,6 +4111,7 @@ function mechCallTo(b){const m=mech;if(!m||!b)return;
   for(const s of spots){const xx=b.x+s[0],yy=b.y+s[1];
     if(!mechCollAt(xx,yy)){px0=xx;py0=yy;break;}}
   m.x=px0;m.y=py0;m.vx=0;m.vy=0;m.off=false;m.piloted=false;m.hookAnchor=null;m.hanging=false;
+  updateActionLabels();
   burst(m.x,m.y,22,150,0.7,'#7fe6ff');bubbleBurst(m.x,m.y-4,8,24,-24,14,1.1,2);sfx.build();
   showMsg(m.battery>0?'the MULE stomps in — battery at '+Math.round(100*m.battery/mechBatMax())+'%'
                      :'the MULE is hauled in — dead, its bay waiting for a cell');}
@@ -4160,6 +4203,7 @@ function updateMechPiloted(dt){const m=mech,p=player;
   if(clipEdge){clipEdge=false;
     m.piloted=false;m.hookAnchor=null;m.hanging=false;
     p.x=m.x-4;p.y=m.y-4;p.vx=0;p.vy=0;p.invuln=Math.max(p.invuln,30);
+    updateActionLabels();
     sfx.back();showMsg('stepped out — the MULE holds position');return;}
   // --- world interactions the diver path normally handles ---
   const _tb=bases[tAt(p.y)];
@@ -4351,15 +4395,14 @@ function bindBtn(id,fn){const el=document.getElementById(id);if(!el)return;
   el.addEventListener('pointerup',up);el.addEventListener('pointerleave',up);el.addEventListener('pointercancel',up);}
 bindBtn('minebtn',()=>{if(state.mode==='craft'||state.mode==='inv')menuConfirm();else if(state.mode==='sub')subFire();else if(state.mode==='play'||state.mode==='mine'||state.mode==='crank')mineEdge=true;else if(state.mode==='objectives')closeObjectives();});
 bindBtn('clipbtn',()=>{if(state.mode==='play')clipEdge=true;});
-bindBtn('ropebtn',()=>{if(state.mode==='sub'){subDropMine(-1);return;}queueCraft=true;});
-// BOOST is the one held control in the game: the clip button becomes the coil trigger inside
-// the transversal, so it needs the press/release pair bindBtn's edge-only callback can't give.
+bindBtn('ropebtn',()=>{if(state.mode==='sub'){subDropMine(-1);return;}
+  if(state.mode==='play'&&mech&&mech.piloted){actionEdge=true;return;}   // piloted MULE: this is the hook trigger
+  queueCraft=true;});
+// BOOST is an emergency-thrust trigger, not a held control: one press lights the whole
+// coil, which then burns to empty on its own. The clip button just needs the press edge.
 (function(){const cb=document.getElementById('clipbtn');if(!cb)return;
-  const dn=e=>{if(state.mode==='sub'){e.preventDefault();subBoostHeld=true;}};
-  const up=e=>{if(subBoostHeld){if(e)e.preventDefault();subBoostHeld=false;}};
+  const dn=e=>{if(state.mode==='sub'){e.preventDefault();subBoostTrig=true;}};
   cb.addEventListener('pointerdown',dn);
-  cb.addEventListener('pointerup',up);cb.addEventListener('pointerleave',up);cb.addEventListener('pointercancel',up);
-  window.addEventListener('blur',()=>{subBoostHeld=false;});
 })();
 // menu/minigame cluster: confirm activates (dig in the mine), back & the red EXIT pill both bail out
 function menuConfirmAct(){if(state.mode==='craft'||state.mode==='inv')menuConfirm();else if(state.mode==='mine')mineDigSel();else if(state.mode==='crank')crankTurn();else if(state.mode==='hack')hackConfirm();}
@@ -4424,7 +4467,7 @@ window.addEventListener('keydown',e=>{audioInit();
   if(state.mode==='sub'){
     if(keymap[e.code]){input[keymap[e.code]]=true;e.preventDefault();return;}
     if(!e.repeat&&(e.code==='Space'||e.code==='Enter'||e.code==='KeyF')){subFire();e.preventDefault();return;}
-    if(e.code==='KeyX'||e.code==='ShiftLeft'||e.code==='ShiftRight'){subBoostHeld=true;e.preventDefault();return;}
+    if(!e.repeat&&(e.code==='KeyX'||e.code==='ShiftLeft'||e.code==='ShiftRight')){subBoostTrig=true;e.preventDefault();return;}
     if(!e.repeat&&e.code==='KeyQ'){subDropMine(-1);e.preventDefault();return;}
     if(!e.repeat&&(e.code==='KeyE'||e.code==='KeyC')){subDropMine(1);e.preventDefault();return;}
     if(e.code==='Escape'){pauseGame();e.preventDefault();return;}
@@ -4462,7 +4505,6 @@ window.addEventListener('keydown',e=>{audioInit();
   if(e.code==='Escape'){if(state.mode==='play')pauseGame();else if(state.mode==='pause')resumeGame();else if(state.mode==='mine'||state.mode==='craft'||state.mode==='inv'||state.mode==='crank'||state.mode==='flame')menuBack();e.preventDefault();}
 });
 window.addEventListener('keyup',e=>{if(keymap[e.code]){input[keymap[e.code]]=false;e.preventDefault();}
-  if(e.code==='KeyX'||e.code==='ShiftLeft'||e.code==='ShiftRight')subBoostHeld=false;
   if(e.code==='Space'||e.code==='Enter')input.action=false;});
 
 // ============ INVENTORY + CRAFT ============
@@ -5091,10 +5133,24 @@ function loseHTML(){const r=state.loseReason;const T={air:['OUT OF AIR','your ta
   <div class="stat" style="color:#7fd0ee;font-size:13px;margin-top:8px">you dived <b style="color:var(--tox)">${state.maxDepth||0}m</b> — ${tierTop.length} levels deep · city ${CITY} (${CITY_NAME})</div>
   <div class="prompt">press mine / space to try again</div></div>`;}
 const ABORT_SVG='<svg class="bico" viewBox="0 0 16 16" width="100%" height="100%" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg"><g fill="currentColor"><rect x="7" y="0" width="2" height="1"/><rect x="7" y="1" width="2" height="1"/><rect x="6" y="2" width="4" height="1"/><rect x="6" y="3" width="4" height="1"/><rect x="5" y="4" width="6" height="1"/><rect x="5" y="5" width="6" height="1"/><rect x="4" y="6" width="8" height="1"/><rect x="4" y="7" width="8" height="1"/><rect x="3" y="8" width="10" height="1"/><rect x="3" y="9" width="10" height="1"/><rect x="2" y="10" width="12" height="1"/><rect x="2" y="11" width="12" height="1"/><rect x="1" y="12" width="14" height="1"/><rect x="1" y="13" width="14" height="1"/><rect x="0" y="14" width="16" height="1"/></g><g fill="#1a0a02"><rect x="7" y="5" width="2" height="5"/><rect x="7" y="11" width="2" height="2"/></g></svg>';
+// the four right-hand action buttons mean different things depending on what's being
+// piloted: on foot they're mine/clip/craft/pack, in the sub they're torpedo/boost/mine
+// bay, in the MULE they're drill/exit/hook (pack stays inventory). Called on every mode
+// change and on entering/leaving the mech, since piloting toggles without a mode change.
+function updateActionLabels(){
+  const lbls=document.querySelectorAll('#right-controls .ab .lbl');
+  if(lbls.length!==4)return;
+  if(!lbls[0].dataset.def)for(const L of lbls)L.dataset.def=L.textContent;
+  const piloted=state.mode==='play'&&mech&&mech.piloted;
+  const sub=['torpedo · F','boost · X','mine ▲ · Q','mine ▼ · E'];
+  const mechL=['drill · F','exit · X','hook · SPACE','pack · I'];
+  const set=(state.mode==='sub')?sub:(piloted?mechL:null);
+  for(let i=0;i<4;i++)lbls[i].textContent=set?set[i]:lbls[i].dataset.def;
+}
 function setMode(m){state.mode=m;
   if(m!=='play'&&m!=='mine'&&m!=='flame'&&m!=='sub'){mineEdge=false;input.joy=false;input.jx=0;input.jy=0;}if(m!=='play')clipEdge=false;
   if(m!=='play'&&m!=='flame'&&m!=='sub'){input.joy=false;input.jx=0;input.jy=0;const dp=document.getElementById('dpad');if(dp)dp.classList.remove('active');}
-  if(m!=='sub'){subBoostHeld=false;input.up=false;input.down=false;}
+  if(m!=='sub'){subBoostTrig=false;input.up=false;input.down=false;}
   const dpad=document.getElementById('dpad'),mpad=document.getElementById('minepad');
   const padMenu=(m==='mine'||m==='craft'||m==='inv'||m==='hack');   // discrete arrow pad drives mining, menus AND the ICE ring
   const cluster=(padMenu||m==='crank'||m==='flame');    // uses the confirm/back cluster
@@ -5113,12 +5169,9 @@ function setMode(m){state.mode=m;
   const bl=document.getElementById('backLbl');if(bl){bl.textContent=canvasGame?'ABORT':'back';bl.classList.toggle('abortlbl',canvasGame);}
   const bb=document.getElementById('backbtn');if(bb){if(canvasGame){if(!bb.dataset.def)bb.dataset.def=bb.innerHTML;bb.innerHTML=ABORT_SVG;bb.classList.add('abortbtn');}else{if(bb.dataset.def)bb.innerHTML=bb.dataset.def;bb.classList.remove('abortbtn');}}
   const crt=document.getElementById('crt');if(crt)crt.style.display=(m==='play'||canvasGame||m==='sub')?'none':'';   // CRT on menu screens only
-  // the transversal keeps the four play buttons but they mean different things in a boat
-  {const lbls=document.querySelectorAll('#right-controls .ab .lbl');
-   if(lbls.length===4){
-     if(!lbls[0].dataset.def)for(const L of lbls)L.dataset.def=L.textContent;
-     const sub=['torpedo · F','boost · X','mine ▲ · Q','mine ▼ · E'];
-     for(let i=0;i<4;i++)lbls[i].textContent=(m==='sub')?sub[i]:lbls[i].dataset.def;}}
+  // the transversal / the piloted MULE keep the four play buttons but they mean
+  // different things in a boat or a mech — see updateActionLabels()
+  updateActionLabels();
   overlayEl.classList.toggle('hidden',!(m==='title'||m==='win'||m==='lose'||m==='pause'||m==='objectives'));
   mineEl.classList.toggle('hidden',m!=='mine');
   if(m!=='craft')craftEl.classList.add('hidden');
@@ -5540,9 +5593,31 @@ const readout=document.createElement('div');
 readout.style.cssText='position:absolute;top:8px;right:10px;z-index:3;text-align:right;pointer-events:none;font-family:"Courier New",monospace;line-height:1.25;';
 document.getElementById('stage').appendChild(readout);
 const orePrompt=document.createElement('div');
+orePrompt.id='oreprompt';
 orePrompt.textContent='MINE';
 orePrompt.style.cssText='position:absolute;z-index:4;pointer-events:none;font-family:"Courier New",monospace;font-size:9px;letter-spacing:2px;font-weight:bold;color:#ffe27a;background:rgba(9,17,26,.85);border:1px solid #6a5a1f;border-radius:3px;padding:1px 5px;transform:translate(-50%,-100%);text-shadow:0 0 5px rgba(255,210,60,.5);display:none;white-space:nowrap;';
 document.getElementById('stage').appendChild(orePrompt);
+/* ---- what to press, drawn next to the verb -------------------------------------
+ * Three of the four thumb buttons drive every world interaction: MINE works ore, fungus
+ * and every mission machine; CLIP boards the MULE, slots its cell and powers a dead base;
+ * CRAFT opens a live base. The chip is a clone of that button's own pixel SVG in its own
+ * bezel colour, so the prompt and the thing under your thumb are the same picture. In PC
+ * mode there is no thumb button on screen, so the binding's keycap (or pad face) shows. */
+const IP_SRC={mine:'minebtn',clip:'clipbtn',craft:'ropebtn'};
+const IP_KEY={mine:'F',clip:'X',craft:'E'};
+const IP_PAD={mine:'X',clip:'Y',craft:'RB'};
+const _ipCache={};
+function ipChip(kind){
+  if(_ipCache[kind]!==undefined)return _ipCache[kind];
+  const src=document.getElementById(IP_SRC[kind]);let inner='';
+  if(src){const svg=src.querySelector('svg');if(svg){const cl=svg.cloneNode(true);cl.removeAttribute('class');inner=cl.outerHTML;}}
+  return (_ipCache[kind]='<span class="ip-btn tb-'+kind+'">'+inner+'</span>');
+}
+function ipMark(kind){
+  if(!kind)return '';
+  if(pcMode)return '<span class="ip-key">'+((pcSrc==='pad'?IP_PAD:IP_KEY)[kind]||'')+'</span>';
+  return ipChip(kind);
+}
 function gl(x,y,r,col,a){glows.push({x:Math.round(x-RCX),y:Math.round(y-RCY),r,col,a});}
 
 function render(){
@@ -5613,19 +5688,28 @@ function render(){
   radial(ctx,pgx,pgy,26,'rgba(120,175,235,0.10)','rgba(120,175,235,0)');
   ctx.globalCompositeOperation='source-over';
 
-  // floating context prompt (mech, then base dock, then ore)
-  let pt=null,ptx=0,pty=0;
-  if(nearMech){pt=mech.battery<=0?(((player.mechBattery||0)>0)?'INSERT CELL':'DEAD MECH'):'PILOT';ptx=mech.x;pty=mech.y-16;}
-  else if(nearBase){pt=nearBase.active?'CRAFT':'ACTIVATE';ptx=nearBase.x;pty=nearBase.y-22;}
-  else if(nearMission){pt=missionVerb(nearMission);ptx=nearMission.x;pty=nearMission.y-26;}
-  else if(nearOre){pt=(mech&&mech.piloted)?'DRILL':'MINE';ptx=nearOre.x*TS+8;pty=nearOre.y*TS;}
-  else if(nearFungus){pt='MINE';ptx=nearFungus.x;pty=nearFungus.y-10;}
+  // floating context prompt (mech, then base dock, then mission machine, then ore).
+  // `pk` is the control that fires it — see ipMark(); null means there is nothing to press
+  // yet (a dead MULE with no cell in the pack, a valve mid-purge you are meant to back off).
+  let pt=null,pk=null,ptx=0,pty=0;
+  if(nearMech){
+    if(mech.battery<=0){
+      // a spare cell in the pack: CLIP slots it. Nothing to slot: the prompt is a diagnosis, not an action.
+      if((player.mechBattery||0)>0){pt='INSERT CELL';pk='clip';} else pt='DEAD MECH';
+    } else {pt='PILOT';pk='clip';}
+    ptx=mech.x;pty=mech.y-16;}
+  else if(nearBase){pt=nearBase.active?'CRAFT':'ACTIVATE';pk=nearBase.active?'craft':'clip';ptx=nearBase.x;pty=nearBase.y-22;}
+  else if(nearMission){pt=missionVerb(nearMission);pk=(pt==='BACK OFF')?null:'mine';ptx=nearMission.x;pty=nearMission.y-26;}
+  else if(nearOre){pt=(mech&&mech.piloted)?'DRILL':'MINE';pk='mine';ptx=nearOre.x*TS+8;pty=nearOre.y*TS;}
+  else if(nearFungus){pt='MINE';pk='mine';ptx=nearFungus.x;pty=nearFungus.y-10;}
   if(state.mode==='play'&&pt){
     const cw=canvas.clientWidth,ch=canvas.clientHeight;
     const sx=(ptx-camera.x)/VW*cw+canvas.offsetLeft;
     const sy=(pty-camera.y)/VH*ch+canvas.offsetTop;
-    orePrompt.textContent=pt;
-    orePrompt.style.left=Math.round(sx)+'px';orePrompt.style.top=Math.round(sy)+'px';orePrompt.style.display='block';
+    // rebuilt only when the verb, the control or the input source actually changes — this runs every frame
+    const sig=pt+'|'+(pk||'')+'|'+(pcMode?pcSrc:'touch');
+    if(orePrompt._sig!==sig){orePrompt._sig=sig;orePrompt.innerHTML=ipMark(pk)+'<span class="ip-lbl">'+pt+'</span>';}
+    orePrompt.style.left=Math.round(sx)+'px';orePrompt.style.top=Math.round(sy)+'px';orePrompt.style.display='flex';
   }else orePrompt.style.display='none';
   if(player.tint>0&&player.tintCol){ctx.fillStyle='rgba('+player.tintCol+','+(player.tint*0.22).toFixed(3)+')';ctx.fillRect(0,0,VW,VH);}
   drawHUD(tier);
@@ -6363,7 +6447,14 @@ function drawMinimap(tier){
 }
 
 // ============ LOOP ============
-function resize(){const stage=document.getElementById('stage'),w=stage.clientWidth,h=stage.clientHeight;
+// #stage's decorative "plastic frame" bezel (see #stage::before in the GUNMETAL/NEON-NOIR
+// skin passes) is an absolutely-positioned overlay painted directly on top of the canvas,
+// not a real border the layout reserves space for — so without this the frame's own border
+// width sits right over the outer ring of the canvas and can eclipse HUD elements drawn
+// close to an edge (e.g. the sub's hull pips). Shrink the rendered canvas by that much on
+// every side so the frame always has bare glass under it, never live HUD.
+const STAGE_FRAME_PAD=8;
+function resize(){const stage=document.getElementById('stage'),w=stage.clientWidth-STAGE_FRAME_PAD*2,h=stage.clientHeight-STAGE_FRAME_PAD*2;
   if(!w||!h)return;                                   // no layout yet (e.g. headless) — keep defaults
   const gba=window.matchMedia('(orientation:landscape) and (max-height:600px)').matches;
   if(document.body.classList.contains('pc-mode')){
@@ -6643,7 +6734,8 @@ let crankObj=null;
 // three moving bands on the track: SAFE (green) window + HAZARD (red) window each oscillate; the
 // marker sweeps. Safe zone = marker inside green AND outside red (red wins on overlap).
 const crankS={need:7,turns:0,p:0,dir:1,speed:0.5,bt:0,gSpd:0.85,rSpd:1.25,gAmp:0.26,rAmp:0.30,gH:0.12,rH:0.09,rPhase:1.4,
-  psiMax:280,actY:0,rotor:0,spin:0,streak:0,flash:0,hitFlash:0,doneT:0,burnT:0,fx:[],hint:0};
+  psiMax:280,actY:0,rotor:0,spin:0,streak:0,flash:0,hitFlash:0,doneT:0,burnT:0,fx:[],hint:0,
+  time:0,limit:16,bust:false};
 function crankNeed(tier){return 6+Math.min(tier||0,3);}   // a couple more turns the deeper the layer
 function crankBands(){                                     // normalized [0,1] edges of the two moving windows
   const gc=0.5+Math.sin(crankS.bt*crankS.gSpd)*crankS.gAmp;
@@ -6666,14 +6758,25 @@ function openCrank(o){
   crankS.rPhase=1.3+tier*0.4;crankS.psiMax=240+tier*70;
   crankS.rotor=o.ph||0;crankS.spin=0;crankS.streak=0;
   crankS.flash=0;crankS.hitFlash=0;crankS.doneT=0;crankS.burnT=0;crankS.hint=3.0;crankS.fx.length=0;
+  crankS.time=0;crankS.limit=16+tier*1.5;crankS.bust=false;
   mineEdge=false;actionEdge=false;
   setMode('crank');sfx.start();
+  if(tutorialsOn&&!crankIntroSeen){crankIntroSeen=true;startCrankIntro();}
+}
+// timer runs out before the valve is fully turned: it blows in the diver's face — same shape as the
+// biohazard sac's bust, and same rule: it still counts the step complete, the failure just costs a heart
+function crankBust(){
+  if(crankS.doneT>0)return;
+  crankS.bust=true;crankS.doneT=1.0;crankS.spin+=10;crankS.flash=0.5;crankS.burnT=0.8;
+  crankS.streak=0;shake=Math.max(shake,8);sfx.boom();hurt(1);
+  const ay=crankS.actY||Math.round(VH*0.4),cx=Math.round(VW/2);
+  for(let i=0;i<14;i++)crankSpark(cx+(Math.random()-.5)*30,ay,'#ff6a3c',110);
 }
 function closeCrank(){if(!crankObj){if(state.mode==='crank')setMode('play');return;}
   const o=crankObj;o.crankTurns=crankS.turns;o.prog=Math.round(crankS.turns/crankS.need*100);   // keep the world sprite's gauge in step
   crankObj=null;setMode('play');sfx.back();
   if(crankS.turns>0)showMsg('valve left part-open — the pressure is still up');}
-function crankTurn(){const o=crankObj;if(!o||crankS.doneT>0)return;
+function crankTurn(){const o=crankObj;if(!o||crankS.doneT>0||deckActive)return;
   const z=crankZone(),ay=crankS.actY||Math.round(VH*0.4),cx=Math.round(VW/2);
   if(z==='turn'){                       // clean actuate: servo fires, a pressure pulse bleeds off
     crankS.turns++;crankS.streak++;crankS.spin+=6.4;crankS.hitFlash=0.30;sfx.mine();
@@ -6681,8 +6784,8 @@ function crankTurn(){const o=crankObj;if(!o||crankS.doneT>0)return;
     o.crankTurns=crankS.turns;o.prog=Math.round(crankS.turns/crankS.need*100);
     crankS.gSpd+=0.02;crankS.rSpd+=0.03;   // each pulse tightens the timing a touch
     if(crankS.turns>=crankS.need){crankS.doneT=1.2;crankS.spin+=8;sfx.mix();sfx.build();}
-  } else if(z==='vent'){                 // fired into the hazard window: scalding blowout — burn air, servo kicks back
-    player.oxygen=Math.max(0,player.oxygen-player.maxOxygen*0.15);
+  } else if(z==='vent'){                 // fired into the hazard window: scalding blowout — servo kicks back
+    hurt(1);
     crankS.spin-=3.6;crankS.streak=0;crankS.flash=0.42;crankS.burnT=0.6;shake=Math.max(shake,7);sfx.zap();
     for(let i=0;i<12;i++)crankSpark(cx+(Math.random()-.5)*28,ay,'#ff3b6b',96);
   } else {                              // fired on a closed valve — no effect, just a denial blip
@@ -6691,13 +6794,18 @@ function crankTurn(){const o=crankObj;if(!o||crankS.doneT>0)return;
 }
 function crankInput(){
   const o=crankObj;if(!o){if(state.mode==='crank')setMode('play');return;}
+  if(deckActive)return;                       // the valve primer is up — nothing ticks behind it
   // AIR IS FROZEN for the duration of the minigame — no passive drain, no drowning while you work.
   // A blown vent still costs air (see crankFire): that's the minigame's own risk, not passive drain.
   if(player.attached)player.oxygen=player.maxOxygen;
   player.drown=0;
   if(crankS.hint>0)crankS.hint-=1/60;
   if(crankS.doneT>0){crankS.doneT-=1/60;crankS.rotor+=crankS.spin/60;crankS.spin*=0.9;
-    if(crankS.doneT<=0){crankObj=null;o.crankTurns=0;completeMissionObj(o);setMode('play');}return;}
+    if(crankS.doneT<=0){const bust=crankS.bust;crankObj=null;o.crankTurns=0;completeMissionObj(o);setMode('play');
+      if(bust)showMsg('TIMER OUT — the valve blows in your face!');}
+    return;}
+  crankS.time+=1/60;
+  if(crankS.time>=crankS.limit){crankBust();return;}
   // sweep the marker (ping-pong) + slide the two windows; marker speeds up a touch as pressure bleeds
   const sp=Math.min(1.1,crankS.speed+crankS.turns*0.04);
   crankS.p+=crankS.dir*sp/60;
@@ -6754,6 +6862,11 @@ function renderCrank(){
   px(ctx,8,hbY,1,4,'#39c6ff');px(ctx,8,hbY,4,1,'#39c6ff');px(ctx,VW-9,hbY,1,4,'#39c6ff');px(ctx,VW-12,hbY,4,1,'#39c6ff');   // corner brackets
   pxText(ctx,'VALVE CTRL',14,hbY+3,'#7fe0ff');
   {const lvX=VW-14;pxText(ctx,'LIVE',lvX-16,hbY+3,'#2f9a6a');if((t>>4)&1)px(ctx,lvX,hbY+3,4,4,'#3dff9a');}
+  // countdown to a blowout — mirrors the biohazard sac's purge window
+  {const left=Math.max(0,crankS.limit-crankS.time),cfrac=clamp(left/crankS.limit,0,1),
+     tcol=cfrac>0.5?'#3dff9a':cfrac>0.25?'#ffcf3a':'#ff4d5e',ts=left.toFixed(1)+'s';
+   pxText(ctx,ts,Math.round(cx-pxTextW(ts)/2),hbY+3,tcol);
+   if(cfrac<0.25&&(t>>2&1))px(ctx,8,hbY,VW-16,11,'rgba(255,77,94,0.14)');}
   // ==== ENGINEER DECK: sector gas-grid schematic ====
   const barY=VH-82;                                   // timing track top — everything below anchored here
   const panX=8,panT=hbY+15,panW=VW-16,panB=barY-8,panH=Math.max(46,panB-panT);
@@ -6823,8 +6936,10 @@ function renderCrank(){
   else pxTextC('FIRE ON GREEN',cx,VH-13,'#3a5a6a');
   // ==== BURN / RELEASE OVERLAYS ====
   if(crankS.burnT>0){ctx.fillStyle='rgba(255,60,90,'+(0.22*clamp(crankS.burnT/0.6,0,1)).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);}
-  if(crankS.doneT>0){const k=clamp(crankS.doneT/1.2,0,1);ctx.fillStyle='rgba(61,255,154,'+(0.22*k).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);
-    glowAt(cx,pipeY,40,'61,255,154',0.4*k);pxTextGhost(ctx,'RELEASED',cx,pipeY,3,'#0e2a1c',1);pxTextXL(ctx,'RELEASED',cx,pipeY,3,'#9dffc0',1);}
+  if(crankS.doneT>0){const busting=crankS.bust,k=clamp(crankS.doneT/(busting?1.0:1.2),0,1),
+    col=busting?'255,106,60':'61,255,154',txt=busting?'BLOWOUT':'RELEASED';
+    ctx.fillStyle='rgba('+col+','+(0.22*k).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);
+    glowAt(cx,pipeY,40,col,0.4*k);pxTextGhost(ctx,txt,cx,pipeY,3,busting?'#2a1006':'#0e2a1c',1);pxTextXL(ctx,txt,cx,pipeY,3,busting?'#ffb27a':'#9dffc0',1);}
   if(shake>0)shake-=0.6;
 }
 canvas.addEventListener('pointerdown',e=>{if(state.mode!=='crank')return;e.preventDefault();audioInit();crankTurn();});
@@ -6845,7 +6960,8 @@ const HACK_ROWS=3, HACK_COLS=6, HACK_TOTAL=3;
 const hackS={phase:'build',tier:0,cx:0,cy:0,R:60,
   ptr:0,need:3,target:[],targetSet:[],collected:[],shineIdx:0,
   grid:[],gcur:0,targetCell:0,
-  shapesDone:0,formT:0,doneT:0,flash:0,hitFlash:0,wrongT:0,hint:0,pulse:0,banner:'',bannerT:0,fx:[]};
+  shapesDone:0,formT:0,doneT:0,flash:0,hitFlash:0,wrongT:0,hint:0,pulse:0,banner:'',bannerT:0,fx:[],
+  time:0,limit:28,bust:false};
 // geometry — a flat-topped regular octagon; side k runs from vertex k to vertex k+1
 function hackVert(cx,cy,r,k){const a=Math.PI/8+k*(Math.PI/4);return [cx+Math.cos(a)*r,cy+Math.sin(a)*r];}
 function hackSideMid(cx,cy,r,k){const a=hackVert(cx,cy,r,k),b=hackVert(cx,cy,r,(k+1)%8);return [(a[0]+b[0])/2,(a[1]+b[1])/2];}
@@ -6879,9 +6995,19 @@ function openHack(o){
   S.tier=tier;S.cx=Math.round(VW/2);S.cy=Math.round(VH*0.42);
   S.R=Math.round(Math.min(VW*0.30,VH*0.17,64));
   S.shapesDone=0;S.doneT=0;S.formT=0;S.flash=0;S.hitFlash=0;S.wrongT=0;S.hint=3.5;S.pulse=0;S.banner='';S.bannerT=0;S.fx.length=0;
+  S.time=0;S.limit=28+tier*2;S.bust=false;
   mineEdge=false;actionEdge=false;input.action=false;
   hackStartBuild();
   setMode('hack');sfx.start();
+  if(tutorialsOn&&!hackIntroSeen){hackIntroSeen=true;startHackIntro();}
+}
+// timer runs out before all layers crack: the console arcs in the diver's face — same shape as the
+// crank and the biohazard sac, and same rule: it still counts the node cracked, the failure just costs a heart
+function hackBust(){const S=hackS;
+  if(S.doneT>0)return;
+  S.bust=true;S.phase='bust';S.doneT=1.0;S.flash=0.5;
+  shake=Math.max(shake,8);sfx.boom();hurt(1);
+  hackSpark(S.cx,S.cy,'#ff6a3c',110,16);
 }
 function closeHack(){if(!hackObj){if(state.mode==='hack')setMode('play');return;}
   hackObj=null;setMode('play');sfx.back();
@@ -6905,7 +7031,7 @@ function hackConfirm(){const S=hackS,o=hackObj;if(!o||S.doneT>0||S.formT>0)retur
         const c=hackSideMid(S.cx,S.cy,S.R*0.42,want);hackSpark(c[0],c[1],'#9dffe0',70,10);}
     } else {                                             // wrong side: the whole build scrambles
       S.collected=[];S.shineIdx=0;_shuffle(S.target);S.wrongT=0.5;S.flash=0.4;shake=Math.max(shake,5);sfx.zap();
-      player.oxygen=Math.max(0,player.oxygen-player.maxOxygen*0.05);
+      hurt(1);
       hackSpark(m[0],m[1],'#ff3b6b',80,10);hackBanner('SEQUENCE RESET',1.0);
     }
   } else if(S.phase==='input'){
@@ -6915,12 +7041,13 @@ function hackConfirm(){const S=hackS,o=hackObj;if(!o||S.doneT>0||S.formT>0)retur
       else{hackBanner('LAYER CRACKED  '+S.shapesDone+'/'+HACK_TOTAL,1.0);hackStartBuild();}
     } else {                                             // wrong cell: glyph scrambles, build again
       S.wrongT=0.6;S.flash=0.45;shake=Math.max(shake,6);sfx.zap();
-      player.oxygen=Math.max(0,player.oxygen-player.maxOxygen*0.07);
+      hurt(1);
       hackBanner('WRONG NODE — REBUILD',1.1);hackStartBuild();
     }
   }
 }
 function hackInput(){const S=hackS,o=hackObj;if(!o){if(state.mode==='hack')setMode('play');return;}
+  if(deckActive)return;                       // the ICE primer is up — nothing ticks behind it
   // AIR IS FROZEN for the duration of the minigame — no passive drain, no drowning while you work.
   // A scrambled sequence still costs air (see the wrong-side branch): that's the ICE's own risk.
   if(player.attached)player.oxygen=player.maxOxygen;
@@ -6935,6 +7062,11 @@ function hackInput(){const S=hackS,o=hackObj;if(!o){if(state.mode==='hack')setMo
     s.x+=s.vx/60;s.y+=s.vy/60;s.vx*=0.94;s.vy*=0.96;s.vy+=0.25;}
   if(S.phase==='form'){S.formT-=1/60;if(S.formT<=0)hackBuildGrid(S.targetSet);return;}
   if(S.phase==='done'){S.doneT-=1/60;if(S.doneT<=0){hackObj=null;completeMissionObj(o);setMode('play');}return;}
+  if(S.phase==='bust'){S.doneT-=1/60;
+    if(S.doneT<=0){hackObj=null;completeMissionObj(o);setMode('play');showMsg('TIMER OUT — the console arcs in your face!');}
+    return;}
+  S.time+=1/60;
+  if(S.time>=S.limit){hackBust();return;}
   if(mineEdge||actionEdge){mineEdge=false;actionEdge=false;hackConfirm();}
   if(queueCraft){queueCraft=false;closeHack();}
 }
@@ -6978,6 +7110,11 @@ function renderHack(){
   px(ctx,8,hbY,1,4,'#39c6ff');px(ctx,8,hbY,4,1,'#39c6ff');px(ctx,VW-9,hbY,1,4,'#39c6ff');px(ctx,VW-12,hbY,4,1,'#39c6ff');
   pxText(ctx,S.phase==='input'?'MATCH GLYPH':'ICE BREAK',14,hbY+3,'#7fe0ff');
   {const lvX=VW-14;pxText(ctx,'ICE',lvX-12,hbY+3,'#2f9a6a');if((t>>4)&1)px(ctx,lvX,hbY+3,4,4,'#3dff9a');}
+  // countdown to a blowout — mirrors the crank valve's and the biohazard sac's timers
+  {const left=Math.max(0,S.limit-S.time),cfrac=clamp(left/S.limit,0,1),
+     tcol=cfrac>0.5?'#3dff9a':cfrac>0.25?'#ffcf3a':'#ff4d5e',ts=left.toFixed(1)+'s';
+   pxText(ctx,ts,Math.round(cx-pxTextW(ts)/2),hbY+3,tcol);
+   if(cfrac<0.25&&(t>>2&1))px(ctx,8,hbY,VW-16,11,'rgba(255,77,94,0.14)');}
   // node-break progress pips (3 glyphs to crack)
   {const pw=8,pg=4,tot=HACK_TOTAL,rw=tot*(pw+pg)-pg,px0=Math.round(cx-rw/2),py=hbY+14;
    for(let i=0;i<tot;i++){const on=i<S.shapesDone;px(ctx,px0+i*(pw+pg),py,pw,3,on?'#3dff9a':'#12283a');if(on)px(ctx,px0+i*(pw+pg),py,pw,1,'#9dffcf');}}
@@ -7044,10 +7181,16 @@ function renderHack(){
     hackDrawRing(cx,S.cy,S.R,'#0e2230');hackGlow(cx,S.cy,S.R+10,'61,255,154',0.4*k);
     pxTextGhost(ctx,'GRANTED',cx,S.cy,3,'#0e2a1c',1);pxTextXL(ctx,'GRANTED',cx,S.cy,3,'#9dffc0',1);
     pxTextC('ACCESS',cx,S.cy-24,'#3dff9a');
+  } else if(S.phase==='bust'){
+    const k=clamp(S.doneT/1.0,0,1);
+    hackDrawRing(cx,S.cy,S.R,'#2a1414');hackGlow(cx,S.cy,S.R+16,'255,106,60',0.5*k);
+    pxTextGhost(ctx,'BREACH',cx,S.cy,3,'#2a1006',1);pxTextXL(ctx,'BREACH',cx,S.cy,3,'#ffb27a',1);
+    pxTextC('CONSOLE ARCS BACK',cx,S.cy-24,'#ff6a3c');
   }
   // ==== flashes / banners ====
-  if(S.flash>0){const isW=S.wrongT>0;ctx.fillStyle=(isW?'rgba(255,60,90,':'rgba(127,230,255,')+(0.18*clamp(S.flash/0.45,0,1)).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);}
-  if(S.doneT>0){ctx.fillStyle='rgba(61,255,154,'+(0.2*clamp(S.doneT/1.3,0,1)).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);}
+  if(S.flash>0){const isW=S.wrongT>0||S.phase==='bust';ctx.fillStyle=(isW?'rgba(255,60,90,':'rgba(127,230,255,')+(0.18*clamp(S.flash/0.45,0,1)).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);}
+  if(S.doneT>0){const busting=S.phase==='bust';
+    ctx.fillStyle=(busting?'rgba(255,106,60,':'rgba(61,255,154,')+(0.2*clamp(S.doneT/(busting?1.0:1.3),0,1)).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);}
   if(S.bannerT>0){const a=clamp(S.bannerT/0.5,0,1),bw=S.wrongT>0,col=bw?'#ff6a7f':'#9dffcf';
     ctx.globalAlpha=a;pxTextC(S.banner,cx,hbY+26,col);ctx.globalAlpha=1;}
   if(shake>0)shake-=0.6;
@@ -7066,15 +7209,26 @@ canvas.addEventListener('pointerdown',e=>{if(state.mode!=='hack')return;e.preven
     if(best>=0){S.gcur=best;hackConfirm();}
   } else hackConfirm();
 });
+// touch: drag the reticle straight to wherever a thumb lands on the vat and burn while held —
+// tapping the game screen itself now aims AND fires, instead of needing the joystick plus the
+// confirm button
+(function(){let active=false;
+  const aim=e=>{const B=flameS,r=canvas.getBoundingClientRect(),mx=(e.clientX-r.left)/r.width*VW,my=(e.clientY-r.top)/r.height*VH;
+    B.aimX=clamp(mx,B.bx,B.bx+B.bw);B.aimY=clamp(my,B.by,B.by+B.bh);B.vx=0;B.vy=0;};
+  canvas.addEventListener('pointerdown',e=>{if(state.mode!=='flame')return;e.preventDefault();audioInit();active=true;flameFire=true;aim(e);});
+  canvas.addEventListener('pointermove',e=>{if(state.mode!=='flame'||!active)return;e.preventDefault();aim(e);});
+  const stop=()=>{if(!active)return;active=false;flameFire=false;};
+  canvas.addEventListener('pointerup',stop);canvas.addEventListener('pointercancel',stop);canvas.addEventListener('pointerleave',stop);
+})();
 
 /* ===== BIOLOGICAL GAS-SAC: HIGH-PRECISION FLAMETHROWER MINIGAME =====================================
  * Opening a gas sac drops the diver into a focused, full-canvas console: a pixel cyberpunk metal urn
- * holds 3 glowing green slimes spread across separate pockets. Steer the aim with the STICK (WASD /
+ * holds 3 mutant angler-fish pups curled up in separate pockets. Steer the aim with the STICK (WASD /
  * arrows on desktop) and HOLD FIRE (the confirm button / space) to spit a thin blue high-precision
- * flame at a slime; six pips of sustained burn kill it. Underwater, so the jet trails bubbles. The aim
+ * flame at one; six pips of sustained burn kill it. Underwater, so the jet trails bubbles. The aim
  * carries a little momentum (drag) and a gentle autonomous sway, so you can never fully let go of it.
- * Torch all three before an 8s timer busts. WIN or BUST the sac blows and the step counts — a win just
- * flashes first and hands back a 2s window to swim clear (both handled by podBlasts out in the world). */
+ * Torch all three before an 8s timer busts. A clean WIN burns the sac out with no blowback at all; a
+ * BUST rides an almost-instant fuse (podBlasts, out in the world) so the gas erupts right in the diver's face. */
 let flameObj=null;
 const flameS={slimes:[],cx:110,rimTop:70,baseBot:300,bx:46,by:104,bw:128,bh:150,
   aimX:110,aimY:180,vx:0,vy:0,rx:110,ry:180,swx:0,swy:0,nozX:110,nozY:294,
@@ -7099,6 +7253,7 @@ function openFlame(o){
   mineEdge=false;actionEdge=false;input.action=false;flameFire=false;
   input.jx=0;input.jy=0;input.up=input.down=input.left=input.right=false;
   setMode('flame');sfx.start();
+  if(tutorialsOn&&!flameIntroSeen){flameIntroSeen=true;startFlameIntro();}
 }
 function closeFlame(){                                   // abort — the sac stays live, no progress
   if(!flameObj){if(state.mode==='flame')setMode('play');return;}
@@ -7128,6 +7283,7 @@ function updateFlameFx(){
 }
 function flameInput(){
   const o=flameObj,B=flameS;if(!o){if(state.mode==='flame')setMode('play');return;}
+  if(deckActive){B.firing=false;return;}      // the torch primer is up — nothing ticks behind it
   // AIR IS FROZEN for the duration of the minigame — no passive drain, no drowning while you work.
   // Backdraft/scald hits still cost air (see the burn branches): that's the sac's own risk.
   if(player.attached)player.oxygen=player.maxOxygen;
@@ -7139,9 +7295,9 @@ function flameInput(){
   if(B.doneT>0){B.doneT-=1/60;updateFlameFx();
     if(B.doneT<=0){const win=B.won;flameObj=null;flameFire=false;setMode('play');
       completeMissionObj(o);
-      podBlasts.push({x:o.x,y:o.y,tier:o.tier,t:0,fuse:win?2.0:0.4,win});
-      if(win)showMsg('SAC IGNITED — 2 SECONDS, GET CLEAR!');else showMsg('TIMER BUST — the sac ruptures on you!');
-      shake=Math.max(shake,win?4:8);}
+      if(win){showMsg('SAC BURNED CLEAN — no blowback');shake=Math.max(shake,2);}
+      else{podBlasts.push({x:o.x,y:o.y,tier:o.tier,t:0,fuse:0.4,win:false});   // bust: gas erupts right in the diver's face
+        showMsg('TIMER BUST — the sac ruptures on you!');shake=Math.max(shake,8);}}
     return;}
   // ==== aim: analog input + arrows, momentum (drag) + gentle autonomous sway ====
   let ix=(input.jx||0)+((input.right?1:0)-(input.left?1:0));
@@ -7202,27 +7358,45 @@ function drawVase(cx,sv){
   {const hw=Math.round(vaseHW(knots,74));px(ctx,cx-hw,73+sv,hw*2,1,'#4d7f92');px(ctx,cx-hw,74+sv,hw*2,2,'#3a5f6f');}
   pxTextC('CONTAINMENT URN',cx,304+sv,'#2f5a6a');
 }
-// pulsating green splat (not a plain circle): a central lobe plus several breathing satellite lobes
-// (metaball splash), a dark rim, and — while it registers the flame — a bright green bleed flash.
+// a mutant angler-fish pup, curled up and clinging to its pocket of the urn: a bulbous
+// hunched body, an underbite full of needle teeth, and a bioluminescent lure that bobs
+// on a thin stalk. Same contract as the old blob it replaces — s.x/s.y/s.r drive the
+// hitbox and never change here, s.ph/s.burn/s.hitT still drive all the animation — this
+// is a pure reskin, nothing about how it's targeted or killed moved.
 function drawSlime(s,t,ox,oy){
   const X=s.x+(ox||0), Y=s.y+(oy||0), heat=clamp(s.burn/6,0,1);
-  if(s.dead){pxDisc(ctx,X,Y,3,'#2a2412');px(ctx,X-5,Y,10,2,'#242e1a');px(ctx,X-1,Y-2,2,1,'#3a2a12');px(ctx,X+2,Y-1,1,1,'#4a3414');return;}
-  const breathe=1+Math.sin(t*0.12+s.ph)*0.06-heat*0.18;        // gentle body pulse; shrinks as it chars
+  if(s.dead){                                                    // charred little skeleton left curled in place
+    px(ctx,X-4,Y-1,8,2,'#241a12');px(ctx,X-5,Y,2,2,'#1c1410');px(ctx,X+3,Y-2,3,2,'#1c1410');
+    px(ctx,X-2,Y-2,1,1,'#3a2a12');px(ctx,X+1,Y-3,1,1,'#3a2a12');px(ctx,X-1,Y+1,1,1,'#2a1e0c');
+    return;}
+  const breathe=1+Math.sin(t*0.10+s.ph)*0.05-heat*0.14;           // slow gulping breath; hunches in as it chars
   const R=Math.max(3,s.r*breathe), hitOn=s.hitT>0;
   const gcol=heat>0.45?'150,235,220':'110,240,90';
   ctx.globalCompositeOperation='lighter';
-  radial(ctx,X,Y,R+13,'rgba('+gcol+','+(0.24+heat*0.20+(hitOn?0.28:0)).toFixed(2)+')','rgba(0,0,0,0)');
+  radial(ctx,X,Y,R+13,'rgba('+gcol+','+(0.20+heat*0.18+(hitOn?0.28:0)).toFixed(2)+')','rgba(0,0,0,0)');
   ctx.globalCompositeOperation='source-over';
-  const base=heat>0.5?'#7ee0bf':'#5fdd3f', edge=heat>0.5?'#356f62':'#2f7a1f', hi=heat>0.5?'#dafff2':'#c8ff90';
-  const lobes=s.lobes||[];
-  const pos=lobes.map(L=>{const pulse=0.8+Math.sin(t*0.10+L.ph)*0.22,ang=L.a+s.ph*0.3;
-    return {x:X+Math.cos(ang)*R*L.d*pulse, y:Y+Math.sin(ang)*R*L.d*pulse, r:Math.max(2,R*L.r*pulse)};});
-  pxDisc(ctx,X,Y,R+1,edge);for(const L of pos)pxDisc(ctx,L.x,L.y,L.r+1,edge);   // dark rim pass
-  pxDisc(ctx,X,Y,R,base);  for(const L of pos)pxDisc(ctx,L.x,L.y,L.r,base);       // green fill pass
-  const hs=Math.max(2,Math.round(R*0.22));
-  px(ctx,Math.round(X-R*0.34),Math.round(Y-R*0.4),hs,hs,hi);                      // wet highlight
-  for(let i=0;i<Math.floor(s.burn);i++){const a=s.ph+i*1.7,d=R*0.5;px(ctx,(X+Math.cos(a)*d)|0,(Y+Math.sin(a)*d)|0,2,2,'#243018');}
-  if(hitOn){const k=clamp(s.hitT/0.18,0,1);                                       // HIT-REGISTERED green flash
+  const base=heat>0.5?'#7ee0bf':'#4fbf5a', edge=heat>0.5?'#356f62':'#1f5a24', belly=heat>0.5?'#c8fff0':'#a8f08a';
+  // hunched teardrop body — wider at the head, tapering to a short tail flick
+  pxDisc(ctx,X-1,Y,R+1,edge);pxDisc(ctx,X-1,Y,R,base);
+  px(ctx,Math.round(X+R*0.5),Math.round(Y-2),Math.max(2,Math.round(R*0.6)),4,edge);   // tail-flick silhouette
+  px(ctx,Math.round(X+R*0.5),Math.round(Y-1),Math.max(1,Math.round(R*0.5)),2,base);
+  px(ctx,Math.round(X-R*0.35),Math.round(Y-R*0.55),Math.round(R*0.7),Math.max(2,Math.round(R*0.3)),belly); // pale belly patch
+  // dorsal mutation-spikes along the back
+  for(let i=0;i<3;i++){const sx=Math.round(X-R*0.5+i*R*0.5),sy=Math.round(Y-R*0.85);
+    px(ctx,sx,sy,1,3,edge);px(ctx,sx,sy,1,1,belly);}
+  // underbite jaw, bristling with needle teeth
+  const jy=Math.round(Y+R*0.35);
+  px(ctx,Math.round(X-R*0.55),jy,Math.round(R*1.0),Math.max(2,Math.round(R*0.3)),'#1a2a1c');
+  for(let i=0;i<4;i++)px(ctx,Math.round(X-R*0.45+i*R*0.32),jy,1,2,'#eafcef');
+  // eye — small and mean
+  px(ctx,Math.round(X-R*0.15),Math.round(Y-R*0.15),2,2,'#0a1208');px(ctx,Math.round(X-R*0.15),Math.round(Y-R*0.15),1,1,'#ff4d5e');
+  // the lure: a thin stalk off the crown, bright bioluminescent bulb bobbing at the tip
+  const lp=0.55+0.45*Math.sin(t*0.16+s.ph*1.6),lx=Math.round(X-R*0.5),ly=Math.round(Y-R-3-lp*2),lbase=Math.round(Y-R-2);
+  px(ctx,lx,ly,1,Math.max(2,lbase-ly),'#2f7a34');
+  ctx.globalCompositeOperation='lighter';radial(ctx,lx,ly,6+lp*3,'rgba(210,255,120,'+(0.5+lp*0.35).toFixed(2)+')','rgba(0,0,0,0)');ctx.globalCompositeOperation='source-over';
+  px(ctx,lx-1,ly-1,2,2,lp>0.5?'#fbffcf':'#d8ff9a');
+  for(let i=0;i<Math.floor(s.burn);i++){const a=s.ph+i*1.7,d=R*0.5;px(ctx,(X+Math.cos(a)*d)|0,(Y+Math.sin(a)*d)|0,2,2,'#1c2814');}
+  if(hitOn){const k=clamp(s.hitT/0.18,0,1);                                       // HIT-REGISTERED flash
     ctx.globalCompositeOperation='lighter';radial(ctx,X,Y,R+7,'rgba(190,255,150,'+(0.55*k).toFixed(2)+')','rgba(0,0,0,0)');ctx.globalCompositeOperation='source-over';
     px(ctx,Math.round(X)-1,Math.round(Y)-1,2,2,'#ffffff');}
   for(let i=0;i<6;i++){const a=-1.5708+i/6*6.283,on=i<Math.round(s.burn);         // 6-pip burn meter ("6 presses")
@@ -7292,7 +7466,7 @@ function renderFlame(){
   ctx.globalAlpha=1;
   // hint / status line + fire button glyph
   if(B.hint>0){const a=clamp(B.hint/3,0,1);ctx.globalAlpha=a;pxTextC('STICK TO AIM  ·  HOLD FIRE TO BURN',cx,VH-34,'#6f93a6');ctx.globalAlpha=1;}
-  else pxTextC(B.onTarget?(B.firing?'BURNING':'ON TARGET — HOLD FIRE'):'MOVE ONTO A SLIME',cx,VH-34,B.onTarget?'#9fe0a0':'#3a5a6a');
+  else pxTextC(B.onTarget?(B.firing?'BURNING':'ON TARGET — HOLD FIRE'):'MOVE ONTO A PUP',cx,VH-34,B.onTarget?'#9fe0a0':'#3a5a6a');
   // end overlays
   if(B.doneT>0){const k=clamp(B.doneT/1.0,0,1);
     if(B.won){ctx.fillStyle='rgba(194,255,95,'+(0.22*k).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);
@@ -7321,7 +7495,7 @@ function renderFlame(){
 // ============================================================================
 const subS={
   seed:0, t:0, dist:0, len:0, sx:0, y:0, vy:0, roll:0,
-  hull:0, maxHull:0, boost:0, boostMax:0, dead:0, reload:0, mines:0, minesMax:0,
+  hull:0, maxHull:0, boost:0, boostMax:0, boosting:false, reload:0, mines:0, minesMax:0,
   torps:[], bombs:[], mobs:[], loot:[], obs:[], fx:[], bub:[], lamps:[],
   scrap:0, doneT:0, killT:0, hitFlash:0, warn:0, hint:0, nextWave:0, wave:0,
   scrapeCD:0, burst:0, gateFlash:0
@@ -7369,15 +7543,16 @@ function subLaunch(ch){
   subS.sx=Math.round(VW*0.27);
   const b=subBore(0);subS.y=(b.top+b.bot)/2;subS.vy=0;subS.roll=0;
   subS.maxHull=subMaxHull();subS.hull=subS.maxHull;
-  subS.boostMax=SUB_BOOST_MAX;subS.boost=SUB_BOOST_MAX;subS.dead=0;
+  subS.boostMax=SUB_BOOST_MAX;subS.boost=SUB_BOOST_MAX;subS.boosting=false;
   subS.reload=0;subS.minesMax=subMinesMax();subS.mines=subS.minesMax;
   subS.torps.length=0;subS.bombs.length=0;subS.mobs.length=0;subS.fx.length=0;subS.bub.length=0;
   subS.scrap=0;subS.doneT=0;subS.killT=0;subS.hitFlash=0;subS.warn=0;subS.hint=4.2;
   subS.wave=0;subS.nextWave=340;subS.scrapeCD=0;subS.burst=0;subS.gateFlash=0;subS.gateSeen=false;
   subSeedPipe();
-  subBoostHeld=false;mineEdge=false;actionEdge=false;clipEdge=false;
+  subBoostTrig=false;mineEdge=false;actionEdge=false;clipEdge=false;
   input.up=false;input.down=false;input.left=false;input.right=false;
   setMode('sub');sfx.start();
+  if(tutorialsOn&&!subIntroSeen){subIntroSeen=true;startSubIntro();}
 }
 // loot, obstacles and lamp posts are laid down once, in world space, so the run is
 // the same shape every time you replay that particular transit line
@@ -7404,7 +7579,7 @@ function subSeedPipe(){
 // design decision downstream of this — the flanking AI, the mine bay, boost —
 // exists because of that one limitation.
 function subFire(){
-  if(state.mode!=='sub'||subS.doneT>0||subS.killT>0)return;
+  if(state.mode!=='sub'||subS.doneT>0||subS.killT>0||deckActive)return;
   if(subS.reload>0){sfx.deny();return;}
   subS.reload=subReload();
   subS.torps.push({x:subS.sx+SUB_W/2+2,y:subS.y+(subS.roll*1.5),v:subTorpSpeed(),life:2.6,t:0});
@@ -7416,7 +7591,7 @@ function subFire(){
 // station in the current until something swims into it. This is the only weapon
 // that reaches the blind arcs above, below and behind.
 function subDropMine(dir){
-  if(state.mode!=='sub'||subS.doneT>0||subS.killT>0)return;
+  if(state.mode!=='sub'||subS.doneT>0||subS.killT>0||deckActive)return;
   if(subS.mines<=0){sfx.deny();return;}
   subS.mines--;
   subS.bombs.push({x:subS.sx-4,y:subS.y+dir*(SUB_H/2+1),vy:dir*34,arm:0.25,life:4.2,t:0,dir});
@@ -7453,9 +7628,9 @@ function subHurtMob(m,d){
 // slower than that CANNOT close on a boosting stern — it stalls, the window runs out, and the
 // thing peels off. Unboosted the same lunge is a fast, unanswerable bite. Keep both kinds
 // below 80 or the coil stops being the answer to a predator at the back.
-const SUB_MOB={
-  squid:{hp:2, r:9,  close:52, flank:74, lunge:82, stand:26, dmg:1, turn:0.95, win:1.1},
-  meg:  {hp:6, r:15, close:36, flank:50, lunge:68, stand:42, dmg:2, turn:1.25, win:1.5}
+const SUB_MOB={   // close/flank/lunge cut 25% across the board — slower predators, same shapes
+  squid:{hp:2, r:9,  close:39,   flank:55.5, lunge:61.5, stand:26, dmg:1, turn:0.95, win:1.1},
+  meg:  {hp:2, r:15, close:27,   flank:37.5, lunge:51,   stand:42, dmg:2, turn:1.25, win:1.5}
 };
 function subSpawnMob(kind,yFrac){
   const K=SUB_MOB[kind], x=VW+24+Math.random()*40;
@@ -7490,7 +7665,13 @@ function subMobTick(m,dt,flow){
   m.x-=flow*dt;
   const dx=m.x-subS.sx, dy=m.y-subS.y;
   if(m.st==='close'){
-    m.vx=-K.close;m.vy=clamp((subS.y-m.y)*1.4,-K.close*0.8,K.close*0.8);
+    // it does not just home onto the boat's depth — it weaves hard up and down as it comes
+    // on, two harmonics stacked so the swing never quite repeats, only loosely tracking, so
+    // a torpedo (dead level, no steering) has to be timed for the moment the weave crosses
+    // the boat's own depth rather than fired the instant it's ahead
+    const weave=Math.sin(m.t*(m.kind==='squid'?6.8:4.7)+m.ph)*K.close*(m.kind==='squid'?3.0:3.6)
+               +Math.sin(m.t*(m.kind==='squid'?14.5:9.8)+m.ph*1.7)*K.close*(m.kind==='squid'?1.2:1.5);
+    m.vx=-K.close;m.vy=clamp((subS.y-m.y)*0.25+weave,-K.close*3.8,K.close*3.8);
     if(m.kind==='squid'){m.vx-=Math.sin(m.t*7+m.ph)*22;m.vy+=Math.cos(m.t*5+m.ph)*26;}   // mantle-jet stutter
     if(dx<SUB_W*0.9){                                    // abeam the bow: commit to a side and swing wide
       m.st='flank';
@@ -7499,9 +7680,9 @@ function subMobTick(m,dt,flow){
       if(Math.random()<0.25)m.side=-m.side;
     }
   } else if(m.st==='flank'){
-    const stand=K.stand+(m.kind==='meg'?Math.sin(m.t*2)*6:0);
+    const stand=K.stand+Math.sin(m.t*(m.kind==='meg'?4.2:5.4)+m.ph)*(m.kind==='meg'?36:44);   // bobs wide at standoff too
     const ty=subS.y+m.side*stand;
-    m.vy=clamp((ty-m.y)*3.2,-K.flank,K.flank);
+    m.vy=clamp((ty-m.y)*3.2,-K.flank*2.0,K.flank*2.0);
     m.vx=-K.flank*0.85;
     // it has to be WELL past the stern before it turns, so the bite is a run back up the
     // wake rather than a sideswipe the moment it draws level with the screws
@@ -7538,6 +7719,7 @@ function subHullHit(d,src){
 // ---- the tick ---------------------------------------------------------------
 function subInput(){
   if(state.mode!=='sub')return;
+  if(deckActive)return;                       // the transit primer is up — the boat holds station
   const dt=1/60;
   // AIR IS FROZEN for the length of the transversal — the boat is a sealed hull, the
   // diver is not swimming. Damage here is measured in HULL, not in the suit's hearts.
@@ -7564,16 +7746,16 @@ function subInput(){
     return;
   }
 
-  // ---- boost: a coil that runs dry CUTS OUT and stays dead until it has rebuilt.
-  // Same rule the MULE's thruster taught (MECH_BOOST_RESET) — no stutter-boosting.
+  // ---- boost: EMERGENCY THRUST. It is a trigger, not a throttle — one press with a
+  // full coil lights the burn, and it runs wide open on its own until the coil is bone
+  // dry, no early cutoff and no topping it up mid-run. Then it rebuilds slowly, so
+  // lighting it is a real commitment: use it to make an exit, not to nudge position.
+  if(subBoostTrig&&!subS.boosting&&subS.boost>=subS.boostMax){subS.boosting=true;sfx.dash();}
+  subBoostTrig=false;
   let boosting=false;
-  if(subS.dead>0){
-    subS.dead-=dt;
-    subS.boost=Math.min(subS.boostMax,subS.boost+subBoostRegen()*dt);
-    if(subS.dead<=0)subS.boost=Math.max(subS.boost,subS.boostMax*SUB_BOOST_RESET);
-  } else if(subBoostHeld&&subS.boost>0){
+  if(subS.boosting){
     boosting=true;subS.boost-=dt;
-    if(subS.boost<=0){subS.boost=0;subS.dead=(subS.boostMax*SUB_BOOST_RESET)/subBoostRegen();sfx.deny();}
+    if(subS.boost<=0){subS.boost=0;subS.boosting=false;sfx.deny();}
   } else {
     subS.boost=Math.min(subS.boostMax,subS.boost+subBoostRegen()*dt);
   }
@@ -7682,10 +7864,11 @@ function subFxTick(dt){
 // bulge, the flat deck casing, the 8.8cm gun forward of the tower, the winter-garden
 // tower with periscope and snorkel, the boat's laughing red devil on the fairwater,
 // and a single screw behind the rudder. `roll` cants the whole hull off the planes.
-function drawSubBoat(cx,cy,roll,boosting,t,flash){
+// Takes its target context so the transit primer's slide canvases draw the same boat.
+function drawSubBoat(c,cx,cy,roll,boosting,t,flash){
   const HULL=flash?'#8a5a55':'#3c4a49', HI=flash?'#b98d84':'#5b6f6b', LO='#1b2426',
         DECK='#28322f', TOW='#445654', TRIM='#7d9994', RED='#c8323c', DK='#141b1c';
-  const P=(lx,ly,w,h,c)=>{const yo=Math.round(roll*(lx/16));px(ctx,Math.round(cx+lx),Math.round(cy+ly+yo),w,h,c);};
+  const P=(lx,ly,w,h,col)=>{const yo=Math.round(roll*(lx/16));px(c,Math.round(cx+lx),Math.round(cy+ly+yo),w,h,col);};
   // pressure hull — a per-column half-height gives the raked bow and the fine stern run
   for(let lx=-18;lx<=17;lx++){
     let hh = lx>11 ? 4.6-(lx-11)*0.62 : (lx<-13 ? 3.6-(-13-lx)*0.62 : (lx>7?4.8:5.2));
@@ -7715,9 +7898,9 @@ function drawSubBoat(cx,cy,roll,boosting,t,flash){
   P(12,3,4,1,TOW);P(-11,4,4,1,TOW);
   const cap=subS.burst>0?'#eaffff':'#5b6f6b';
   P(16,-2,2,2,cap);P(16,1,2,2,cap);
-  if(boosting){ctx.globalCompositeOperation='lighter';
-    radial(ctx,cx-20,cy,16,'rgba(120,200,220,0.20)','rgba(120,200,220,0)');
-    ctx.globalCompositeOperation='source-over';}
+  if(boosting){c.globalCompositeOperation='lighter';
+    radial(c,cx-20,cy,16,'rgba(120,200,220,0.20)','rgba(120,200,220,0)');
+    c.globalCompositeOperation='source-over';}
 }
 // ---- predators --------------------------------------------------------------
 function drawSquid(m){
@@ -7860,9 +8043,9 @@ function renderSub(){
     ctx.globalAlpha=1;
   }
   // ---- the boat itself
-  const boosting=subBoostHeld&&subS.boost>0&&subS.dead<=0&&subS.killT<=0;
+  const boosting=subS.boosting&&subS.killT<=0;
   if(subS.killT<=0||((state.tick>>1)&1))
-    drawSubBoat(subS.sx+shx,subS.y+shy,subS.roll,boosting,t,subS.hitFlash>0.28);
+    drawSubBoat(ctx,subS.sx+shx,subS.y+shy,subS.roll,boosting,t,subS.hitFlash>0.28);
   // ---- bubbles + blast fx
   for(const q of subS.bub){const a=clamp(q.life*2,0,1);ctx.globalAlpha=a*0.7;
     px(ctx,Math.round(q.x),Math.round(q.y),q.r||1,q.r||1,'#9ed3e6');}
@@ -7912,12 +8095,14 @@ function subHUD(){
   // ---- bottom strip: the coil, the tubes, the mine bay — the three things you spend
   const by=B+5;
   let x=4;
-  if(wide){pxText(ctx,'BOOST',x,by,subS.dead>0?'#7a2530':'#5b8095');x+=22;}
+  const bReady=subS.boost>=subS.boostMax;
+  if(wide){pxText(ctx,'BOOST',x,by,subS.boosting?'#3dff9a':(bReady?'#ffd23c':'#5b8095'));x+=22;}
   const cw=wide?48:40;
   px(ctx,x,by,cw,5,'#0c1a22');
   const cf=clamp(subS.boost/subS.boostMax,0,1);
-  px(ctx,x,by,Math.round(cw*cf),5,subS.dead>0?'#7a2530':'#3dff9a');
-  if(subS.dead>0&&((state.tick>>3)&1))pxText(ctx,'DRY',x+cw+3,by,'#ff4d5e');
+  px(ctx,x,by,Math.round(cw*cf),5,subS.boosting?'#3dff9a':(bReady?'#ffd23c':'#1e6a80'));
+  if(subS.boosting&&((state.tick>>2)&1))pxText(ctx,'!',x+cw+3,by,'#3dff9a');
+  else if(!bReady&&((state.tick>>3)&1))pxText(ctx,'DRY',x+cw+3,by,'#ff4d5e');
   x+=cw+8;
   const rf=clamp(1-subS.reload/subReload(),0,1);
   if(wide){pxText(ctx,'TUBE',x,by,rf>=1?'#3dff9a':'#5b8095');x+=18;}
@@ -7943,7 +8128,7 @@ function subHUD(){
     px(ctx,0,hy,VW,1,'#123848');px(ctx,0,hy+43,VW,1,'#123848');
     pxTextC('THE STREAM CARRIES YOU',VW/2,hy+6,'#7fd0ee');
     pxTextC('UP DOWN - FIRE FORWARD',VW/2,hy+16,'#8fb6c2');
-    pxTextC('BOOST OUTRUNS THE STERN',VW/2,hy+26,'#8fb6c2');
+    pxTextC('FULL BOOST: ONE BURN, NO BRAKES',VW/2,hy+26,'#8fb6c2');
     pxTextC('MINES DROP UP AND DOWN',VW/2,hy+36,'#ffd23c');
     ctx.globalAlpha=1;
   }
@@ -9064,6 +9249,543 @@ function startMineIntro(){
   go(0);
 }
 
+/* ===== SHARED PRIMER DECK ==========================================================
+ * The base guide and the mining primer each carry their own copy of the slideshow
+ * scaffolding. Everything added after them runs through here instead: same CRT frame,
+ * same diamond dot strip, same nav + SKIP, same grey-static wipe on the way out.
+ * A deck freezes whatever it is explaining — `deckActive` is checked by the crank / ICE /
+ * torch / boat input pumps, so no countdown ever ticks behind a slide, exactly like
+ * mineIntroActive does for the dig. Every deck here is gated on `tutorialsOn`, so
+ * answering NO to FIRST TIME HERE silences all of them for the run.
+ *   cfg = {t1, t2, last, onDone, slides:[{title, w, h, wide, lines:[html], draw(c,W,H,t,k)}]}
+ *   t = free-running tick, k = ticks since this slide was shown (so a scene can loop). */
+let deckActive=false;
+// id · keyboard key · gamepad face, for the inline "press this" chips in deck copy
+const DK_BTN={mine:['minebtn','F','X'],clip:['clipbtn','X','Y'],craft:['ropebtn','E','RB'],
+              pack:['invbtn','I','LB'],confirm:['confirmbtn','SPACE','A'],back:['backbtn','ESC','B']};
+// a miniature of the real thumb button on the handheld; the keycap for its binding in PC mode.
+// key/pad override the defaults where a button is remapped for a mode (the boat's mine bay, say).
+function dkBtn(kind,key,pad){
+  const d=DK_BTN[kind]; if(!d)return '';
+  if(pcMode)return '<span class="tut-key">'+(pcSrc==='pad'?(pad||d[2]):(key||d[1]))+'</span>';
+  return '<span class="tut-btn tb-'+kind+'" data-dksrc="'+d[0]+'"></span>';
+}
+function startDeck(cfg){
+  if(deckActive)return;                                        // never stack two decks
+  deckActive=true;
+  const stage=document.getElementById('stage');
+  const ctl=document.getElementById('controls'); if(ctl)ctl.style.visibility='hidden';
+  const dk=document.createElement('div'); dk.id='deckintro';
+  let h='<div class="bi-crt"><div class="tut-scan"></div><button id="dk-skip">SKIP ▸</button>'
+      +'<div class="bi-head"><span class="t1">'+cfg.t1+'</span><span class="t2">'+cfg.t2+'</span></div>'
+      +'<div id="dk-stage">';
+  cfg.slides.forEach(function(s,i){
+    h+='<div class="bi-slide'+(i?'':' on')+'" data-b="'+i+'">'
+      +(s.title?'<div class="bi-title">'+s.title+'</div>':'')
+      +'<canvas class="tut-cv '+(s.wide?'dk-wide':'dk-sq')+'" id="dkcv'+i+'"></canvas>'
+      +'<div class="bi-txt">'+(s.lines||[]).map(function(l){return '<div class="bi-line">'+l+'</div>';}).join('')+'</div>'
+      +'</div>';
+  });
+  h+='</div><div id="dk-dots">'+cfg.slides.map(function(_,i){return '<span class="bi-dot'+(i?'':' on')+'"></span>';}).join('')+'</div>'
+   +'<div id="dk-nav"><button id="dk-prev" disabled>◂ BACK</button><button id="dk-next">NEXT ▸</button></div></div>';
+  dk.innerHTML=h;
+  stage.appendChild(dk);
+  // the inline chips ship hollow — fill each with the live pixel art of the button it names
+  Array.prototype.forEach.call(dk.querySelectorAll('[data-dksrc]'),function(chip){
+    const src=document.getElementById(chip.getAttribute('data-dksrc')); if(!src)return;
+    const svg=src.querySelector('svg'); if(!svg)return;
+    const cl=svg.cloneNode(true); cl.removeAttribute('class'); chip.appendChild(cl);
+  });
+
+  const cvs=[],ctxs=[];
+  cfg.slides.forEach(function(s,i){
+    const cv=document.getElementById('dkcv'+i);
+    cv.width=s.w; cv.height=s.h;
+    const c=cv.getContext('2d'); c.imageSmoothingEnabled=false;
+    cvs.push(cv); ctxs.push(c);
+  });
+
+  let dkT=0,anim=0,loopOn=true,cur=0,done=false;
+  let _dkAcc=0,_dkLast=performance.now();
+  function loop(now){ if(!loopOn)return;
+    _dkAcc+=now-_dkLast;_dkLast=now;
+    if(_dkAcc>=15){_dkAcc=0;dkT++;anim++;
+      const s=cfg.slides[cur]; if(s&&s.draw)s.draw(ctxs[cur],cvs[cur].width,cvs[cur].height,dkT,anim);}
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  const slides=Array.prototype.slice.call(dk.querySelectorAll('.bi-slide'));
+  const dots=Array.prototype.slice.call(dk.querySelectorAll('.bi-dot'));
+  const nextB=document.getElementById('dk-next'),prevB=document.getElementById('dk-prev'),skipB=document.getElementById('dk-skip');
+  const lastLbl=cfg.last||'START ▸';
+  function go(i){cur=i;anim=0;
+    slides.forEach(function(s,n){s.classList.toggle('on',n===i);});
+    dots.forEach(function(d,n){d.classList.toggle('on',n===i);});
+    prevB.disabled=(i===0);
+    if(i===slides.length-1){nextB.textContent=lastLbl;nextB.classList.add('go');}
+    else{nextB.textContent='NEXT ▸';nextB.classList.remove('go');}
+    sfx.nav();}
+  function fin(){if(done)return;done=true;loopOn=false;
+    staticWipe(function(){
+      const c2=document.getElementById('controls'); if(c2)c2.style.visibility='';
+      // a key or a pad face pressed THROUGH the slides must not fire the moment they clear
+      mineEdge=false;actionEdge=false;clipEdge=false;queueCraft=false;subBoostTrig=false;
+      input.action=false;flameFire=false;
+      deckActive=false;
+      if(dk&&dk.parentNode)dk.parentNode.removeChild(dk);
+      if(cfg.onDone)cfg.onDone();
+    });
+  }
+  function nx(){if(cur>=slides.length-1)fin();else go(cur+1);}
+  function pv(){if(cur>0)go(cur-1);}
+  [nextB,prevB,skipB].forEach(function(b){b.addEventListener('pointerdown',audioInit);});
+  nextB.addEventListener('click',nx); prevB.addEventListener('click',pv); skipB.addEventListener('click',fin);
+  go(0);
+}
+
+/* ---- deck-canvas helpers. These draw on the slide's own offscreen context, never the
+ *      game canvas, so nothing in here may reach for ctx / VW / VH.                    */
+function dkClear(c,w,h,col){c.clearRect(0,0,w,h);c.fillStyle=col||'#0b141d';c.fillRect(0,0,w,h);}
+function dkGlow(c,x,y,r,rgb,a){c.save();c.globalCompositeOperation='lighter';
+  const g=c.createRadialGradient(x,y,0,x,y,r);g.addColorStop(0,'rgba('+rgb+','+a+')');g.addColorStop(1,'rgba('+rgb+',0)');
+  c.fillStyle=g;c.beginPath();c.arc(x,y,r,0,6.283);c.fill();c.restore();}
+function dkLerp(a,b,u){return a+(b-a)*u;}
+function dkEase(u){u=u<0?0:u>1?1:u;return u*u*(3-2*u);}
+function dkSparks(c,x,y,n,r,col){for(let i=0;i<n;i++){const a=Math.random()*6.283,d=2+Math.random()*r;
+  px(c,Math.round(x+Math.cos(a)*d),Math.round(y+Math.sin(a)*d),1,1,col);}}
+function dkTextC(c,str,cx,y,col){pxText(c,str,Math.round(cx-pxTextW(str)/2),y,col);}
+function dkPlate(c,x,y,str,col){const pw=pxTextW(str)+6;
+  px(c,x,y,pw,11,'rgba(4,12,16,0.82)');px(c,x,y,pw,1,'#1d4a5c');
+  pxText(c,str,x+3,y+3,col||'#7fd0ee');}
+function dkLine(c,x0,y0,x1,y1,col){const n=Math.max(2,Math.round(Math.hypot(x1-x0,y1-y0)));
+  for(let i=0;i<=n;i++){const u=i/n;px(c,Math.round(dkLerp(x0,x1,u)),Math.round(dkLerp(y0,y1,u)),1,1,col);}}
+
+/* ===== VALVE PRIMER (pressure valve — the CRANK minigame) ===== */
+let crankIntroSeen=false;
+// slide 1 — the two sliding windows and the swept marker, drawn exactly as the console draws them
+function dkCrankTrack(c,w,h,t){
+  dkClear(c,w,h,'#05090f');
+  for(let gy=2;gy<h;gy+=9)px(c,0,gy,w,1,'#0a1420');
+  const bw=w-22,bx=11,by=10;
+  const gc=0.5+Math.sin(t*0.016)*0.26, rc=0.5+Math.sin(t*0.024+1.3)*0.30;
+  const gL=clamp(gc-0.13,0,1),gR=clamp(gc+0.13,0,1),rL=clamp(rc-0.09,0,1),rR=clamp(rc+0.09,0,1);
+  const p=0.5+Math.sin(t*0.030)*0.5;
+  const inR=p>=rL&&p<=rR, live=(p>=gL&&p<=gR)&&!inR;
+  const X=function(u){return bx+Math.round(u*(bw-1));};
+  px(c,bx-3,by-3,bw+6,16,'#060d16');px(c,bx-2,by-2,bw+4,14,'#0c1a26');px(c,bx-2,by-2,bw+4,1,'#173040');
+  dkGlow(c,(X(gL)+X(gR))/2,by+5,16,'61,255,154',0.18);
+  px(c,X(gL),by,X(gR)-X(gL),10,'#123f28');px(c,X(gL),by,X(gR)-X(gL),2,'#3dff9a');
+  dkGlow(c,(X(rL)+X(rR))/2,by+5,16,'255,59,107',0.20);
+  px(c,X(rL),by,X(rR)-X(rL),10,'#3a1020');px(c,X(rL),by,X(rR)-X(rL),2,'#ff3b6b');
+  for(let x=X(rL)+1;x<X(rR)-1;x+=4)px(c,x,by+3,2,4,((t>>2)&1)?'#ffcf3a':'#7a1a30');
+  const nx=X(p),ncol=inR?'#ff5a6b':live?'#5dffa0':'#eef6ff';
+  px(c,nx-1,by-4,3,18,'#060d16');px(c,nx,by-4,1,17,ncol);px(c,nx-2,by-5,5,2,ncol);
+  // the ACTUATE button reads the marker's zone back to you, same three states as the console
+  const btY=by+21,btW=w-40,btX=Math.round((w-btW)/2);
+  let lab,ecol,fill,tcol;
+  if(inR){lab='HOLD';ecol='#ff3b6b';fill='#26090f';tcol='#ff5a6b';}
+  else if(live){lab='ACTUATE';ecol='#3dff9a';fill='#123f28';tcol='#eafff2';}
+  else{lab='STANDBY';ecol='#1c4256';fill='#0a1622';tcol='#6fa0b8';}
+  px(c,btX,btY,btW,15,fill);px(c,btX,btY,btW,1,ecol);px(c,btX,btY+14,btW,1,shade(ecol,0.5));
+  px(c,btX,btY,1,15,ecol);px(c,btX+btW-1,btY,1,15,shade(ecol,0.6));
+  if(live)dkGlow(c,w/2,btY+7,btW*0.5,'61,255,154',0.16);
+  dkTextC(c,lab,w/2,btY+5,tcol);
+  if(live&&((t>>3)&1))dkSparks(c,w/2,btY+7,4,10,'#3dff9a');
+  px(c,10,h-8,6,5,'#3dff9a');pxText(c,'SAFE',19,h-8,'#3dff9a');
+  px(c,w-44,h-8,6,5,'#ff3b6b');pxText(c,'VENT',w-35,h-8,'#ff3b6b');
+}
+// slide 2 — the servo snapping round, one notch per clean pulse, pips filling below it
+function dkCrankServo(c,w,h,t,k){
+  dkClear(c,w,h,'#05090f');
+  const cx=Math.round(w/2),cy=Math.round(h*0.40),r=Math.min(28,(h*0.30)|0);
+  const CYC=54,need=6,KC=CYC*(need+1),kk=k%KC;
+  const turns=Math.min(need,Math.floor(kk/CYC)), ph=kk%CYC, fire=(turns<need)&&ph<8;
+  px(c,6,cy-4,cx-r-6,8,'#16303d');px(c,cx+r,cy-4,w-6-(cx+r),8,'#16303d');
+  px(c,6,cy-4,cx-r-6,1,'#2f7a94');px(c,cx+r,cy-4,w-6-(cx+r),1,'#2f7a94');
+  px(c,6,cy+3,cx-r-6,1,'#0a1620');px(c,cx+r,cy+3,w-6-(cx+r),1,'#0a1620');
+  const foff=(t*1.2)%9;
+  for(let x=8+foff;x<cx-r-1;x+=9)px(c,Math.round(x),cy-1,4,3,'#2be0ff');
+  for(let x=cx+r+2+foff;x<w-7;x+=9)px(c,Math.round(x),cy-1,4,3,'#2be0ff');
+  const ang=turns*1.6+(fire?(8-ph)*0.16:0)+t*0.004;
+  const acc=fire?'#3dff9a':'#39c6ff',dim=fire?'#164a30':'#123848';
+  pxDisc(c,cx,cy,r,'#0c1826');pxDisc(c,cx,cy,r-1,'#0a1420');
+  for(let i=0;i<12;i++){const a=i/12*6.28318;
+    px(c,Math.round(cx+Math.cos(a)*(r-2))-1,Math.round(cy+Math.sin(a)*(r-2))-1,2,2,(i%3===0)?acc:dim);}
+  pxDisc(c,cx,cy,r-4,'#060d16');
+  for(let i=0;i<4;i++){const a=ang+i/4*6.28318,col=(i===0)?acc:'#2a5a72';
+    for(let s=2;s<=r-5;s++)px(c,Math.round(cx+Math.cos(a)*s)-1,Math.round(cy+Math.sin(a)*s)-1,2,2,col);}
+  pxDisc(c,cx,cy,3,shade(acc,0.6));pxDisc(c,cx,cy,2,acc);
+  if(fire){dkGlow(c,cx,cy,r+10,'61,255,154',0.34);dkSparks(c,cx,cy,6,r,'#3dff9a');}
+  const pipW=10,pipG=4,rowW=need*(pipW+pipG)-pipG,ppx=Math.round(cx-rowW/2),pipY=h-14;
+  for(let i=0;i<need;i++){const on=i<turns,X=ppx+i*(pipW+pipG);
+    px(c,X,pipY,pipW,6,on?'#39c6ff':'#122430');if(on)px(c,X,pipY,pipW,1,'#9fe8ff');}
+  const lab=(turns>=need)?'RELEASED':(turns+'/'+need);
+  dkTextC(c,lab,cx,pipY-10,(turns>=need)?'#3dff9a':'#7fe0ff');
+}
+// slide 3 — the purge clock, and what is waiting at the end of it
+function dkCrankClock(c,w,h,t,k){
+  dkClear(c,w,h,'#05090f');
+  const cx=Math.round(w/2),KC=220,kk=k%KC,blow=kk>=150;
+  const u=blow?0:clamp(1-kk/150,0,1);
+  const bw=w-24,bx=12,by=12;
+  px(c,bx-1,by-1,bw+2,9,'#0a1420');
+  const col=u>0.5?'#3dff9a':u>0.25?'#ffcf3a':'#ff4d5e';
+  px(c,bx,by,Math.round(bw*u),7,col);
+  dkTextC(c,(u*16).toFixed(1),cx,by-9,col);
+  if(!blow&&u<0.25&&((t>>2)&1))px(c,bx-1,by-1,bw+2,9,'rgba(255,77,94,0.20)');
+  const vy=Math.round(h*0.66);
+  pxDisc(c,cx,vy,13,'#0c1826');pxDisc(c,cx,vy,10,blow?'#3a1010':'#060d16');
+  if(blow){const bf=(kk-150)/70;
+    dkGlow(c,cx,vy,34,'255,90,60',0.55*(1-bf));
+    dkSparks(c,cx,vy,10,22,((t>>1)&1)?'#ffd23c':'#ff5a3c');
+    dkTextC(c,'BLOWOUT',cx,vy-2,'#ffb27a');
+  }else{
+    for(let i=0;i<4;i++){const a=t*0.05+i*1.5708;
+      for(let s=3;s<=9;s++)px(c,Math.round(cx+Math.cos(a)*s)-1,Math.round(vy+Math.sin(a)*s)-1,2,2,(i===0)?'#39c6ff':'#2a5a72');}
+    pxDisc(c,cx,vy,3,'#39c6ff');
+  }
+}
+function startCrankIntro(){
+  startDeck({t1:'VALVE CTRL',t2:'FIELD MANUAL',last:'START ▸',slides:[
+    {title:'THE TIMING TRACK',w:150,h:58,wide:true,draw:dkCrankTrack,lines:[
+      'a marker sweeps a track under two sliding windows.',
+      'fire on <b class="hl-green">green</b> to bleed one turn out of the main.',
+      'the <b class="hl-red">red</b> window vents scalding steam back at you — wait it out.']},
+    {title:'ACTUATE',w:116,h:100,draw:dkCrankServo,lines:[
+      'press '+dkBtn('confirm','SPACE','A')+' to fire the servo.',
+      'every clean pulse fills one pip. fill them all and the main releases.']},
+    {title:'THE PURGE CLOCK',w:140,h:64,wide:true,draw:dkCrankClock,lines:[
+      'let the clock run out and the valve blows in your face.',
+      'it still counts as done — the failure just costs you a <b class="hl-red">heart</b>.',
+      dkBtn('back','ESC','B')+' backs off; the turns you already bled are kept.']}
+  ]});
+}
+
+/* ===== ICE PRIMER (cyber wall terminal — the HACK minigame) ===== */
+let hackIntroSeen=false;
+const DK_GLYPH=[1,4,6];                    // the demo glyph, shared by both ICE slides
+// flat-topped regular octagon, same geometry the ICE console uses: side k runs vertex k -> k+1
+function dkOctV(cx,cy,r,k){const a=Math.PI/8+k*(Math.PI/4);return [cx+Math.cos(a)*r,cy+Math.sin(a)*r];}
+function dkOctSide(c,cx,cy,r,k,col){const a=dkOctV(cx,cy,r,k),b=dkOctV(cx,cy,r,(k+1)%8);
+  dkLine(c,a[0],a[1],b[0],b[1],col);}
+function dkOctMid(cx,cy,r,k){const a=dkOctV(cx,cy,r,k),b=dkOctV(cx,cy,r,(k+1)%8);
+  return [(a[0]+b[0])/2,(a[1]+b[1])/2];}
+// slide 1 — rotate the cursor onto the lit side, select, watch the side fold into the glyph
+function dkHackRing(c,w,h,t,k){
+  dkClear(c,w,h,'#05090f');
+  for(let gy=3;gy<h;gy+=9)px(c,0,gy,w,1,'#0a1420');
+  const cx=Math.round(w/2),cy=Math.round(h*0.46),R=Math.min(32,(h*0.32)|0);
+  const CYC=58,KC=CYC*(DK_GLYPH.length+1),kk=k%KC;
+  const step=Math.min(DK_GLYPH.length,Math.floor(kk/CYC)),ph=kk%CYC;
+  const building=step<DK_GLYPH.length;
+  const tgt=building?DK_GLYPH[step]:DK_GLYPH[DK_GLYPH.length-1];
+  const prev=step===0?6:DK_GLYPH[step-1];
+  const ang=function(kk2){return Math.PI/8+(kk2+0.5)*(Math.PI/4);};
+  let a0=ang(prev),a1=ang(tgt),d=a1-a0;
+  while(d>Math.PI)d-=6.28318; while(d<-Math.PI)d+=6.28318;
+  const pa=a0+d*dkEase(Math.min(1,ph/24));
+  const sel=building&&ph>=28&&ph<38;
+  for(let s=0;s<8;s++){
+    const got=DK_GLYPH.indexOf(s)>=0&&DK_GLYPH.indexOf(s)<step;
+    const lit=building&&s===tgt;
+    dkOctSide(c,cx,cy,R,s,got?'#3dff9a':lit?(((t>>2)&1)?'#ffd23c':'#8a6a1a'):'#1c4256');
+    if(lit){const m=dkOctMid(cx,cy,R,s);dkGlow(c,m[0],m[1],10,'255,210,60',0.28);}
+  }
+  // the glyph forming at the core: a spoke to every side taken so far
+  for(let i=0;i<(building?step:DK_GLYPH.length);i++){
+    const m=dkOctMid(cx,cy,R*0.62,DK_GLYPH[i]);
+    dkLine(c,cx,cy,m[0],m[1],'#7fe6ff');px(c,Math.round(m[0])-1,Math.round(m[1])-1,2,2,'#bdf4ff');}
+  px(c,cx-1,cy-1,2,2,'#eafcff');
+  // cursor bracket riding the ring
+  const px0=cx+Math.cos(pa)*(R+7),py0=cy+Math.sin(pa)*(R+7);
+  const ccol=sel?'#3dff9a':'#eef6ff';
+  px(c,Math.round(px0)-2,Math.round(py0)-2,4,1,ccol);px(c,Math.round(px0)-2,Math.round(py0)+1,4,1,ccol);
+  px(c,Math.round(px0)-2,Math.round(py0)-1,1,2,ccol);px(c,Math.round(px0)+1,Math.round(py0)-1,1,2,ccol);
+  if(sel){dkGlow(c,px0,py0,12,'61,255,154',0.4);dkSparks(c,px0,py0,5,8,'#3dff9a');}
+  dkTextC(c,building?'BUILD':'FORMED',cx,h-8,building?'#3a6f88':'#3dff9a');
+}
+// slide 2 — the candidate grid, and the cursor hunting down the glyph you just built
+function dkHackGrid(c,w,h,t,k){
+  dkClear(c,w,h,'#05090f');
+  const COLS=6,ROWS=3,CW=22,CH=20;
+  const gx0=Math.round((w-COLS*CW)/2),gy0=24,TGT=9;
+  const KC=230,kk=k%KC,STEP=12;
+  const cur=Math.min(TGT,Math.floor(kk/STEP)),locked=kk>=TGT*STEP+12;
+  function setFor(i){const out=[];for(let s=0;s<8;s++)if(((i*37+s*13)%7)<3)out.push(s);return out.length?out:[0,4];}
+  function glyph(gx,gy,r,sides,col){for(let i=0;i<sides.length;i++)dkOctSide(c,gx,gy,r,sides[i],col);
+    px(c,Math.round(gx)-1,Math.round(gy)-1,2,2,col);}
+  // the reference: what you built on the ring
+  px(c,4,3,52,17,'#0a1620');px(c,4,3,52,1,'#1c4256');
+  pxText(c,'BUILT',7,9,'#3a6f88');
+  glyph(44,11,7,DK_GLYPH,'#7fe6ff');
+  for(let r=0;r<ROWS;r++)for(let cc=0;cc<COLS;cc++){
+    const i=r*COLS+cc,X=gx0+cc*CW,Y=gy0+r*CH,on=(i===cur),hit=locked&&i===TGT;
+    px(c,X+1,Y+1,CW-3,CH-3,hit?'#0e2a1c':'#0a1620');
+    px(c,X+1,Y+1,CW-3,1,hit?'#3dff9a':'#12242e');
+    const sides=(i===TGT)?DK_GLYPH:setFor(i);
+    glyph(X+CW/2-0.5,Y+CH/2-0.5,6.5,sides,hit?'#9dffc0':(i===TGT&&locked?'#9dffc0':'#2f6a82'));
+    if(on&&!locked){c.strokeStyle='#eef6ff';c.lineWidth=1;c.strokeRect(X+1.5,Y+1.5,CW-4,CH-4);}
+    if(hit){dkGlow(c,X+CW/2,Y+CH/2,13,'61,255,154',0.35);
+      if((t>>2)&1){c.strokeStyle='#3dff9a';c.lineWidth=1;c.strokeRect(X+1.5,Y+1.5,CW-4,CH-4);}}
+  }
+  pxText(c,locked?'MATCH':'FIND IT',w-34,9,locked?'#3dff9a':'#3a6f88');
+}
+// slide 3 — three layers of ICE, one clock over all of them
+function dkHackLayers(c,w,h,t,k){
+  dkClear(c,w,h,'#05090f');
+  const cx=Math.round(w/2),KC=260,kk=k%KC;
+  const done=kk<60?0:kk<120?1:kk<180?2:3;
+  const bw=Math.round(w*0.60),bx=Math.round(cx-bw/2);
+  for(let i=0;i<3;i++){const y=8+i*11,on=i<done;
+    px(c,bx,y,bw,8,on?'#0e2a1c':'#12202c');px(c,bx,y,bw,1,on?'#3dff9a':'#1c4256');
+    pxText(c,on?'OPEN':'ICE',bx+4,y+2,on?'#3dff9a':'#3a6f88');
+    if(!on&&i===done)for(let x=bx+22;x<bx+bw-3;x+=4)px(c,x,y+3,2,2,((t>>2)&1)?'#ffcf3a':'#1c4256');
+    if(on)for(let x=bx+22;x<bx+bw-3;x+=4)px(c,x,y+3,2,2,'#1c5a3a');
+  }
+  const u=clamp(1-kk/190,0,1),tb=w-24,tx=12,ty=48;
+  px(c,tx-1,ty-1,tb+2,7,'#0a1420');
+  const col=u>0.5?'#3dff9a':u>0.25?'#ffcf3a':'#ff4d5e';
+  px(c,tx,ty,Math.round(tb*u),5,col);
+  dkTextC(c,(u*28).toFixed(1),cx,ty+9,col);
+  if(kk>=190){const g=(kk-190)/70;dkGlow(c,cx,26,44,'61,255,154',0.35*(1-g));
+    dkTextC(c,'GRANTED',cx,26,'#9dffc0');}
+}
+function startHackIntro(){
+  startDeck({t1:'WALL TERMINAL',t2:'ICE BREAK',last:'START ▸',slides:[
+    {title:'BUILD THE GLYPH',w:118,h:104,draw:dkHackRing,lines:[
+      'the ICE ring lights one side at a time.',
+      'turn the cursor onto the lit side and '+dkBtn('confirm','SPACE','A')+' to fold it in.',
+      'take a <b class="hl-red">wrong side</b> and the whole glyph is scrapped.']},
+    {title:'MATCH IT',w:150,h:88,wide:true,draw:dkHackGrid,lines:[
+      'the console then throws up a grid of near-identical glyphs.',
+      'find the one you just built and input it. a wrong cell scrambles it and you rebuild.']},
+    {title:'THREE LAYERS',w:140,h:62,wide:true,draw:dkHackLayers,lines:[
+      'three glyphs break the node.',
+      'run the clock out and the console arcs in your face — the node still cracks, the failure costs a <b class="hl-red">heart</b>.']}
+  ]});
+}
+
+/* ===== TORCH PRIMER (biohazard sac — the FLAME minigame) ===== */
+let flameIntroSeen=false;
+function dkFlameUrn(c,w,h,bh){
+  px(c,6,6,w-12,bh,'#0d1a22');
+  px(c,6,6,w-12,1,'#1d3a46');px(c,6,6+bh-1,w-12,1,'#1d3a46');
+  px(c,6,6,1,bh,'#1d3a46');px(c,w-7,6,1,bh,'#1d3a46');
+  px(c,4,4,w-8,2,'#132029');
+}
+// slide 1 — the stick aims, but the jet has weight and a sway of its own
+function dkFlameAim(c,w,h,t){
+  dkClear(c,w,h,'#0a1016');
+  const bh=h-32; dkFlameUrn(c,w,h,bh);
+  const spots=[[0.24,0.26],[0.74,0.48],[0.46,0.80]];       // dimmed: the reticle is the subject here
+  for(let i=0;i<3;i++){const X=Math.round(6+(w-12)*spots[i][0]),Y=Math.round(6+bh*spots[i][1]);
+    const r=6+Math.round(Math.sin(t*0.09+i)*1);
+    dkGlow(c,X,Y,r+6,'110,220,120',0.13);
+    pxDisc(c,X,Y,r,'#24572c');pxDisc(c,X,Y,r-2,'#3f9b48');}
+  const rx=6+(w-12)*0.5+Math.sin(t*0.021)*(w-12)*0.30+Math.sin(t*0.047)*3;
+  const ry=6+bh*0.5+Math.sin(t*0.017+1.1)*bh*0.30+Math.cos(t*0.039)*2;
+  const X=Math.round(rx),Y=Math.round(ry);
+  dkGlow(c,rx,ry,13,'120,220,255',0.22);
+  px(c,X-8,Y,5,1,'#9fe8ff');px(c,X+4,Y,5,1,'#9fe8ff');
+  px(c,X,Y-8,1,5,'#9fe8ff');px(c,X,Y+4,1,5,'#9fe8ff');
+  px(c,X-1,Y-1,2,2,'#eafcff');
+  // trailing ghosts: the aim is carrying momentum, it does not stop where you stop
+  for(let i=1;i<4;i++){const gt=t-i*5;
+    const gx=6+(w-12)*0.5+Math.sin(gt*0.021)*(w-12)*0.30+Math.sin(gt*0.047)*3;
+    const gy=6+bh*0.5+Math.sin(gt*0.017+1.1)*bh*0.30+Math.cos(gt*0.039)*2;
+    px(c,Math.round(gx),Math.round(gy),1,1,'rgba(140,220,255,0.30)');}
+  // stick read-out
+  const sx=w-15,sy=h-13,sr=9;
+  pxDisc(c,sx,sy,sr,'#12222c');pxDisc(c,sx,sy,sr-2,'#0a1620');
+  pxDisc(c,Math.round(sx+Math.cos(t*0.021)*4.5),Math.round(sy+Math.cos(t*0.017+1.1)*4.5),3,'#7fe6ff');
+  dkPlate(c,6,h-19,'AIM','#7fd0ee');
+}
+// slide 2 — hold the jet on a pocket until its burn meter tops out. three to a sac.
+function dkFlameBurn(c,w,h,t,k){
+  dkClear(c,w,h,'#0a1016');
+  const bh=h-32; dkFlameUrn(c,w,h,bh);
+  const KC=200,kk=k%KC,idx=Math.min(2,Math.floor(kk/62)),bp=clamp((kk%62)/46,0,1);
+  const spots=[[0.24,0.26],[0.74,0.48],[0.46,0.80]];
+  const nozX=Math.round(w/2),nozY=h-11;
+  const tx=Math.round(6+(w-12)*spots[idx][0]),ty=Math.round(6+bh*spots[idx][1]);
+  for(let i=0;i<3;i++){
+    if(i<idx)continue;                                   // already burnt out
+    const X=Math.round(6+(w-12)*spots[i][0]),Y=Math.round(6+bh*spots[i][1]);
+    const r=6+Math.round(Math.sin(t*0.09+i)*1);
+    dkGlow(c,X,Y,r+7,'110,220,120',0.22);
+    pxDisc(c,X,Y,r,'#2f7a3a');pxDisc(c,X,Y,r-2,'#5fd66a');px(c,X-2,Y-3,2,2,'#bdffc0');
+    if(i===idx){
+      px(c,X-8,Y-r-6,16,3,'#12202c');px(c,X-8,Y-r-6,Math.round(16*bp),3,'#ff9a3c');
+      dkSparks(c,X,Y,4,r+3,((t>>1)&1)?'#ffd23c':'#ff6a3c');}
+  }
+  const n=26;
+  for(let i=0;i<n;i++){const u=i/n;
+    const jx=dkLerp(nozX,tx,u)+Math.sin(t*0.3+i*0.6)*(1.8*u),jy=dkLerp(nozY,ty,u);
+    px(c,Math.round(jx),Math.round(jy),2,2,u<0.35?'#9fe8ff':u<0.7?'#7fd0ee':(((t+i)&3)?'#ff9a3c':'#ffd23c'));}
+  dkGlow(c,tx,ty,12,'255,150,60',0.30);
+  px(c,nozX-4,nozY-1,8,6,'#2a3a44');px(c,nozX-2,nozY-6,4,6,'#3d5560');
+  dkPlate(c,6,h-19,(idx+1)+'/3','#ffd23c');
+}
+// slide 3 — the purge clock, and the fuse waiting at the end of it
+function dkFlameClock(c,w,h,t,k){
+  dkClear(c,w,h,'#0a1016');
+  const cx=Math.round(w/2),KC=230,kk=k%KC,blow=kk>=150;
+  const u=blow?0:clamp(1-kk/150,0,1);
+  const bw=w-24,bx=12,by=12;
+  px(c,bx-1,by-1,bw+2,9,'#0a1420');
+  const col=u>0.5?'#3dff9a':u>0.25?'#ffcf3a':'#ff4d5e';
+  px(c,bx,by,Math.round(bw*u),7,col);
+  dkTextC(c,(u*10).toFixed(1),cx,by-9,col);
+  const vy=Math.round(h*0.66);
+  if(blow){const bf=(kk-150)/80;
+    dkGlow(c,cx,vy,40,'255,110,60',0.55*(1-bf));
+    dkSparks(c,cx,vy,12,26,((t>>1)&1)?'#ffd23c':'#ff6a3c');
+    dkTextC(c,'BURST',cx,vy-2,'#ffcaa0');
+  }else{
+    const r=11+Math.round(Math.sin(t*0.10)*2);
+    dkGlow(c,cx,vy,r+9,'110,220,120',0.24);
+    pxDisc(c,cx,vy,r,'#2f7a3a');pxDisc(c,cx,vy,r-2,'#5fd66a');px(c,cx-3,vy-4,3,3,'#bdffc0');
+    if(u<0.25&&((t>>2)&1))dkGlow(c,cx,vy,r+14,'255,80,80',0.30);
+  }
+}
+function startFlameIntro(){
+  startDeck({t1:'BIOHAZARD SAC',t2:'TORCH DRILL',last:'START ▸',slides:[
+    {title:'AIM',w:112,h:104,draw:dkFlameAim,lines:[
+      'the <b>stick</b> walks the reticle around the sac.',
+      'the jet carries momentum and sways on its own — you never fully let go of it.']},
+    {title:'BURN THEM OUT',w:112,h:104,draw:dkFlameBurn,lines:[
+      'hold '+dkBtn('confirm','SPACE','A')+' to fire the torch.',
+      'keep the flame on one pocket until its meter fills. <b class="hl-green">three pockets</b> to a sac.']},
+    {title:'THE PURGE CLOCK',w:140,h:64,wide:true,draw:dkFlameClock,lines:[
+      'torch all three before the clock runs out.',
+      'a clean burn kills the sac outright. a <b class="hl-red">bust</b> rides an almost-instant fuse and erupts in your face.']}
+  ]});
+}
+
+/* ===== TRANSVERSAL PRIMER (the U-552 pipe run between cities) ===== */
+let subIntroSeen=false;
+function dkSubBore(x,off,h){
+  const T=6,B=h-6,wx=x+off,H=B-T;
+  const m=(T+B)/2+Math.sin(wx*0.021)*H*0.08+Math.sin(wx*0.008+1.3)*H*0.06;
+  const half=H*0.31+Math.sin(wx*0.016+2.3)*H*0.05;
+  let top=m-half,bot=m+half;
+  if(top<T){bot+=T-top;top=T;} if(bot>B){top-=bot-B;bot=B;}
+  return [Math.round(Math.max(T,top)),Math.round(Math.min(B,bot))];
+}
+function dkSubPipe(c,w,h,t,off,ph){
+  const H=ph||h,T=6,B=H-6;
+  const g=c.createLinearGradient(0,0,0,H);                    // black at the crown, silt along the invert
+  g.addColorStop(0,'#061218');g.addColorStop(0.55,'#0b2028');g.addColorStop(1,'#12211a');
+  c.clearRect(0,0,w,h);c.fillStyle=g;c.fillRect(0,0,w,H);
+  if(H<h)px(c,0,H,w,h-H,'#040c11');
+  for(let i=0;i<26;i++){                                      // drifting silt sells the direction of the current
+    const sx=((i*37+off*1.6)%(w+30))-15, sy=T+((i*29+Math.sin(t*0.1+i)*7)%(B-T));
+    px(c,Math.round(w-sx),Math.round(sy),1,1,(i&3)?'#16303a':'#1e4250');}
+  for(let x=0;x<w;x++){
+    const b=dkSubBore(x,off,H),wx=x+off;
+    const ribc=((Math.floor(wx/26)%2)===0)?'#333a35':'#2b312d';
+    px(c,x,0,1,b[0],'#141a17');px(c,x,b[1],1,H-b[1],'#141a17');
+    px(c,x,Math.max(0,b[0]-14),1,Math.min(14,b[0]),ribc);
+    px(c,x,b[1],1,Math.min(14,H-b[1]),ribc);
+    px(c,x,b[0]-2,1,2,'#4a5348');px(c,x,b[1],1,3,'#4a5348');   // concrete lip
+    px(c,x,b[0],1,1,'#2d4a34');px(c,x,b[1]-1,1,1,'#2d4a34');   // algae at the waterline
+    px(c,x,b[1]-3,1,2,'#243a2a');                              // silt bed on the invert
+    if(((wx|0)%26)<2){px(c,x,0,1,b[0],'#3d463f');px(c,x,b[1],1,H-b[1],'#3d463f');}
+  }
+}
+// the primer shows the real U-552 sprite, drawn onto the slide's own canvas
+function dkSubBoat(c,X,Y,t,boost){drawSubBoat(c,X,Y+5,0,boost,t*0.016,false);
+  if(boost)dkGlow(c,X-22,Y,16,'255,180,60',0.34);}
+// dir -1 = swimming left (head on the left), +1 = swimming right; the tail trails behind either way
+function dkSubMob(c,X,Y,t,seed,dir){
+  const d=(dir===undefined?-1:dir);
+  for(let i=0;i<6;i++)px(c,Math.round(X-d*i*3),Math.round(Y+Math.sin(t*0.2+i*0.7+seed)*2),3,3,i?'#7a2f4a':'#b5416a');
+  px(c,Math.round(X+d*2-1),Math.round(Y),2,2,'#ffd23c');
+}
+// slide 1 — the current does the driving; you only own up and down
+function dkSubStream(c,w,h,t){
+  const off=t*2.2; dkSubPipe(c,w,h,t,off);
+  const X=Math.round(w*0.34),b=dkSubBore(X,off,h);
+  const Y=Math.round((b[0]+b[1])/2+Math.sin(t*0.035)*((b[1]-b[0])*0.26));
+  dkSubBoat(c,X,Y,t,false);
+  const ax=X+38,upOn=Math.sin(t*0.035)<0;
+  for(let i=0;i<5;i++)px(c,ax-i,Y-20+i,1+i*2,1,upOn?'#7fe6ff':'#224a5a');
+  for(let i=0;i<5;i++)px(c,ax-(4-i),Y+18+i,9-i*2,1,!upOn?'#7fe6ff':'#224a5a');
+  dkPlate(c,3,3,'STREAM','#7fd0ee');
+  for(let i=0;i<3;i++)px(c,Math.round(46+i*6+((t*1.4)%16)),8,4,1,'#2be0ff');
+}
+// slide 2 — the bow tubes, and why everything comes at you head-on
+function dkSubFire(c,w,h,t,k){
+  const off=t*2.2; dkSubPipe(c,w,h,t,off);
+  const X=Math.round(w*0.24),b=dkSubBore(X,off,h),Y=Math.round((b[0]+b[1])/2);
+  const KC=95,kk=k%KC;
+  const mobX=Math.round(dkLerp(w-6,w*0.60,Math.min(1,kk/55))),my=Y+5+Math.round(Math.sin(t*0.08)*4);
+  if(kk<55||kk>=78)dkSubMob(c,mobX,my,t,0,-1);
+  else{const bf=(kk-55)/23;dkGlow(c,mobX,my,20,'255,140,60',0.55*(1-bf));
+    dkSparks(c,mobX,my,10,15,((t>>1)&1)?'#ffd23c':'#ff6a3c');}
+  dkSubBoat(c,X,Y,t,false);
+  if(kk>=20&&kk<55){const u=(kk-20)/35,tp=Math.round(dkLerp(X+18,mobX,u)),ty2=Y+5;
+    px(c,tp-7,ty2-1,12,3,'#3f4a4e');px(c,tp+5,ty2-1,2,3,'#8fa3a6');px(c,tp-8,ty2,1,1,'#6b7a7e');
+    px(c,tp-7,ty2-2,3,1,'#5b6b6f');px(c,tp-7,ty2+2,3,1,'#5b6b6f');
+    dkGlow(c,tp-9,ty2,8,'180,230,255',0.22);}
+  dkPlate(c,3,3,'BOW TUBES','#7fd0ee');
+}
+// slide 3 — the mine bay: the only thing a boat has for what is already past it
+function dkSubMines(c,w,h,t,k){
+  const off=t*2.2; dkSubPipe(c,w,h,t,off);
+  const X=Math.round(w*0.48),b=dkSubBore(X,off,h),Y=Math.round((b[0]+b[1])/2);
+  const KC=115,kk=k%KC;
+  function mine(mx,my,arm){dkGlow(c,mx,my,9,'255,210,60',arm?0.40:0.16);
+    pxDisc(c,mx,my,4,'#2a3a44');pxDisc(c,mx,my,3,(arm&&((t>>2)&1))?'#ffd23c':'#5a3a10');
+    for(let i=0;i<4;i++){const a=i*1.5708+0.7;
+      px(c,Math.round(mx+Math.cos(a)*5),Math.round(my+Math.sin(a)*5),2,2,'#3d5560');}}
+  const bY=Y+5;
+  if(kk>10){const u=Math.min(1,(kk-10)/40),dx=X-2-Math.round(u*24);
+    mine(dx,bY-Math.round(dkEase(u)*20),kk>46);
+    mine(dx,bY+Math.round(dkEase(u)*16),kk>46);}
+  dkSubBoat(c,X,Y,t,false);
+  const chase=Math.round(dkLerp(-12,X-30,Math.min(1,kk/72)));
+  if(kk<80)dkSubMob(c,chase,bY+Math.round(Math.sin(t*0.1)*3),t,1.4,1);
+  else{const bf=(kk-80)/35;dkGlow(c,X-30,bY,20,'255,140,60',0.55*(1-bf));
+    dkSparks(c,X-30,bY,10,15,((t>>1)&1)?'#ffd23c':'#ff6a3c');}
+  dkPlate(c,3,3,'MINE BAY','#7fd0ee');
+}
+// slide 4 — emergency thrust: one burn, wide open, then a long walk back
+function dkSubBoost(c,w,h,t,k){
+  const KC=310,kk=k%KC,burning=kk>=40&&kk<130;
+  const off=t*2.2+(burning?(kk-40)*3.6:0);
+  const H=h-16;                                     // the coil gauge owns the strip under the bore
+  dkSubPipe(c,w,h,t,off,H);
+  const X=Math.round(w*(burning?0.42:0.28)),b=dkSubBore(X,off,H),Y=Math.round((b[0]+b[1])/2);
+  dkSubBoat(c,X,Y,t,burning);
+  let u;
+  if(kk<40)u=1; else if(burning)u=clamp(1-(kk-40)/90,0,1); else u=clamp((kk-130)/180,0,1);
+  const bw=w-58,bx=54,by=h-11;
+  px(c,bx-1,by-1,bw+2,8,'#0a1420');
+  px(c,bx,by,Math.round(bw*u),6,burning?'#ffd23c':(u>=1?'#3dff9a':'#39c6ff'));
+  const lab=burning?'BURNING':(u>=1?'READY':'REBUILDING');
+  pxText(c,lab,4,by+1,burning?'#ffd23c':(u>=1?'#3dff9a':'#3a6f88'));
+  dkPlate(c,3,3,'BOOST COIL','#7fd0ee');
+}
+function startSubIntro(){
+  startDeck({t1:'U-552 TRANSIT',t2:'PIPE RUN',last:'DIVE ▸',slides:[
+    {title:'THE STREAM CARRIES YOU',w:150,h:96,wide:true,draw:dkSubStream,lines:[
+      'the main pushes the boat forward on its own. all you steer is <b>up</b> and <b>down</b>.',
+      'scrape the wall and the <b class="hl-red">hull</b> pays for it — hull at zero ends the run for good.']},
+    {title:'BOW TUBES',w:150,h:96,wide:true,draw:dkSubFire,lines:[
+      dkBtn('mine','F','X')+' fires forward.',
+      'a boat cannot shoot behind itself, and everything living in the pipe knows it.']},
+    {title:'MINE BAY',w:150,h:96,wide:true,draw:dkSubMines,lines:[
+      dkBtn('craft','Q','LT')+' drops a mine <b>above</b>, '+dkBtn('pack','E','RB')+' drops one <b>below</b>.',
+      'that is your whole answer to something already on your tail.']},
+    {title:'EMERGENCY THRUST',w:150,h:96,wide:true,draw:dkSubBoost,lines:[
+      dkBtn('clip','X','Y')+' lights the coil: <b class="hl-yellow">one burn, wide open, no brakes</b>.',
+      'it rebuilds slowly, so spend it making an exit — not nudging position.',
+      'salvage you drag through the far gate pays for fittings at the dry dock.']}
+  ]});
+}
+
 /* ================================================================================
  * PC MODE + FULL KEYBOARD / GAMEPAD BINDINGS
  * The handheld shell is the touch layout. The moment the player uses a keyboard
@@ -9167,6 +9889,7 @@ const DLG=[
   {el:'#tut-nav',next:'#tut-next',prev:'#tut-prev',skip:'#tut-skip'},
   {el:'#bi-nav', next:'#bi-next', prev:'#bi-prev', skip:'#bi-skip'},
   {el:'#mi-nav', next:'#mi-next', prev:'#mi-prev', skip:'#mi-skip'},
+  {el:'#dk-nav', next:'#dk-next', prev:'#dk-prev', skip:'#dk-skip'},
 ];
 function dlgOpen(){
   for(const d of DLG){
