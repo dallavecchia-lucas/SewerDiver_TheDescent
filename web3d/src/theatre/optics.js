@@ -10,13 +10,34 @@ export const OPT = {
   L: 175.0,           // eye distance in front of the faceplate
   EYE_Y: 9.0,         // the toy is held slightly below eye level: we look a touch down into the box
   HH: 48.0,           // half-height of the view rect on the faceplate plane (mm)
-  R_OUT: 210.0,       // faceplate sphere radius (CRT tube face curvature)
+  R_OUT: 210.0,       // faceplate sphere radius (CRT tube face curvature); fitTube() sets it per view shape
+  R_PORTRAIT: 210.0,  // the reference tube: a portrait view always gets exactly this curvature
   T_GLASS: 2.6,       // glass thickness
   N_GLASS: 1.52,
   N_WATER: 1.333,
   BULB_PAD: 1.045,    // bulb glass extends a little past the game view rect
   BULB_POW: 8.0,      // superellipse exponent of the tube face outline (8 ~ late-60s rectangular CRT)
+  CARD_FIT: 0.93,     // the card flat's size vs the stage opening (portrait)
 };
+
+// Fit the tube to the view's shape. Portrait (and square) views get the reference tube,
+// untouched. A landscape view is the same set behind a wider, flatter, squarer faceplate:
+// spreading the portrait curvature over a much longer face would bow the picture's sides and
+// round its corners away, so the sphere radius grows with the aspect (the bulge stays, just
+// subtle), the outline squares up so the corners keep the game, and the card flat (minigames,
+// menus) takes more of the opening. Sets OPT.R_OUT; returns the outline / card parameters.
+export function fitTube(halfW, halfH) {
+  const a = halfW / halfH;
+  const t = Math.min(1, Math.max(0, (a - 1) / 0.5));       // 0 portrait..square, 1 at 3:2 and wider
+  OPT.R_OUT = OPT.R_PORTRAIT * Math.pow(Math.max(1, a), 0.8);
+  return {
+    pow: OPT.BULB_POW + 6 * t,
+    card: OPT.CARD_FIT + 0.04 * t,
+    // the glass runs past the view by BULB_PAD; a landscape face only by the height's pad, so
+    // its sides don't get a thicker rim than its top and bottom
+    bx: Math.min(halfW * OPT.BULB_PAD, halfW + halfH * (OPT.BULB_PAD - 1)), by: halfH * OPT.BULB_PAD,
+  };
+}
 
 // ---- tiny vec3 helpers (allocation-light; this runs a few hundred times per frame at most)
 const v = (x, y, z) => [x, y, z];

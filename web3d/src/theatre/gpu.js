@@ -69,14 +69,15 @@ export class GPUState {
   // Superellipse tube-face mask: 1 inside the bulb glass, soft over ~edge px.
   bulbMask(w) {
     const b = this.uBulb;
-    const q = abs(w).div(b.xy);
-    const e = pow(q.x, b.z).add(pow(q.y, b.z));
-    const r = pow(e, float(1).div(b.z));                 // ~1 on the outline
-    return smoothstep(float(1.0), float(1.0).sub(b.w.div(b.y)), r);
+    return smoothstep(float(1.0), float(1.0).sub(b.w.div(b.y)), this.bulbRadius(w));
   }
+  // ~1 on the tube outline. A portrait face is the plain superellipse. A landscape face keeps
+  // the superellipse of its height and runs straight across the extra width, so its rim,
+  // vignette and corners are as many mm deep at the sides as at the top and bottom.
   bulbRadius(w) {
     const b = this.uBulb;
-    const q = abs(w).div(b.xy);
+    const run = max(b.x.sub(b.y), 0.0);
+    const q = vec2(max(abs(w.x).sub(run), 0.0).div(min(b.x, b.y)), abs(w.y).div(b.y));
     return pow(pow(q.x, b.z).add(pow(q.y, b.z)), float(1).div(b.z));
   }
 
