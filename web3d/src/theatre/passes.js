@@ -232,6 +232,7 @@ export function makeCompose(G, T, U) {
 
       const col = vec3(0).toVar();
       const tHit = hitT.toVar();
+      const cardAlb = vec3(0).toVar(), onCard = float(0).toVar();
       const kL = int(0), kN = int(1);
       const LP0 = G.uLP.element(kL).toVar(), LP1 = G.uLP.element(kN).toVar(), LC1 = G.uLC.element(kN).toVar(), LD1 = G.uLD.element(kN).toVar();
       const LC0 = G.uLC.element(kL).toVar();
@@ -268,7 +269,7 @@ export function makeCompose(G, T, U) {
         const aU = texture(T.albedo, uv.sub(vec2(0, ey))).level(0).a, aD = texture(T.albedo, uv.add(vec2(0, ey))).level(0).a;
         const gx = aL.sub(aR), gy = aD.sub(aU);               // points out of the shape (view y is down)
         // faint injection-moulding ripple across the face
-        const rip = sin(hvx.mul(0.21).add(hvy.mul(0.05)).add(float(k).mul(1.7))).mul(0.018);
+        const rip = sin(hvx.mul(0.21).add(hvy.mul(0.05)).add(float(k).mul(1.7))).mul(0.003);   // barely-there moulding ripple
         const Nface = normalize(N0.add(Ua.mul(gx.mul(0.55).add(rip))).add(Va.mul(gy.mul(-0.55)).negate()));
         const Nside = normalize(Ua.mul(gx).sub(Va.mul(gy)).add(N0.mul(0.08)));
         const N = select(side.greaterThan(0.5), Nside, Nface).toVar();
@@ -297,12 +298,18 @@ export function makeCompose(G, T, U) {
         const LX1 = G.uLX.element(kN);
         const self1 = select(float(k).equal(LX1.x), smoothstep(LX1.y.mul(0.55), LX1.y, length(P.xy.sub(LP1.xy))), float(1));
         const lanC = LC1.rgb.mul(select(rng1.lessThan(0.0), float(1), fo1.mul(fo1)).mul(sp1).mul(self1)).mul(exp(G.uSigA.add(G.uSigS).mul(d1).negate()));
-        const spec = specOf(lk, keyC).add(specOf(l1n, lanC)).mul(irr.a).mul(float(1).sub(side.mul(0.5)));
+        // The room key light's mirror highlight would sit as one broad glare patch over the
+        // top-left of every big flat plate (a window reflected on a TV). Only the small props
+        // (actors, foreground) keep a satin glint from it; the card flat is a matte display.
+        const kSpec = select(k.equal(int(3)).or(k.equal(int(4))), float(0.35), float(0));
+        const lSpec = select(k.equal(int(P_CARD)), float(0), float(1));
+        const spec = specOf(lk, keyC).mul(kSpec).add(specOf(l1n, lanC).mul(lSpec)).mul(irr.a).mul(float(1).sub(side.mul(0.5)));
         // light piping in acrylic: translucent props glow along their cut edges
         const edgeGlow = alb.rgb.mul(tr).mul(abs(gx).add(abs(gy)).mul(0.9).add(side.mul(0.6))).mul(irr.rgb.add(0.05));
         const paintGlow = alb.rgb.mul(tr).mul(0.08);
-        const cardGlow = select(k.equal(int(P_CARD)), alb.rgb.mul(U.uCardGlow), vec3(0));
+        const cardGlow = select(k.equal(int(P_CARD)), alb.rgb.mul(U.uCardGlow), vec3(0));   // (replaced by the faithful path below once the card has settled)
         col.assign(diff.add(spec).add(edgeGlow).add(paintGlow).add(emi.rgb.mul(0.5)).add(cardGlow));
+        If(k.equal(int(P_CARD)), () => { cardAlb.assign(alb.rgb); onCard.assign(1); });
       }).Else(() => {
         // the box's back wall, behind every plate (only visible past an unfilled bleed)
         tHit.assign(float(-2).sub(o.z).div(d.z));
@@ -313,7 +320,11 @@ export function makeCompose(G, T, U) {
       const vol = texture(T.vol, screenUV).level(0);
       const sigT = G.uSigA.add(G.uSigS.mul(float(1).add(vol.a.mul(3.5))));
       const Tr = exp(sigT.mul(tHit).negate());
-      const c2 = col.mul(Tr).add(vol.rgb).add(G.uWaterCol.mul(0.004));
+      const c2w = col.mul(Tr).add(vol.rgb).add(G.uWaterCol.mul(0.004));
+      // The card flat carries the minigames and menus: it must read exactly like the original
+      // panel. Pre-invert the final tone curve + exposure so its paint comes out unchanged.
+      const faithful = invTone(min(cardAlb, vec3(0.97))).div(U.uExposure);
+      const c2 = select(onCard.greaterThan(0.5), mix(c2w, faithful, saturate(U.uCardGlow.div(0.95))), c2w);
       // signed distance to the tilted (Scheimpflug) focal plane, for the tilt-shift pass
       const P = o.add(d.mul(tHit));
       const nF = vec3(0, sin(U.uFocus.w).negate(), cos(U.uFocus.w));
@@ -410,6 +421,14 @@ export function makeFinal(G, T, U) {
       });
     });
 
+    // --- where the card flat (minigames, menus) is seen: it skips the theatrical grade so the
+    // panel reads exactly like the original game screen
+    const Rg = G.glassRay(w);
+    const ch = G.plateHit(int(P_CARD), Rg.o, Rg.d, 0);
+    const onCardRect = ch.vx.greaterThan(0.0).and(ch.vx.lessThan(G.uAtlas.x)).and(ch.vy.greaterThan(0.0)).and(ch.vy.lessThan(G.uAtlas.y))
+      .and(G.uPV.element(int(P_CARD)).w.greaterThan(0.5));
+    const cardCov = select(onCardRect, saturate(U.uCardGlow.div(0.95)), float(0)).toVar();
+
     // --- grime film on the inner glass: out of focus by nature (it sits in front of the focal plane)
     const gt = texture(T.grime, w.div(120.0).add(0.5)).level(0);     // baked once (makeGrimeBake)
     const g1 = gt.r, g2 = gt.g;
@@ -424,6 +443,7 @@ export function makeFinal(G, T, U) {
     const vol = texture(T.vol, screenUV).level(0).rgb;
     // dirt on glass mostly absorbs: it dims and browns what is behind it, it does not glow
     const grimeTint = vec3(0.42, 0.38, 0.22).mul(G.uWaterCol.mul(0.6).add(vec3(0.4, 0.43, 0.3)));
+    film.mulAssign(float(1).sub(cardCov.mul(0.85)));
     col.assign(col.mul(float(1).sub(film.mul(0.42))).add(grimeTint.mul(film).mul(vol.mul(0.9).add(G.uAmbient.mul(0.5)))));
 
     // --- outer glass: Fresnel reflection of the room + total internal reflection at the rim
@@ -449,7 +469,7 @@ export function makeFinal(G, T, U) {
     const sat = mix(vec3(lum), tm, float(1.12));
     const con = sat.sub(0.5).mul(1.05).add(0.5);
     const vig = float(1).sub(smoothstep(float(0.55), float(1.05), rr).mul(0.32));
-    const graded0 = saturate(con.mul(vig));
+    const graded0 = mix(saturate(con.mul(vig)), saturate(tm), cardCov);
     // the HUD is printed on the glass: blended after tone mapping, in display (sRGB) space,
     // exactly like the original canvas did it (a damage tint must not flood the scene)
     const gS0 = pow(graded0, vec3(1 / 2.2)), hS = pow(hud.rgb, vec3(1 / 2.2));
@@ -480,6 +500,13 @@ export function makeFinal(G, T, U) {
     If(dv.equal(7), () => { res.assign(vec4(texture(T.irr, screenUV).level(0).a, 0, 0, 1)); });
     return res;
   })());
+}
+
+// Inverse of the final pass' filmic curve y = x(2.51x+.03)/(x(2.43x+.59)+.14), per channel.
+function invTone(y) {
+  const a = y.mul(2.43).sub(2.51), b = y.mul(0.59).sub(0.03), c = y.mul(0.14);
+  const disc = max(b.mul(b).sub(a.mul(c).mul(4.0)), vec3(0));
+  return b.negate().sub(sqrt(disc)).div(a.mul(2.0));
 }
 
 // The grime film's noise is static: bake it once into a texture (window mm -60..60).
