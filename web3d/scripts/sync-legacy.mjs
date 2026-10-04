@@ -111,9 +111,8 @@ patch('render: close the murk branch',
   "  radial(ctx,pgx,pgy,26,'rgba(120,175,235,0.10)','rgba(120,175,235,0)');\n  ctx.globalCompositeOperation='source-over';\n",
   "  radial(ctx,pgx,pgy,26,'rgba(120,175,235,0.10)','rgba(120,175,235,0)');\n  ctx.globalCompositeOperation='source-over';\n  }\n");
 patch('render: prompt through the optics',
-  "    const cw=canvas.clientWidth,ch=canvas.clientHeight;\n    const sx=(ptx-camera.x)/VW*cw+canvas.offsetLeft;\n    const sy=(pty-camera.y)/VH*ch+canvas.offsetTop;\n",
-  "    let sx,sy;\n    if(TH&&TH.ready){const q=TH.viewToStage(3,ptx-RCX,pty-RCY);sx=q[0];sy=q[1];}\n" +
-  "    else{const cw=canvas.clientWidth,ch=canvas.clientHeight;\n    sx=(ptx-camera.x)/VW*cw+canvas.offsetLeft;\n    sy=(pty-camera.y)/VH*ch+canvas.offsetTop;}\n");
+  "function osdAt(x,y){return [x,y];}",
+  "function osdAt(x,y){return (TH&&TH.ready)?TH.viewToHud(3,x,y):[x,y];}");
 patch('render: HUD printed on the glass',
   "  if(player.tint>0&&player.tintCol){ctx.fillStyle='rgba('+player.tintCol+','+(player.tint*0.22).toFixed(3)+')';ctx.fillRect(0,0,VW,VH);}\n  drawHUD(tier);\n}",
   "  if(TH)ctx=TH.atlas.beginHud();\n" +

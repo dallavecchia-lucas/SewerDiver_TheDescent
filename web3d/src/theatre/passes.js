@@ -456,11 +456,28 @@ export function makeFinal(G, T, U) {
     const rimBand = smoothstep(float(0.9), float(0.995), rr).mul(smoothstep(float(1.02), float(0.995), rr));
     col.assign(col.mul(float(1).sub(rimBand.mul(0.55))).add(vec3(0.16, 0.2, 0.22).mul(pow(rimBand, 3.0)).mul(0.35)));
 
-    // --- HUD printed on the inside of the glass (sharp: it is not in the water)
-    const hv = px.sub(U.uHudRect.xy).div(U.uHudRect.zw);
-    const hud = texture(T.hud, hv).level(0);
-    const inH = hv.x.greaterThan(0.0).and(hv.x.lessThan(1.0)).and(hv.y.greaterThan(0.0)).and(hv.y.lessThan(1.0));
-    const hudA = select(inH, hud.a.mul(U.uHudOn), float(0));
+    // --- HUD: the set's own on-screen display, seen through the flooded tube. The water just
+    // behind the glass moves it: currents drag it, heat shimmer bends it, a slow swell ripples
+    // it, the water softens it, and the grime filming the glass dims it.
+    const hv0 = px.sub(U.uHudRect.xy).div(U.uHudRect.zw);
+    const pw = R.o.add(R.d.mul(3.0));
+    const hc = G.sampleField(T.density, pw);
+    const hgx = G.sampleField(T.density, pw.add(vec3(1.6, 0, 0))).z.sub(hc.z);
+    const hgy = G.sampleField(T.density, pw.add(vec3(0, 1.6, 0))).z.sub(hc.z);
+    const hfv = G.sampleField(T.vel, pw).xyz;
+    const swell = vec2(
+      sin(hv0.y.mul(31.0).add(G.uTime.mul(1.9))).mul(0.0022).add(sin(hv0.y.mul(83.0).sub(G.uTime.mul(3.1))).mul(0.0007)),
+      cos(hv0.x.mul(23.0).add(G.uTime.mul(1.4))).mul(0.0016));
+    const drift = clamp(vec2(hfv.x.mul(0.0006).add(hgx.mul(0.03)), hfv.y.mul(-0.0006).sub(hgy.mul(0.03))), vec2(-0.008), vec2(0.008));
+    const hv = hv0.add(swell).add(drift);
+    // soften: a 5-tap average in premultiplied colour, so transparent texels don't darken the glyph edges
+    const hb = vec2(0.0022, 0.0014);
+    const hTap = (uv, wgt) => { const t4 = texture(T.hud, uv).level(0); return vec4(t4.rgb.mul(t4.a), t4.a).mul(wgt); };
+    const hP = hTap(hv, 0.5).add(hTap(hv.add(hb), 0.125)).add(hTap(hv.sub(hb), 0.125))
+      .add(hTap(hv.add(vec2(hb.y, hb.x.negate())), 0.125)).add(hTap(hv.add(vec2(hb.y.negate(), hb.x)), 0.125));
+    const hud = vec4(hP.rgb.div(max(hP.a, float(1e-4))), hP.a);
+    const inH = hv0.x.greaterThan(0.0).and(hv0.x.lessThan(1.0)).and(hv0.y.greaterThan(0.0)).and(hv0.y.lessThan(1.0));
+    const hudA = select(inH, hud.a.mul(U.uHudOn).mul(float(1).sub(film.mul(0.5))), float(0));
     const dbgHud = vec4(fract(hv), select(inH, float(1), float(0)), 1);
 
     // --- tone map (filmic) + miniature grade: a touch of saturation and contrast, lens vignette

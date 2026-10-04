@@ -5,7 +5,7 @@ import { GPUState } from './gpu.js';
 import { makeIrradiance, makeVolume, makeCompose, makeCocTile, makeDof, makeFinal, makeGrimeBake, passUniforms } from './passes.js';
 import { Fluid } from './fluid.js';
 import { Particles } from './particles.js';
-import { NPLATES, MARGIN } from './sheets.js';
+import { NPLATES, MARGIN, HUD_INSET } from './sheets.js';
 import { OPT, calibratePlate, eyePos } from './optics.js';
 
 const HF = THREE.HalfFloatType;
@@ -166,7 +166,7 @@ export class TheatreRenderer {
     U.uCardGlow.value = S.card.glow * 0.95;
     U.uExposure.value = f.exposure || 1.15;
     U.uManualSRGB.value = this.offscreen ? 1 : 0;
-    const ins = { x: 0.045, y: 0.03 };
+    const ins = HUD_INSET;
     U.uHudRect.value.set(this.view.x + this.view.w * ins.x, this.view.y + this.view.h * ins.y, this.view.w * (1 - 2 * ins.x), this.view.h * (1 - 2 * ins.y));
     U.uHudOn.value = f.hud ? 1 : 0;
     if (f.tint) U.uTint.value.set(f.tint[0], f.tint[1], f.tint[2], f.tint[3]); else U.uTint.value.set(0, 0, 0, 0);

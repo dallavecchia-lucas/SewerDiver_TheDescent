@@ -1528,6 +1528,9 @@ function buildLayerMission(n){
   return {steps,exit:chain[chain.length-1],progress:0,complete:steps.length===0};
 }
 function missionFor(n){return layerMissions[n]||null;}
+// every machine of the layer's quest is one task: [done, total], or null when the layer has none
+function layerTasks(n){const m=layerMissions[n];if(!m||!m.steps.length)return null;let done=0,tot=0;
+  m.steps.forEach((st,k)=>{tot+=st.count;done+=k<m.progress?st.count:k===m.progress?Math.min(st.count,missionStepDone(n,k)):0;});return [done,tot];}
 function missionComplete(n){const m=layerMissions[n];return !!m&&m.complete;}
 const _missionSolidAt=(xx,yy)=>{const t=(yy>=0&&yy<MH&&xx>=0&&xx<MW)?map[yy][xx]:WALL;return t===ROCK||t===WALL;};
 /* ---- objectives and creatures never share a seat ---------------------------
@@ -1692,12 +1695,12 @@ function completeMissionObj(o){
   o.done=true;
   const m=layerMissions[o.tier],st=m.steps[o.step];
   const done=missionStepDone(o.tier,o.step);
-  if(done<st.count){showMsg(st.title+' — '+done+'/'+st.count);return;}
+  if(done<st.count){const lt=layerTasks(o.tier);showMsg('◆ TASK '+lt[0]+'/'+lt[1]);return;}
   m.progress++;sfx.craft();
   if(m.progress>=m.steps.length){m.complete=true;sfx.build();
-    if(o.tier<SCHED.length-1)showMsg('ALL TASKS DONE — the control unit by the bulkhead is online');
-    else showMsg('ALL TASKS DONE — the transit gate will take you');}
-  else showMsg(st.title+' done — NEXT: '+m.steps[m.progress].title);
+    if(o.tier<SCHED.length-1)showMsg('◆ ALL DONE · GO TO AIRLOCK');
+    else showMsg('◆ ALL DONE · GATE OPEN');}
+  else showMsg('◆ DONE · NEXT TASK');
 }
 // control unit tripped on layer i — flood a dry deck below first, then play the bulkhead-open animation
 function controlTrigger(i){
@@ -1706,7 +1709,7 @@ function controlTrigger(i){
   if(i+1<SCHED.length&&tierDry[i+1]){
     floodFx={tier:i+1,t:0,dur:3.4};
     shake=Math.max(shake,5);
-    showMsg('deck below is dry — flooding it now, stand by');
+    showMsg('▼ FLOODING · STAND BY');
   } else startBulkAnim(i);
 }
 function startBulkAnim(i){bulkAnims.push({tier:i,t:0,dur:1.0});sfx.boom();shake=Math.max(shake,7);}
@@ -1715,7 +1718,7 @@ function finishBulkAnim(i){
   const g=missionObjs.find(q=>q.tier===i&&q.type==='gate');if(g)g.done=true;  // done only once truly open (save-safe)
   ensureLayerMission(i+1);   // the next layer's quest — normally already built at generation; idempotent
   verifyMissionIntegrity();  // and re-assert every sprite of it is in place before the diver descends
-  showMsg('bulkhead released — descend');
+  showMsg('▼ DESCEND');
 }
 // F pressed on an active machine — each type is its own little action loop
 function missionInteract(o){
@@ -1724,11 +1727,11 @@ function missionInteract(o){
     if(!m.complete){openObjectives(o.tier);return;}   // briefing screen: every task in this layer
     const d=SCHED[o.tier];
     if(d&&d.layerInEnv===3&&gearLevel<=o.tier){const g=TIERS[o.tier]&&TIERS[o.tier].gear;
-      showMsg('new environment below — fabricate the '+(g?g.name:'next dive suit')+' first');sfx.deny();return;}
+      showMsg('✕ NEED THE SUIT · FAB BAY');sfx.deny();return;}
     // the panel eats the layer's #1 composite once, on top of the finished quest (bulkPaid rides the
     // saved mission, so a save caught mid-animation can't charge twice)
     if(!m.bulkPaid){const toll=bulkToll(o.tier);
-      if(!canPay(toll)){showMsg('panel needs 1× '+RES['t'+(o.tier+1)+'fa'].name+' to power the release');sfx.deny();return;}
+      if(!canPay(toll)){showMsg('✕ NEEDS #1 COMPOSITE');sfx.deny();return;}
       pay(toll);m.bulkPaid=true;sfx.craft();}
     controlTrigger(o.tier);return;
   }
@@ -1914,7 +1917,10 @@ const rewardEl=document.getElementById('reward'),rwIcon=document.getElementById(
 const craftfxEl=document.getElementById('craftfx'),cfIn=document.getElementById('cfIn'),cfOut=document.getElementById('cfOut'),cfLabel=document.getElementById('cfLabel');
 let rewardTimer=null,craftBusy=false;
 let toastTimer=null;
-function showMsg(t){toastEl.textContent=t;toastEl.classList.remove('hidden');clearTimeout(toastTimer);toastTimer=setTimeout(()=>toastEl.classList.add('hidden'),2200);}
+// toasts are printed by the on-screen display (drawHUD), so in the 3D build they sit in the
+// flooded glass with the rest of the HUD instead of floating over it as a DOM box
+let osdToast=null;
+function showMsg(t){osdToast={text:String(t).toUpperCase(),t0:performance.now()};}
 
 // ============ WORLD GEN ============
 function fillRect(x0,y0,x1,y1,t){for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++)if(x>=0&&y>=0&&x<MW&&y<MH)map[y][x]=t;}
@@ -2289,7 +2295,7 @@ function genCreatures(i){
 function cdist(c){return Math.hypot(player.x+4-c.x,player.y+4-c.y);}
 function fungusGrab(c){if(mech&&mech.piloted)return;   // vines can't root a mech — the saw gets them first
   c.state='grab';c.t=0;c.dmgT=0;player.rooted=82;shake=9;sfx.zap();
-  showMsg('it was no ore — the vines have you!');
+  showMsg('⚠ VINES! IT WAS A TRAP');
   burst(c.x,c.y,20,130,0.6,'#7fae3a');}
 function updateCreatures(dt){
   const elo=entTierLo(),ehi=entTierHi();
@@ -2359,7 +2365,7 @@ function updateCompanion(dt){if(!companion)return;const co=companion;
   // whatever it is sitting on goes in the hold, same haul as the diver's own pickup
   collectNear(mixers,co.x,co.y,COMP_GRAB,m=>{addInv(m.resId,1);sfx.pop();burst(m.x,m.y,8,90,0.5,RES[m.resId].col);co.grabFx=0.35;});
   collectNear(scraps,co.x,co.y,COMP_GRAB,s=>{const sd=SCRAPBYID[s.kind];scrapInv[s.kind]=(scrapInv[s.kind]||0)+1;sfx.pop();
-    burst(s.x,s.y,12,110,0.6,sd.col);showMsg('robot · '+sd.name+' ('+sd.coin+' coin)');co.grabFx=0.35;});
+    burst(s.x,s.y,12,110,0.6,sd.col);showMsg('◈ +'+sd.coin+' · ROBOT');co.grabFx=0.35;});
   if(co.grabFx>0)co.grabFx=Math.max(0,co.grabFx-dt);
 }
 
@@ -2398,25 +2404,25 @@ function mechDrain(s){const m=mech;if(!m)return;m.battery=Math.max(0,m.battery-s
   if(m.battery<=0)mechPowerDown();}
 function mechPowerDown(){const m=mech;
   if((player.mechBattery||0)>0){player.mechBattery=0;m.battery=mechBatMax();sfx.build();
-    burst(m.x,m.y,14,120,0.5,'#ffd23c');showMsg('cell spent — the spare slams in');return;}
+    burst(m.x,m.y,14,120,0.5,'#ffd23c');showMsg('▮ SPARE CELL IN');return;}
   m.hookAnchor=null;m.hanging=false;
   if(m.piloted){m.piloted=false;player.x=m.x-4;player.y=m.y-4;player.vx=0;player.vy=-0.4;
     player.invuln=Math.max(player.invuln,40);updateActionLabels();}
   sfx.lose();shake=Math.max(shake,6);
-  showMsg('battery dead — the MULE seizes where it stands. bring it a fresh cell');}
+  showMsg('▮ MULE DEAD · NEEDS CELL');}
 // X near the mech: slot a carried cell into a dead frame, or climb in
 function mechInteract(){const m=mech;
   if(m.battery<=0){
     if((player.mechBattery||0)>0){player.mechBattery=0;m.battery=mechBatMax();sfx.build();
-      burst(m.x,m.y,18,130,0.6,'#ffd23c');showMsg('cell slotted — the MULE rumbles awake');}
-    else{sfx.deny();showMsg('the MULE is dead — craft a battery cell at any workshop (MECH bay)');return;}
+      burst(m.x,m.y,18,130,0.6,'#ffd23c');}
+    else{sfx.deny();showMsg('✕ NEEDS CELL · WORKSHOP');return;}
   }
   m.piloted=true;m.dir=player.dir;m.boostT=mechBoostMax();m.boostOut=false;m.hookAnchor=null;m.hanging=false;
   if(player.attached){player.attached=false;const cb=player.attachedBase||curBase();
     if(cb){cb.endX=player.x+4;cb.endY=player.y+4;}player.attachedBase=null;}
   player.x=m.x-4;player.y=m.y-4;player.vx=0;player.vy=0;player.rooted=0;
   updateActionLabels();
-  sfx.start();showMsg('piloting the MULE — F drill · SPACE hook · hold ↑ boost · X exit · sealed: no O₂ drain');}
+  sfx.start();showMsg('PILOTING · NO AIR DRAIN');}
 // dormant frame keeps honest physics: a mech that dies mid-air falls, lands, and stays put
 function updateMechIdle(dt){const m=mech;
   if(mechOnGround(m)){m.vy=0;m.sawFx=0;return;}
@@ -2431,7 +2437,7 @@ function mechFireHook(m){
   for(let d=8;d<=reach;d+=3){const hx=m.x+axx*d,hy=m.y-4+ayy*d;
     if(solidPx(hx,hy)){m.hookAnchor={x:hx,y:hy};m.hanging=false;mechDrain(MECH_HOOK_COST);
       sfx.dash();burst(hx,hy,6,80,0.4,'#ffd23c');return;}}
-  sfx.deny();showMsg('hook found no purchase within '+mechHookReach()+'u');}
+  sfx.deny();showMsg('✕ HOOK OUT OF REACH');}
 // teleport the MULE to a base pad, exactly as it was left — dead or alive
 function mechCallTo(b){const m=mech;if(!m||!b)return;
   let px0=b.x+18,py0=b.y+4;
@@ -2440,9 +2446,7 @@ function mechCallTo(b){const m=mech;if(!m||!b)return;
     if(!mechCollAt(xx,yy)){px0=xx;py0=yy;break;}}
   m.x=px0;m.y=py0;m.vx=0;m.vy=0;m.off=false;m.piloted=false;m.hookAnchor=null;m.hanging=false;
   updateActionLabels();
-  burst(m.x,m.y,22,150,0.7,'#7fe6ff');bubbleBurst(m.x,m.y-4,8,24,-24,14,1.1,2);sfx.build();
-  showMsg(m.battery>0?'the MULE stomps in — battery at '+Math.round(100*m.battery/mechBatMax())+'%'
-                     :'the MULE is hauled in — dead, its bay waiting for a cell');}
+  burst(m.x,m.y,22,150,0.7,'#7fe6ff');bubbleBurst(m.x,m.y-4,8,24,-24,14,1.1,2);sfx.build();}
 // the piloted step: replaces the diver's movement/hazard block wholesale (called from update())
 function updateMechPiloted(dt){const m=mech,p=player;
   const elo=entTierLo(),ehi=entTierHi();
@@ -2480,7 +2484,7 @@ function updateMechPiloted(dt){const m=mech,p=player;
         // coil hits empty mid-burn: the thruster shuts down then and there — it does NOT keep sipping
         // the trickle of regen to hold a hover. Gravity takes over until the coil is rebuilt.
         if(m.boostT<=0){m.boostOut=true;m.boostFx=0;boosting=false;sfx.deny();shake=Math.max(shake,3);
-          burst(m.x,m.y+8,6,50,0.35,'#ff9a3c',1);showMsg('thruster burnt out — coil rebuilding');}}
+          burst(m.x,m.y+8,6,50,0.35,'#ff9a3c',1);}}
     }else m.jumpHeld=false;
     m.vy+=MECH_GRAV;m.vy*=0.96;if(m.vy>3.0)m.vy=3.0;
     m.x+=m.vx;if(mechColl(m)){m.x-=m.vx;const s=Math.sign(m.vx)||0;let g=0;
@@ -2511,9 +2515,9 @@ function updateMechPiloted(dt){const m=mech,p=player;
         m.drillFx=6;shake=Math.max(shake,4);sfx.boom();
         burst(target.x*TS+8,target.y*TS+8,14,130,0.5,RES[rid].col);
         showReward(rid,ORE_YIELD);}
-      else showMsg('cell dead — the drill won’t spin');}
-    else if(nearMission)showMsg('the MULE’s hands are too big for that — step out (X) to work it');
-    else showMsg('no ore in the drill’s reach');}
+      else showMsg('▮ CELL DEAD');}
+    else if(nearMission)showMsg('✕ STEP OUT TO USE');
+    else showMsg('✕ NO ORE IN REACH');}
   // --- kill-saw: always hot while the cell has charge; contact removes the creature for good ---
   for(const c of creatures){if(c.tier<elo||c.tier>ehi||c.dead)continue;
     if(Math.hypot(cx-c.x,cy-c.y)<13&&m.battery>0){
@@ -2523,26 +2527,24 @@ function updateMechPiloted(dt){const m=mech,p=player;
       const deceiver=(c.type==='angler'||c.type==='fungus'||c.type==='mermaid');
       if(deceiver&&Math.random()<MECH_DROP_CHANCE){
         const r=Math.random(),kind=r<0.2?'idol':r<0.6?'plate':'coil';
-        scraps.push({x:c.x,y:c.y,kind,ph:Math.random()*6,got:false,tier:c.tier});
-        showMsg('the saw shreds the '+c.type+' — '+SCRAPBYID[kind].name+' spills out');}
-      else showMsg('sawed the '+c.type+' apart — this one’s gone for good');}}
+        scraps.push({x:c.x,y:c.y,kind,ph:Math.random()*6,got:false,tier:c.tier});}}}
   if(creatures.some(c=>c.dead))creatures=creatures.filter(c=>!c.dead);
   // --- exit (X) ---
   if(clipEdge){clipEdge=false;
     m.piloted=false;m.hookAnchor=null;m.hanging=false;
     p.x=m.x-4;p.y=m.y-4;p.vx=0;p.vy=0;p.invuln=Math.max(p.invuln,30);
     updateActionLabels();
-    sfx.back();showMsg('stepped out — the MULE holds position');return;}
+    sfx.back();return;}
   // --- world interactions the diver path normally handles ---
   const _tb=bases[tAt(p.y)];
   nearBase=(_tb&&Math.hypot(cx-_tb.x,cy-_tb.y)<=DOCK_R)?_tb:null;
   if(cityExit){const ed=Math.hypot(cx-cityExit.x,cy-cityExit.y);
     if(ed<15&&!cityExit.cool){cityExit.cool=true;
-      showMsg('the transit gate is too tight for the MULE — step out (X) to ride the grid');}
+      showMsg('✕ STEP OUT TO ENTER');}
     if(ed>44)cityExit.cool=false;}
   collectNear(mixers,cx,cy,14,mm=>{addInv(mm.resId,1);sfx.pop();burst(mm.x,mm.y,8,90,0.5,RES[mm.resId].col);});
   collectNear(scraps,cx,cy,14,s=>{const sd=SCRAPBYID[s.kind];scrapInv[s.kind]=(scrapInv[s.kind]||0)+1;sfx.pop();
-    burst(s.x,s.y,12,110,0.6,sd.col);showMsg('salvage · '+sd.name+' ('+sd.coin+' coin)');});
+    burst(s.x,s.y,12,110,0.6,sd.col);showMsg('◈ +'+sd.coin);});
   updateCreatures(dt);
   updateCompanion(dt);
   // --- oxygen: the cockpit is SEALED and runs its own scrubber — the cell is the only thing you spend ---
@@ -2854,7 +2856,7 @@ function applyGear(idx){const s=TIERS[idx].gear.stats;
   gearLevel=idx+1;
   burst(player.x+4,player.y+4,26,170,0.7,'#ffe27a');
   sfx.build();
-  showMsg(TIERS[idx].gear.name+' equipped — the next environment will let you through');
+  
 }
 // ====== AIR ROPE + BASES ======
 function curBase(){const t=tAt(player.y);const b=bases[t];return (b&&b.active)?b:null;}
@@ -2887,8 +2889,8 @@ function activateBase(b){const kit={};kit['t'+b.tier+'fb']=1;
     bubbleBurst(b.x,b.y-2,10,20,-26,16,1.3,2);
     sfx.build();
     // bulkheads are owned by the layer's quest + control unit now — the base is air and crafting only
-    showMsg('base online — air line live, clip on with ⚓');}
-  else showMsg('haul 1 '+RES['t'+b.tier+'fb'].name+' down here — built one layer up — to power this base');
+    showMsg('⚓ BASE ONLINE');}
+  else showMsg('✕ NEEDS #2 COMPOSITE');
 }
 function chip(id){const r=RES[id];return '<span class="chip">'+iconSVG(id,18)+'<span class="n">'+r.name+'</span><span class="q">'+invGet(id)+'</span></span>';}
 function need(m,curT){return Object.keys(m).map(id=>{const r=RES[id],nd=m[id],hv=invGet(id),ok=hv>=nd,it=idTier(id)-1,carry=it<curT;
@@ -3324,35 +3326,35 @@ craftEl.addEventListener('click',e=>{const b=e.target.closest('[data-craft]');if
     const rc=ropeCost(tAt(player.y));if(!canPay(rc)){craftDeny();return;}
     pay(rc);bb.ropeLen=Math.min(ROPE_MAX,bb.ropeLen+ROPE_STEP);sfx.build();
     burst(player.x+4,player.y+4,14,120,0.6,'#c9a14a');
-    showMsg('air line extended to '+bb.ropeLen+'u');buildCraft();}
+    buildCraft();}
   else if(p[0]==='sell'){const id=p[1];if((scrapInv[id]||0)>0){scrapInv[id]--;coins+=SCRAPBYID[id].coin;sfx.pop();buildCraft();}}
-  else if(v==='sellall'){let got=0;for(const id in scrapInv){got+=(scrapInv[id]||0)*SCRAPBYID[id].coin;scrapInv[id]=0;}if(got>0){coins+=got;sfx.build();showMsg('cashed in salvage · +'+got+' coin');}buildCraft();}
+  else if(v==='sellall'){let got=0;for(const id in scrapInv){got+=(scrapInv[id]||0)*SCRAPBYID[id].coin;scrapInv[id]=0;}if(got>0){coins+=got;sfx.build();}buildCraft();}
   else if(p[0]==='buy'){buyUpgrade(p[1]);buildCraft();}
   else if(p[0]==='o2tank'){const vv=+p[1],e=envOfTier(tAt(player.y)),tk=progFlags(player,'o2tank',e);
     if(tk[vv]||(vv>0&&!tk[vv-1])||!canPay(o2TankCost(e,vv))){craftDeny();return;}
     pay(o2TankCost(e,vv));tk[vv]=true;player.tankBonus=(player.tankBonus||0)+TANK_STEP;player.maxOxygen+=TANK_STEP;player.oxygen=player.maxOxygen;
-    sfx.build();showMsg('O₂ tank V'+(vv+1)+' fitted · +'+TANK_STEP+' max air');
+    sfx.build();
     burst(player.x+4,player.y+4,16,110,0.6,'#46d0ff');buildCraft();}
   else if(p[0]==='o2reg'){const vv=+p[1],e=envOfTier(tAt(player.y)),rg=progFlags(player,'o2reg',e);
     if(rg[vv]||(vv>0&&!rg[vv-1])||!canPay(o2RegCost(e,vv))){craftDeny();return;}
     pay(o2RegCost(e,vv));rg[vv]=true;recalcOxyDrain();
-    sfx.build();showMsg('O\u2082 regulator V'+(vv+1)+' fitted \u00b7 air drain \u2212'+Math.round((1-player.oxyDrainMul)*100)+'%');
+    sfx.build();
     burst(player.x+4,player.y+4,16,110,0.6,'#46d0ff');buildCraft();}
-  else if(p[0]==='buyres'){const T=+p[1],id='t'+(T+1)+'ra',price=5+T*4;if(coins<price){showMsg('need '+price+' coin');craftDeny();return;}
-    coins-=price;addInv(id,1);sfx.pop();showMsg('bought 1\u00d7 '+RES[id].name);buildCraft();}
+  else if(p[0]==='buyres'){const T=+p[1],id='t'+(T+1)+'ra',price=5+T*4;if(coins<price){craftDeny();return;}
+    coins-=price;addInv(id,1);sfx.pop();buildCraft();}
   else if(p[0]==='tab'){if(craftTab!==p[1]){craftTab=p[1];mDiv=null;mGridIdx=0;}mZone='tab';mIdx=(craftTab==='shop'?1:0);sfx.pop();buildCraft();}
   else if(v==='lens'){const e=envOfTier(tAt(player.y)),lf=progFlags(player,'lensUpg',e);
     let lv=0;while(lv<4&&lf[lv])lv++;
     if(lv>=4){buildCraft();return;}
     const lc=lensCost(e,lv);if(!RES['t'+(envTier(e,lv)+1)+'fb']){craftDeny();return;}
-    if(canPay(lc)){pay(lc);lf[lv]=true;player.lanternLevel=(player.lanternLevel||0)+1;sfx.build();showMsg('lens V'+(lv+1)+' ground — the beam reaches '+(player.lanternLevel*10)+'% further');
+    if(canPay(lc)){pay(lc);lf[lv]=true;player.lanternLevel=(player.lanternLevel||0)+1;sfx.build();
       burst(player.x+4,player.y+4,14,120,0.5,'#ffe27a');}buildCraft();}
   else if(v==='seal'){const T0=tAt(player.y);if(envOfTier(T0)<1||(player.seals&&player.seals[T0])){buildCraft();return;}
     const sc=sealCost(T0);
-    if(canPay(sc)){pay(sc);player.seals[T0]=true;sfx.build();showMsg('hazard seal V'+((SCHED[T0]?SCHED[T0].layerInEnv:T0%4)+1)+' fitted — this layer bites less now');
+    if(canPay(sc)){pay(sc);player.seals[T0]=true;sfx.build();
       burst(player.x+4,player.y+4,16,110,0.6,'#7dff4a');}buildCraft();}
   else if(v==='medkit'){const T0=tAt(player.y);const mc={};mc['t'+(T0+1)+'ra']=1;mc['t'+(T0+1)+'ma']=1;
-    if((player.medkits||0)<5&&canPay(mc)){pay(mc);player.medkits=(player.medkits||0)+1;sfx.build();showMsg('patch kit stowed ('+player.medkits+')');}buildCraft();}
+    if((player.medkits||0)<5&&canPay(mc)){pay(mc);player.medkits=(player.medkits||0)+1;sfx.build();}buildCraft();}
   else if(p[0]==='buypart'){buyPart(p[1]);buildCraft();}
   else if(p[0]==='machine'){buildMachine(p[1]);buildCraft();}
   else if(v==='mbat'){const t=tAt(player.y),bc=mechBatteryCost(t);
@@ -3368,14 +3370,10 @@ craftEl.addEventListener('click',e=>{const b=e.target.closest('[data-craft]');if
     player[key]=player[key]||{};
     if(player[key][e]||(kind==='hook'&&mechHookReach()>=MECH_HOOK_MAX)){craftDeny();return;}
     const cost=mechUpgCost(kind,e);
-    if(coins<cost){showMsg('need '+cost+' coin');craftDeny();return;}
+    if(coins<cost){craftDeny();return;}
     coins-=cost;player[key][e]=true;
     if(kind==='bat'&&mech.battery>0)mech.battery=Math.min(mech.battery+MECH_BAT_STEP,mechBatMax());  // a bigger cell tops up a live one
     sfx.build();burst(player.x+4,player.y+4,16,110,0.6,'#7fe6ff');
-    showMsg(kind==='bat'?'battery cell upgraded — '+mechBatMax().toFixed(0)+'s cap'
-           :kind==='boost'?'coil rewound deeper — '+mechBoostMax().toFixed(1)+'s of boost held'
-           :kind==='regen'?'coil charger uprated — '+mechBoostRegen().toFixed(2)+'/s back, '+mechBoostRebuild().toFixed(1)+'s to clear a burnout'
-           :'hook drum extended — '+mechHookReach()+'u reach');
     buildCraft();}
 });
 function expandInputs(m){const a=[];for(const id in m)for(let i=0;i<m[id];i++)a.push(id);return a.slice(0,6);}
@@ -3405,7 +3403,7 @@ function toggleCraft(open){if(open){if(tutorialsOn&&!baseIntroSeen){baseIntroSee
 
 // ============ DAMAGE ============
 // HP-bar damage flash: env=true shows radioactive yellow-green chunk + ☢ symbol; else red chunk
-function flashDmg(units,env){if(units<=0)return;player.dmgFx={chunk:units,t:0,env:!!env};}
+function flashDmg(units,env){if(units<=0||env)return;player.dmgFx={chunk:units,t:0,env:false};}   // drain (env) damage: no animation
 function drawRadSymbol(x,y,r,a){ctx.save();ctx.globalAlpha=a;
   ctx.fillStyle='#ffd21f';ctx.beginPath();ctx.arc(x,y,r,0,6.2832);ctx.fill();
   ctx.fillStyle='#ffe98a';ctx.beginPath();ctx.arc(x,y,r,0,6.2832);ctx.lineWidth=0;ctx.fill();
@@ -3424,13 +3422,13 @@ function hurt(dmg,fromX,fromY){
 function dieOrRevive(reason){
   if((player.medkits||0)>0){player.medkits--;player.hearts=2;player.invuln=INVULN;shake=8;player.rooted=0;
     burst(player.x+4,player.y+4,16,120,0.6,'#5dff8a');
-    sfx.air();showMsg('patch kit auto-applied — back from the brink');return false;}
+    sfx.air();showMsg('✚ PATCH KIT SAVED YOU');return false;}
   player.hearts=0;state.loseReason=reason;setMode('lose');sfx.lose();return true;
 }
-function useMedkit(){if((player.medkits||0)<=0){showMsg('no patch kits');return;}if(player.hearts>=player.maxHearts){showMsg('already at full health');return;}
+function useMedkit(){if((player.medkits||0)<=0){showMsg('✕ NO PATCH KITS');return;}if(player.hearts>=player.maxHearts){showMsg('✕ HP FULL');return;}
   player.medkits--;player.hearts=Math.min(player.maxHearts,player.hearts+2);sfx.build();
   burst(player.x+4,player.y+4,12,90,0.5,'#5dff8a');
-  showMsg('patch kit used · +2');}
+  showMsg('✚ +2 HP');}
 
 // ============ OVERLAYS ============
 const TITLE_HTML=`
@@ -3733,7 +3731,7 @@ function travelToCity(ch){
   particles=[];shake=0;lockMsgCD=0;miningCell=null;mgOre=null;
   camera.x=clamp(p.x-VW/2,0,MW*TS-VW);camera.y=clamp(p.y-VH/2,0,MH*TS-VH);
   setMode('play');saveGame();sfx.build();
-  showMsg('CITY '+CITY+' — '+CITY_NAME+' · '+envCount(CITY)+' environments down there'+(sold?' · deep cargo sold for '+sold+' coin':''));
+  showMsg('▼ '+CITY_NAME);
 }
 
 // ============ UPDATE ============
@@ -3766,7 +3764,7 @@ function update(dt){
   // infested-layer callout, first time the diver (or the MULE) drops into one
   {const it=tAt(p.y);
    if(it!==lastInfestTier){lastInfestTier=it;
-     if(tierInfested[it])showMsg('⚠ infested layer — nests everywhere. the MULE’s saw clears them for good');}}
+     if(tierInfested[it])showMsg('⚠ INFESTED LAYER');}}
   // ===== MECH: piloted mode replaces the diver's movement/hazard block wholesale =====
   nearMech=null;
   if(mech&&!mech.off){
@@ -3804,7 +3802,7 @@ function update(dt){
     if(ed<15&&!cityExit.cool){
       if(missionComplete(cityExit.tier)){openCityMap();return;}
       const m=missionFor(cityExit.tier),st=m&&m.steps[m.progress];
-      showMsg('finale sector sealed — objective pending: '+(st?st.title:'unknown'));
+      showMsg('✕ GATE SEALED · TASKS LEFT');
       cityExit.cool=true;
     }
     if(ed>44)cityExit.cool=false;
@@ -3815,15 +3813,15 @@ function update(dt){
     if(nearMission){missionInteract(nearMission);return;}
     if(nearFungus){fungusGrab(nearFungus);return;}
     if(target){openMine(target);return;}
-    showMsg('move onto ore to mine it');}
+    showMsg('✕ NOTHING TO MINE');}
   // CLIP (X): board the mech, power a dead base, else clip / unclip the air line
   if(clipEdge){clipEdge=false;
     if(nearMech){mechInteract();return;}
     if(nearBase&&!nearBase.active){activateBase(nearBase);return;}
-    if(p.attached){p.attached=false;const cb=p.attachedBase||curBase();if(cb){cb.endX=p.x+4;cb.endY=p.y+4;}p.attachedBase=null;sfx.air();showMsg('unclipped — the line stays where you dropped it');}
+    if(p.attached){p.attached=false;const cb=p.attachedBase||curBase();if(cb){cb.endX=p.x+4;cb.endY=p.y+4;}p.attachedBase=null;sfx.air();}
     else{const cb=curBase();
-      if(cb&&clipReach(cb)){p.attached=true;p.attachedBase=cb;sfx.air();showMsg('clipped to the air line');}
-      else showMsg('get near the base or the dropped line to clip');}}
+      if(cb&&clipReach(cb)){p.attached=true;p.attachedBase=cb;sfx.air();}
+      else showMsg('✕ TOO FAR FROM THE LINE');}}
 
   // physics
   p.vx+=ax*acc; p.vy+=ay*acc+GRAV;
@@ -3849,7 +3847,7 @@ function update(dt){
   collectNear(mixers,cx,cy,12,m=>{addInv(m.resId,1);sfx.pop();burst(m.x,m.y,8,90,0.5,RES[m.resId].col);});
   // valuable scrap pickup
   collectNear(scraps,cx,cy,12,s=>{const sd=SCRAPBYID[s.kind];scrapInv[s.kind]=(scrapInv[s.kind]||0)+1;sfx.pop();
-    burst(s.x,s.y,12,110,0.6,sd.col);showMsg('salvage · '+sd.name+' ('+sd.coin+' coin)');});
+    burst(s.x,s.y,12,110,0.6,sd.col);showMsg('◈ +'+sd.coin);});
   updateCreatures(dt);
   updateCompanion(dt);
 
@@ -4040,17 +4038,8 @@ function render(){
   else if(nearMission){pt=missionVerb(nearMission);pk=(pt==='BACK OFF')?null:'mine';ptx=nearMission.x;pty=nearMission.y-26;}
   else if(nearOre){pt=(mech&&mech.piloted)?'DRILL':'MINE';pk='mine';ptx=nearOre.x*TS+8;pty=nearOre.y*TS;}
   else if(nearFungus){pt='MINE';pk='mine';ptx=nearFungus.x;pty=nearFungus.y-10;}
-  if(state.mode==='play'&&pt){
-    let sx,sy;
-    if(TH&&TH.ready){const q=TH.viewToStage(3,ptx-RCX,pty-RCY);sx=q[0];sy=q[1];}
-    else{const cw=canvas.clientWidth,ch=canvas.clientHeight;
-    sx=(ptx-camera.x)/VW*cw+canvas.offsetLeft;
-    sy=(pty-camera.y)/VH*ch+canvas.offsetTop;}
-    // rebuilt only when the verb, the control or the input source actually changes — this runs every frame
-    const sig=pt+'|'+(pk||'')+'|'+(pcMode?pcSrc:'touch');
-    if(orePrompt._sig!==sig){orePrompt._sig=sig;orePrompt.innerHTML=ipMark(pk)+'<span class="ip-lbl">'+pt+'</span>';}
-    orePrompt.style.left=Math.round(sx)+'px';orePrompt.style.top=Math.round(sy)+'px';orePrompt.style.display='flex';
-  }else orePrompt.style.display='none';
+  osdPrompt=(state.mode==='play'&&pt)?{text:pt,kind:pk,x:ptx-RCX,y:pty-RCY}:null;   // printed by drawHUD
+  orePrompt.style.display='none';
   if(TH)ctx=TH.atlas.beginHud();
   if(player.tint>0&&player.tintCol){fullTint(player.tintCol,player.tint*0.22);}
   drawHUD(tier);
@@ -4352,17 +4341,17 @@ function sealIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" vi
 function lensIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><defs><radialGradient id="lg"><stop offset="0" stop-color="#fff7d6"/><stop offset="1" stop-color="#ffcf4a"/></radialGradient></defs><ellipse cx="8" cy="8" rx="3.4" ry="5.6" fill="url(#lg)" stroke="#b8862a" stroke-width="1"/><path d="M8 2.6 V13.4" stroke="#b8862a" stroke-width=".8" opacity=".6"/><path d="M2 8 L0.6 5 M2 8 L0.6 11 M14 8 L15.4 5 M14 8 L15.4 11" stroke="#ffe27a" stroke-width="1.2"/></svg>';}
 function buyUpgrade(kind){
   // spare tank left the shop — O2 tanks are crafted in the workshop's O2 GEAR division now
-  if(kind==='filter'){if(envOfTier(tAt(player.y))<1){showMsg('no pollution in this environment — filters matter deeper down');return;}
-    if((player.filterBonus||0)>=FILT_MAX-1e-6){showMsg('filters maxed');return;}
+  if(kind==='filter'){if(envOfTier(tAt(player.y))<1){return;}
+    if((player.filterBonus||0)>=FILT_MAX-1e-6){return;}
     const cnt=Math.round((player.filterBonus||0)/FILT_STEP),cost=14+cnt*9;
-    if(coins<cost){showMsg('need '+cost+' coin');return;}
+    if(coins<cost){return;}
     coins-=cost;player.filterBonus=(player.filterBonus||0)+FILT_STEP;
-    sfx.build();showMsg('filter cartridge fitted · pollution down');}
-  else if(kind==='map'){if(player.hasMap){showMsg('sector-nav already installed');return;}
-    if(coins<MAP_COST){showMsg('need '+MAP_COST+' coin');return;}
+    sfx.build();}
+  else if(kind==='map'){if(player.hasMap){return;}
+    if(coins<MAP_COST){return;}
     coins-=MAP_COST;player.hasMap=true;
     burst(player.x+4,player.y+4,18,120,0.6,'#46d0ff');
-    sfx.build();showMsg('sector-nav online — minimap live on your HUD');}
+    sfx.build();}
 }
 function mapIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><rect x="2.5" y="2" width="11" height="12" rx="1.5" fill="#0c2230" stroke="#2c6f8c" stroke-width="1"/><path d="M5 3 V13 M11 3 V13" stroke="#1d4456" stroke-width="0.8"/><path d="M3 5.5 H13 M3 10.5 H13" stroke="#1d4456" stroke-width="0.8"/><rect x="7" y="6.5" width="2.4" height="2.4" fill="none" stroke="#46d0ff" stroke-width="1"/><circle cx="8.2" cy="7.7" r="0.7" fill="#7dffc0"/><circle cx="5" cy="4" r="0.8" fill="#5fe6ff"/><circle cx="11" cy="12" r="0.8" fill="#ffd23c"/></svg>';}
 function partIcon(id,sz){
@@ -4379,22 +4368,21 @@ function machIcon(id,sz){
 }
 function canPayParts(c){for(const id in c)if((partsInv[id]||0)<c[id])return false;return true;}
 function payParts(c){for(const id in c)partsInv[id]=(partsInv[id]||0)-c[id];}
-function buyPart(id){const pt=PARTBYID[id];if(coins<pt.coin){showMsg('need '+pt.coin+' coin');return;}coins-=pt.coin;partsInv[id]=(partsInv[id]||0)+1;sfx.pop();}
+function buyPart(id){const pt=PARTBYID[id];if(coins<pt.coin){return;}coins-=pt.coin;partsInv[id]=(partsInv[id]||0)+1;sfx.pop();}
 function buildMachine(id){const m=MACHBYID[id];if(!m)return;
-  if(id==='robot'&&companion){showMsg('you already have a scrappy robot');return;}
-  if(id==='floodlight'&&player.builtFloodlight){showMsg('floodlight already fitted');return;}
-  if(id==='thruster'&&player.builtThruster){showMsg('thruster pack already fitted');return;}
-  if(id==='mech'&&mech){showMsg('you already own the MULE');return;}
-  if(!canPayParts(m.cost)){showMsg('not enough parts — buy them above');return;}
+  if(id==='robot'&&companion){return;}
+  if(id==='floodlight'&&player.builtFloodlight){return;}
+  if(id==='thruster'&&player.builtThruster){return;}
+  if(id==='mech'&&mech){return;}
+  if(!canPayParts(m.cost)){return;}
   payParts(m.cost);sfx.build();
   burst(player.x+4,player.y+4,18,120,0.6,'#46d0ff');
-  if(id==='robot'){companion={x:player.x+4,y:player.y+4,ph:0};showMsg('scrappy robot online — it grabs loot for you');}
-  else if(id==='floodlight'){player.builtFloodlight=true;player.lightBonus=(player.lightBonus||0)+40;player.lightRadius+=40;showMsg('floodlight rig fitted — the dark pulls back');}
-  else if(id==='thruster'){player.builtThruster=true;player.mvBonus=(player.mvBonus||0)+0.18;player.maxvMul+=0.18;showMsg('thruster pack fitted — faster swimming');}
+  if(id==='robot'){companion={x:player.x+4,y:player.y+4,ph:0};}
+  else if(id==='floodlight'){player.builtFloodlight=true;player.lightBonus=(player.lightBonus||0)+40;player.lightRadius+=40;}
+  else if(id==='thruster'){player.builtThruster=true;player.mvBonus=(player.mvBonus||0)+0.18;player.maxvMul+=0.18;}
   else if(id==='mech'){const b=bases[tAt(player.y)];
     mech={x:player.x+4,y:player.y+4,vx:0,vy:0,dir:1,battery:0,piloted:false,off:false,boostT:0,boostOut:false,hookAnchor:null,hanging:false};
-    if(b)mechCallTo(b);
-    showMsg('DV-8 “MULE” assembled — its battery bay is EMPTY. craft a cell in the workshop’s MECH bay');}
+    if(b)mechCallTo(b);}
 }
 
 function drawNode(n){
@@ -4661,6 +4649,12 @@ const FONT3={O:['111','101','101','101','111'],X:['101','101','010','101','101']
   W:['10001','10001','10101','10101','10101'],  // two full-height outer legs + a shorter centre leg — no crossbar, so it can't read as H
   '0':['111','101','101','101','111'],'1':['010','110','010','010','111'],'2':['111','001','111','100','111'],'3':['111','001','111','001','111'],'4':['101','101','111','001','001'],'5':['111','100','111','001','111'],'6':['111','100','111','101','111'],'7':['111','001','010','010','010'],'8':['111','101','111','101','111'],'9':['111','101','111','001','111'],
   '%':['101','001','010','100','101'],'/':['001','001','010','100','100'],'.':['000','000','000','000','010'],'-':['000','000','111','000','000'],':':['000','010','000','010','000'],'>':['100','010','001','010','100'],'<':['001','010','100','010','001'],
+  K:['101','101','110','101','101'],Z:['111','001','010','100','111'],Q:['111','101','101','111','001'],J:['001','001','001','101','111'],
+  '!':['1','1','1','0','1'],'#':['01010','11111','01010','11111','01010'],'+':['000','010','111','010','000'],'·':['0','0','1','0','0'],
+  // the toast symbols, drawn as glyphs so every OSD line is one font (see ui-toast-rewrite.md)
+  '✕':['10001','01010','00100','01010','10001'],'⚠':['00100','01110','11011','11111','11011'],'◆':['00100','01110','11111','01110','00100'],
+  '▼':['11111','11111','01110','01110','00100'],'◈':['00100','01110','11011','01110','00100'],'▮':['010','111','111','111','111'],
+  '✚':['00100','00100','11111','00100','00100'],'⚓':['01110','00100','10101','10101','01110'],
   ' ':['000','000','000','000','000']};
 function glyphW(ch){const g=FONT3[ch];return g?g[0].length:3;}
 function pxText(c,str,x,y,col){let cx=x;for(const ch of str){const g=FONT3[ch];if(g){const w=g[0].length;for(let r=0;r<5;r++)for(let i=0;i<w;i++)if(g[r][i]==='1')px(c,cx+i,y+r,1,1,col);cx+=w+1;}else cx+=4;}}
@@ -4684,70 +4678,138 @@ function pxDisc(c,cx,cy,r,col){
 }
 function drawHeart(c,x,y,on){const col=on?'#ff4d5e':'#33272c';const p=['0110110','1111111','1111111','0111110','0011100','0001000'];
   for(let r=0;r<6;r++)for(let i=0;i<7;i++)if(p[r][i]==='1')px(c,x+i,y+r,1,1,col);if(on)px(c,x+1,y+1,1,1,'#ff97a1');}
+// ===== ON-SCREEN DISPLAY ===================================================================
+// Every diving readout is printed like the channel / volume overlay of a cheap 90s TV: one
+// phosphor green, chunky, blooming into the picture. HP is a continuous bar, oxygen a segmented
+// one that drops a whole segment at a time. An empty tank takes the O2 bar off the screen and
+// turns the HP bar true red. Hits blink the HP bar, then it settles shorter; drain damage
+// (drowning, pollution, heat) just shortens it.
+const OSD_G='#6bff72', OSD_R='#ff2424', OSD_DIM='rgba(107,255,114,0.16)', OSD_DIMR='rgba(255,36,36,0.2)';
+const OSD_ICON={
+  heart:['0110110','1111111','1111111','0111110','0011100','0001000'],
+  air:  ['0011100','0100010','1000101','1000001','1000001','0100010','0011100'],
+  cell: ['0011100','1111111','1000001','1011101','1011101','1000001','1111111'],
+  city: ['0000010','0010010','0010111','1011101','1010111','1111101','1011111','1111111'],                    // skyline, antenna, lit windows
+  clip: ['0011100','0100010','1111111','1000001','1011101','1000001','1011001','1000001','1111111']};  // the clip ring gripping the page
+let osdC=null,osdX=null,osdB=null,osdBX=null,osdS=null,osdSX=null,osdPrompt=null,osdBtn=null,osdNav=null;
+// font pixel size in world px: 1 where a world px is already >= 1.6 CSS px, else 2 (8px cap floor)
+function osdScale(){return UIPX*((typeof TH!=='undefined'&&TH)?0.94:1)>=1.6?1:2;}
+function osdTextW(str,s){let w=0;for(const ch of str)w+=(glyphW(ch)+1)*s;return Math.max(0,w-s);}
+function osdText(c,str,x,y,s,col){c.fillStyle=col;let cx=x;
+  for(const ch of str){const g=FONT3[ch],gw=g?g[0].length:3;
+    if(g)for(let r=0;r<5;r++)for(let i=0;i<gw;i++)if(g[r][i]==='1')c.fillRect(cx+i*s,y+r*s,s,s);cx+=(gw+1)*s;}}
+function osdIcon(c,rows,x,y,s,col){c.fillStyle=col;y-=((rows.length-7)*s)>>1;   // icons centre on a 7-row line
+  for(let r=0;r<rows.length;r++)for(let i=0;i<rows[r].length;i++)if(rows[r][i]==='1')c.fillRect(x+i*s,y+r*s,s,s);}
+function osdBegin(){
+  if(!osdC){osdC=document.createElement('canvas');osdB=document.createElement('canvas');osdS=document.createElement('canvas');
+    osdX=osdC.getContext('2d');osdBX=osdB.getContext('2d');osdSX=osdS.getContext('2d');}
+  const bw=Math.ceil(VW/3),bh=Math.ceil(VH/3);
+  if(osdC.width!==VW||osdC.height!==VH){osdC.width=osdS.width=VW;osdC.height=osdS.height=VH;}
+  if(osdB.width!==bw||osdB.height!==bh){osdB.width=bw;osdB.height=bh;}
+  osdX.clearRect(0,0,VW,VH);return osdX;}
+// composite the OSD onto the screen: dark drop edge, phosphor bloom, a cheap tube's sideways bleed, crisp glyphs
+function osdFlush(dst){
+  const bw=osdB.width,bh=osdB.height;
+  osdSX.clearRect(0,0,VW,VH);osdSX.globalCompositeOperation='source-over';osdSX.drawImage(osdC,0,0);
+  osdSX.globalCompositeOperation='source-in';osdSX.fillStyle='rgba(0,0,0,0.7)';osdSX.fillRect(0,0,VW,VH);osdSX.globalCompositeOperation='source-over';
+  osdBX.clearRect(0,0,bw,bh);osdBX.imageSmoothingEnabled=true;osdBX.drawImage(osdC,0,0,bw,bh);
+  dst.save();dst.globalCompositeOperation='source-over';dst.globalAlpha=1;dst.drawImage(osdS,1,1);
+  dst.imageSmoothingEnabled=true;dst.globalCompositeOperation='lighter';dst.globalAlpha=0.95;dst.drawImage(osdB,0,0,bw,bh,0,0,VW,VH);
+  dst.imageSmoothingEnabled=false;dst.globalCompositeOperation='source-over';
+  dst.globalAlpha=0.3;dst.drawImage(osdC,1,0);dst.globalAlpha=1;dst.drawImage(osdC,0,0);dst.restore();}
+// the action buttons' own 16x16 pixel icons, halved to 8x8, so the prompt shows which button to press
+function osdBtnIcon(kind){
+  if(!osdBtn)osdBtn={};if(osdBtn[kind]!==undefined)return osdBtn[kind];
+  const el=document.getElementById(IP_SRC[kind]),svg=el&&el.querySelector('svg');if(!svg)return osdBtn[kind]=null;
+  const g=[];for(let i=0;i<64;i++)g.push(0);
+  for(const r of svg.querySelectorAll('rect')){const x=+r.getAttribute('x'),y=+r.getAttribute('y'),w=+r.getAttribute('width'),h=+r.getAttribute('height');
+    for(let yy=y;yy<y+h;yy++)for(let xx=x;xx<x+w;xx++)if(xx>=0&&xx<16&&yy>=0&&yy<16)g[(yy>>1)*8+(xx>>1)]=1;}
+  const rows=[];for(let r=0;r<8;r++){let t='';for(let i=0;i<8;i++)t+=g[r*8+i]?'1':'0';rows.push(t);}
+  return osdBtn[kind]=rows;}
+// view px -> OSD px (the 3D build maps the point through the bulb's optics)
+function osdAt(x,y){return (TH&&TH.ready)?TH.viewToHud(3,x,y):[x,y];}
+// where the task compass points: the nearest unfinished machine of the layer's current step, or,
+// once the chain is done, the airlock lever (the transit gate on a city's finale layer)
+function navTarget(t){const m=layerMissions[t];if(!m)return null;
+  const px=player.x+4,py=player.y+4;let best=null,bd=Infinity;
+  const pick=o=>{const d=(o.x-px)*(o.x-px)+(o.y-py)*(o.y-py);if(d<bd){bd=d;best=o;}};
+  if(!m.complete){for(const o of missionObjs)if(o.tier===t&&o.step===m.progress&&!o.done&&o.type!=='gate')pick(o);}
+  else{for(const o of missionObjs)if(o.tier===t&&o.type==='gate'&&!o.done)pick(o);
+    if(!best&&cityExit&&cityExit.tier===t)best=cityExit;}
+  return best;}
+// a chunky OSD triangle: every s-grid cell whose centre falls inside (ax,ay)-(bx,by)-(cx,cy)
+function osdTri(c,ax,ay,bx,by,cx,cy,s,col){c.fillStyle=col;
+  const x0=Math.floor(Math.min(ax,bx,cx)/s)*s,x1=Math.max(ax,bx,cx),y0=Math.floor(Math.min(ay,by,cy)/s)*s,y1=Math.max(ay,by,cy);
+  const e=(x,y,px,py,qx,qy)=>(qx-px)*(y-py)-(qy-py)*(x-px);
+  for(let y=y0;y<=y1;y+=s)for(let x=x0;x<=x1;x+=s){const mx=x+s/2,my=y+s/2,d1=e(mx,my,ax,ay,bx,by),d2=e(mx,my,bx,by,cx,cy),d3=e(mx,my,cx,cy,ax,ay);
+    if((d1>=0&&d2>=0&&d3>=0)||(d1<=0&&d2<=0&&d3<=0))c.fillRect(x,y,s,s);}}
 function drawHUD(tier){
-  // ===== HP BAR (continuous, like oxygen) with damage flash =====
-  pxText(ctx,'HP',6,4,'#ff9aa6');
-  const hbx=6,hby=11,hbw=118,hbh=8;
-  px(ctx,hbx-1,hby-1,hbw+2,hbh+2,'#081019');px(ctx,hbx,hby,hbw,hbh,'#1c0e12');
-  const hf=clamp(player.hearts/player.maxHearts,0,1),lowHP=player.hearts<=2;
-  const hpcol=lowHP?'#ff4d5e':'#46e06a';
-  const hpW=Math.round(hbw*hf);
-  px(ctx,hbx,hby,hpW,hbh,hpcol);px(ctx,hbx,hby,hpW,1,'rgba(255,255,255,0.22)');px(ctx,hbx,hby+hbh-1,hpW,1,'rgba(0,0,0,0.25)');
-  if(lowHP&&player.hearts>0&&(state.tick>>3)%2===0)px(ctx,hbx,hby,hpW,hbh,'rgba(255,255,255,0.18)');
-  // damage flash: the points about to vanish glow radioactive, drain off the end of the bar, then ☢ appears
-  if(player.dmgFx){const D=player.dmgFx,x0=hbx+hpW,fullW=Math.max(2,Math.round(hbw*D.chunk/player.maxHearts));
-    if(D.t<0.35){const blink=(state.tick>>1)&1;const col=D.env?(blink?'#d9ff35':'#7dff4a'):(blink?'#ff7a7a':'#ff4040');
-      px(ctx,x0,hby,fullW,hbh,col);px(ctx,x0,hby,fullW,1,'rgba(255,255,255,0.5)');}
-    else if(D.t<0.7){const k=1-(D.t-0.35)/0.35,w=Math.round(fullW*k);const col=D.env?'#9be03a':'#d65a5a';
-      if(w>0){px(ctx,x0,hby,w,hbh,col);px(ctx,x0,hby,w,1,'rgba(255,255,255,0.35)');}}
-    else if(D.env){const st=D.t-0.7,a=st<0.18?st/0.18:clamp(1-(st-0.55)/0.35,0,1);drawRadSymbol(hbx+hbw+10,hby+4,5.5,a);}}
-  // (no segment dividers — HP reads as one continuous bar)
-  // ===== OXYGEN BAR =====
-  pxText(ctx,'OXYGEN',6,23,'#7fd0ee');
-  const bx=6,by=30,bw=118,bh=8;
-  px(ctx,bx-1,by-1,bw+2,bh+2,'#081019');px(ctx,bx,by,bw,bh,'#0e1d28');
-  const f=clamp(player.oxygen/player.maxOxygen,0,1);
-  px(ctx,bx,by,Math.round(bw*f),bh,f>0.5?'#46d0ff':f>0.25?'#ffcc2e':'#ff4d5e');
-  px(ctx,bx,by,Math.round(bw*f),1,'rgba(255,255,255,0.25)');
-  const sealed=!!(mech&&mech.piloted);   // sealed cockpit: the tank is held, so no low-air panic blink
-  if(!sealed&&player.oxygen<=player.maxOxygen*0.2&&(state.tick>>3)%2===0)px(ctx,bx,by,bw,bh,'rgba(255,77,94,0.25)');
-  if(sealed)px(ctx,bx,by,Math.round(bw*f),bh,'rgba(127,230,255,0.20)');   // frosted: the bar is frozen, not draining
-  // ===== MECH BATTERY + BOOST (only while piloting the MULE) =====
-  if(mech&&mech.piloted){
-    pxText(ctx,'BATTERY',6,42,'#ffd23c');
-    const mbx=6,mby=49,mbw=118,mbh=8,bf=clamp(mech.battery/mechBatMax(),0,1);
-    px(ctx,mbx-1,mby-1,mbw+2,mbh+2,'#081019');px(ctx,mbx,mby,mbw,mbh,'#241d08');
-    px(ctx,mbx,mby,Math.round(mbw*bf),mbh,bf>0.5?'#ffd23c':bf>0.25?'#ff9a3c':'#ff4d5e');
-    px(ctx,mbx,mby,Math.round(mbw*bf),1,'rgba(255,255,255,0.25)');
-    if(bf<=0.25&&(state.tick>>3)%2===0)px(ctx,mbx,mby,mbw,mbh,'rgba(255,77,94,0.25)');
-    // boost coil: thin strip under the battery — recharges whenever it isn't firing,
-    // amber and blinking while burnt out so a dead thruster is never a surprise
-    const bof=clamp((mech.boostT||0)/mechBoostMax(),0,1),bout=!!mech.boostOut;
-    px(ctx,mbx-1,mby+mbh+1,mbw+2,4,'#081019');px(ctx,mbx,mby+mbh+2,mbw,2,'#0e1d28');
-    px(ctx,mbx,mby+mbh+2,Math.round(mbw*bof),2,bout?((state.tick>>2)%2?'#ff9a3c':'#7a3a10'):'#7fe6ff');
-  }
-  // air-line status chip beside the oxygen bar — the sealed cockpit reads as "breathing" too
-  const onLine=player.attached||sealed;
-  px(ctx,bx+bw+5,by-1,9,8,'#081019');px(ctx,bx+bw+6,by,7,6,onLine?'#0e3a4a':'#3a2e0e');
-  px(ctx,bx+bw+7,by+1,3,3,onLine?'#46d0ff':'#ffcc2e');px(ctx,bx+bw+11,by+1,1,4,onLine?'#7fe6ff':'#ffe27a');
-  const show=(state.mode==='play'||state.mode==='craft'||state.mode==='inv');
-  readout.style.display=show?'block':'none';
-  if(show){const poll=(!player.attached&&ambientAt(tier)>0);
-    readout.innerHTML='<div style="color:#ffd23c;font-size:13px;letter-spacing:2px;font-weight:bold;text-shadow:0 0 6px rgba(255,210,60,.4)">'+depthM(player.y)+'M</div>'+
-    '<div style="color:#9fe8c0;font-size:8px;letter-spacing:1.5px;text-transform:uppercase;text-shadow:0 0 5px rgba(125,255,192,.35)">'+CITY_NAME+' · CITY '+CITY+'</div>'+
-    '<div style="color:#7fd0ee;font-size:8px;letter-spacing:2px;text-transform:uppercase">L'+(tier+1)+'/'+SCHED.length+' · '+TIERS[tier].name+'</div>'+
-    (function(){const mm=missionFor(tier);if(!mm)return'';
-      if(mm.complete){const lv=missionObjs.find(q=>q.type==='gate'&&q.tier===tier&&!q.done);
-        return lv?'<div style="color:#ffd23c;font-size:8px;letter-spacing:1px;text-transform:uppercase;margin-top:1px;text-shadow:0 0 5px rgba(255,210,60,.4)">◆ '+mm.exit.title+' — control unit by the bulkhead</div>':'';}
-      const st=mm.steps[mm.progress];if(!st)return'';
-      const done=missionStepDone(tier,mm.progress),verb={term:'HACK',pod:'BURN',valve:'CRANK'}[st.kind]||'';
-      return '<div style="color:#ff9ad0;font-size:8px;letter-spacing:1px;text-transform:uppercase;margin-top:1px;text-shadow:0 0 5px rgba(255,154,208,.4)">◆ '+st.title+' '+done+'/'+st.count+' · '+verb+'</div>';})()+
-    '<div style="color:#ffd23c;font-size:10px;letter-spacing:1px;margin-top:1px">◎ '+coins+(((player.medkits||0)>0)?'   <span style="color:#5dff8a">✚'+player.medkits+'</span>':'')+(((player.mechBattery||0)>0)?'   <span style="color:#ffd23c">▮CELL</span>':'')+'</div>'+
-    ((mech&&mech.piloted)?'<div style="color:#7fe6ff;font-size:8px;letter-spacing:1px;text-transform:uppercase;text-shadow:0 0 5px rgba(127,230,255,.4)">◈ MULE · F drill · space hook · ↑ boost · X out</div>':'')+
-    (tierInfested[tier]?'<div style="color:#ff7a5a;font-size:8px;letter-spacing:1px;text-transform:uppercase;text-shadow:0 0 5px rgba(255,122,90,.5)">⚠ infested layer</div>':'')+
-    (poll?'<div style="color:#7dff4a;font-size:8px;letter-spacing:1px;text-transform:uppercase;text-shadow:0 0 5px rgba(125,255,74,.5)">⚠ pollution</div>':'');}
-  // ===== MINIMAP (only after it's bought at the shop) =====
   if(player.hasMap&&state.mode==='play')drawMinimap(tier);
+  const c=osdBegin(),s=osdScale(),G=OSD_G;
+  const sealed=!!(mech&&mech.piloted);                // sealed cockpit: the tank is held
+  const noAir=!sealed&&player.oxygen<=0;               // tank empty: the O2 bar is gone, HP turns red
+  const rowH=7*s,gap=2*s,bh=Math.max(4,3*s),ix=4,bx=ix+7*s+gap,top=4;
+  // ---- right column: city + layer, clipboard + tasks done in this layer
+  const lyr=(tier+1)+'/'+SCHED.length, lt=layerTasks(tier), tks=lt?lt[0]+'/'+lt[1]:'';
+  const rw=7*s+gap+Math.max(osdTextW(lyr,s),osdTextW(tks,s)), rx=VW-4-rw;
+  osdIcon(c,OSD_ICON.city,rx,top,s,G);osdText(c,lyr,VW-4-osdTextW(lyr,s),top+s,s,G);
+  if(lt){const y2=top+rowH+gap+s;osdIcon(c,OSD_ICON.clip,rx,y2,s,G);osdText(c,tks,VW-4-osdTextW(tks,s),y2+s,s,G);}
+  const bw=Math.max(30,Math.min(118,rx-bx-6*s-2*gap));
+  // ---- HP: one continuous bar
+  let y=top;
+  {const by=y+((rowH-bh)>>1),col=noAir?OSD_R:G,D=player.dmgFx;
+   const f=clamp(player.hearts/player.maxHearts,0,1);let w=Math.round(bw*f);
+   if(D&&D.t<0.5){const pre=clamp((player.hearts+D.chunk)/player.maxHearts,0,1);w=((state.tick>>2)&1)?0:Math.round(bw*pre);}   // a hit: blink, then settle shorter
+   osdIcon(c,OSD_ICON.heart,ix,y+(s>>1),s,col);
+   c.fillStyle=noAir?OSD_DIMR:OSD_DIM;c.fillRect(bx,by,bw,bh);c.fillStyle=col;c.fillRect(bx,by,w,bh);}
+  y+=rowH+gap;
+  // ---- O2: segmented, one segment per 10 units of tank (bigger tanks add segments); gone when empty
+  if(!noAir){const by=y+((rowH-bh)>>1),sg=s,N=clamp(Math.round(player.maxOxygen/10),4,Math.max(4,Math.floor((bw+sg)/(2*s+sg))));
+   const segW=Math.floor((bw+sg)/N)-sg,lit=Math.ceil(clamp(player.oxygen/player.maxOxygen,0,1)*N-1e-6);
+   osdIcon(c,OSD_ICON.air,ix,y,s,G);
+   for(let i=0;i<N;i++){c.fillStyle=i<lit?G:OSD_DIM;c.fillRect(bx+i*(segW+sg),by,segW,bh);}
+   osdText(c,'⚓',bx+N*(segW+sg)-sg+gap,y+s,s,(player.attached||sealed)?G:OSD_DIM);}   // on the air line
+  y+=rowH+gap;
+  // ---- MULE battery (segmented, like any tank) + the boost coil strip under it
+  if(sealed){const by=y+((rowH-bh)>>1),N=10,sg=s,segW=Math.floor((bw+sg)/N)-sg,bf=clamp(mech.battery/mechBatMax(),0,1),lit=Math.ceil(bf*N-1e-6);
+   osdIcon(c,OSD_ICON.cell,ix,y,s,G);
+   for(let i=0;i<N;i++){c.fillStyle=i<lit?G:OSD_DIM;c.fillRect(bx+i*(segW+sg),by,segW,bh);}
+   const cf=clamp((mech.boostT||0)/mechBoostMax(),0,1),cy=by+bh+s,cw=N*(segW+sg)-sg;
+   c.fillStyle=OSD_DIM;c.fillRect(bx,cy,cw,s);
+   if(!mech.boostOut||((state.tick>>2)&1)){c.fillStyle=G;c.fillRect(bx,cy,Math.round(cw*cf),s);}   // burnt out: the strip blinks
+   y+=rowH+gap;}
+  // ---- task compass: the clipboard rides the screen edge toward the next task and slides along it
+  // as you swim; once the task is in view it hovers over it. A small arrow orbits the clipboard,
+  // always pointing at the task. Hidden while the task's own prompt is up (you're already there).
+  {const T=navTarget(tier);
+   if(!T||(osdPrompt&&nearMission===T))osdNav=null;
+   else{const tk=state.tick,vx=T.x-RCX,vy=T.y-RCY,m=12*s;   // margin clears the whole orbit, arrow tip included
+    const L=m,R=VW-m-(player.hasMap?28:0),Tp=top+2*(rowH+gap)+2*s+m,B=VH-m;
+    let gx,gy,ang;
+    if(vx>L&&vx<R&&vy>Tp&&vy<B){const q=osdAt(vx,vy-24-Math.round(Math.sin(tk*0.08)*2*s/2));gx=q[0];gy=q[1];ang=Math.PI/2;}   // in view: hover above it, arrow down
+    else{const ox=clamp(player.x+4-RCX,L,R),oy=clamp(player.y+4-RCY,Tp,B),dx=vx-ox,dy=vy-oy;ang=Math.atan2(dy,dx);   // off screen: the ray player -> task, clipped to the frame
+     const kx=dx>0?(R-ox)/dx:dx<0?(L-ox)/dx:Infinity,ky=dy>0?(B-oy)/dy:dy<0?(Tp-oy)/dy:Infinity,k=Math.min(kx,ky);gx=ox+dx*k;gy=oy+dy*k;}
+    if(!osdNav)osdNav={x:gx,y:gy,a:ang};
+    osdNav.x+=(gx-osdNav.x)*0.3;osdNav.y+=(gy-osdNav.y)*0.3;
+    let da=ang-osdNav.a;while(da>Math.PI)da-=2*Math.PI;while(da<-Math.PI)da+=2*Math.PI;osdNav.a+=da*0.25;   // the arrow orbits, never jumps
+    const nx=Math.round(osdNav.x),ny=Math.round(osdNav.y),a=osdNav.a,ca=Math.cos(a),sa=Math.sin(a);
+    osdIcon(c,OSD_ICON.clip,nx-Math.round(3.5*s),ny-Math.round(3.5*s),s,G);
+    const r=7*s+Math.sin(tk*0.12)*s*0.75,tip=r+3.5*s,hw=2.2*s;
+    osdTri(c,nx+ca*tip,ny+sa*tip,nx+ca*r-sa*hw,ny+sa*r+ca*hw,nx+ca*r+sa*hw,ny+sa*r-ca*hw,s,G);}}
+  // ---- context prompt: the button to press + the verb, over the thing it acts on
+  if(osdPrompt){const q=osdAt(osdPrompt.x,osdPrompt.y),k=osdPrompt.kind,t=osdPrompt.text;
+   const key=(k&&pcMode)?((pcSrc==='pad'?IP_PAD:IP_KEY)[k]||''):'',ic=(k&&!pcMode)?osdBtnIcon(k):null;
+   const lead=ic?8*s+gap:key?osdTextW(key,s)+gap*2:0,w=lead+osdTextW(t,s);
+   const px0=Math.round(clamp(q[0]-w/2,2,VW-2-w)),py0=Math.round(clamp(q[1]-8*s,2,VH-10*s));
+   if(ic)osdIcon(c,ic,px0,py0,s,G);else if(key)osdText(c,key,px0,py0+(s>>1)+s,s,G);
+   osdText(c,t,px0+lead,py0+(s>>1)+s,s,G);}
+  // ---- toast: one short line under the readouts, fading out at the end
+  if(osdToast){const age=performance.now()-osdToast.t0;
+   if(age>2200)osdToast=null;
+   else{let ts=s;if(osdTextW(osdToast.text,ts)>VW-8&&ts>1)ts--;
+    const w=osdTextW(osdToast.text,ts),ty=Math.max(y,top+2*(rowH+gap)+s)+s;
+    c.globalAlpha=age>1900?(2200-age)/300:1;osdText(c,osdToast.text,Math.round((VW-w)/2),ty,ts,G);c.globalAlpha=1;}}
+  osdFlush(ctx);
 }
 
 // Sector-nav minimap: a sliding window of nearby tiers (infinite descent), bases and your blip.
@@ -4759,7 +4821,6 @@ function drawMinimap(tier){
   const mapX=wx=>mmx+clamp(wx/(MW*TS),0,1)*mmw;
   // frame + label
   px(ctx,mmx-3,mmy-3,mmw+6,mmh+6,'#091018');px(ctx,mmx-2,mmy-2,mmw+4,mmh+4,'#1b2b37');px(ctx,mmx-1,mmy-1,mmw+2,mmh+2,'#0a141c');
-  pxText(ctx,'NAV',mmx,mmy-9,'#46d0ff');
   // tier bands in their water colours; current tier brightened
   for(let t=t0;t<=t1;t++){const y0=mapY(tierTop[t]*TS),y1=mapY(tierBot[t]*TS),wc=TIERS[t].water;
     px(ctx,mmx,y0|0,mmw,Math.max(1,(y1-y0))|0,shade(wc[1],t===tier?1.35:0.85));
@@ -4796,6 +4857,7 @@ function drawMinimap(tier){
 // close to an edge (e.g. the sub's hull pips). Shrink the rendered canvas by that much on
 // every side so the frame always has bare glass under it, never live HUD.
 const STAGE_FRAME_PAD=8;
+let UIPX=1;                                            // CSS px per world px (sizes the OSD text, see osdScale)
 function resize(){const stage=document.getElementById('stage'),w=stage.clientWidth-STAGE_FRAME_PAD*2,h=stage.clientHeight-STAGE_FRAME_PAD*2;
   if(!w||!h)return;                                   // no layout yet (e.g. headless) — keep defaults
   const gba=window.matchMedia('(orientation:landscape) and (max-height:600px)').matches;
@@ -4807,7 +4869,7 @@ function resize(){const stage=document.getElementById('stage'),w=stage.clientWid
     VH=Math.max(240,Math.round(h/scale)); if(VH&1)VH++;
     if(canvas.width!==VW||canvas.height!==VH){canvas.width=VW;canvas.height=VH;murk.width=VW;murk.height=VH;ctx.imageSmoothingEnabled=false;mctx.imageSmoothingEnabled=false;}
     canvas.style.width=(VW*scale)+'px';canvas.style.height=(VH*scale)+'px';   // exact multiple — square pixels, at most a few px of bezel
-    return;
+    UIPX=scale;return;
   }
   if(gba){
     // LANDSCAPE: lock the on-screen tile size so the diver renders at the same scale as portrait (zoom in).
@@ -4821,7 +4883,7 @@ function resize(){const stage=document.getElementById('stage'),w=stage.clientWid
     VW=Math.max(176,Math.min(460,Math.round(VH*w/h))); if(VW&1)VW++;
   }
   if(canvas.width!==VW||canvas.height!==VH){canvas.width=VW;canvas.height=VH;murk.width=VW;murk.height=VH;ctx.imageSmoothingEnabled=false;mctx.imageSmoothingEnabled=false;}
-  canvas.style.width=w+'px';canvas.style.height=h+'px';}
+  canvas.style.width=w+'px';canvas.style.height=h+'px';UIPX=h/VH;}
 window.addEventListener('resize',resize);window.addEventListener('orientationchange',()=>setTimeout(resize,200));
 
 let acc=0,last=performance.now(),frameAcc=0;
@@ -4846,7 +4908,7 @@ function frame(now){
   else if(state.mode==='flame'){flameInput();}
   else if(state.mode==='hack'){hackInput();}
   else if(state.mode==='craft'){if(queueCraft){queueCraft=false;toggleCraft(false);}}
-  else if(state.mode==='play'){if(queueCraft){queueCraft=false;if(nearBase&&nearBase.active)toggleCraft(true);else showMsg('dock at a powered base to craft');}}
+  else if(state.mode==='play'){if(queueCraft){queueCraft=false;if(nearBase&&nearBase.active)toggleCraft(true);else showMsg('✕ NO POWERED BASE HERE');}}
   else if(state.mode==='inv'){if(queueCraft){queueCraft=false;toggleInv(false);}}
   else if(state.mode==='pause'){if(actionEdge){actionEdge=false;resumeGame();}}
   else if(state.mode==='sub'){subInput();queueCraft=false;}
@@ -4891,7 +4953,7 @@ function openMine(o){
 }
 function hideMine(){mineEl.classList.add('hidden');}
 function closeMine(){const o=mgOre;mgOre=null;setMode('play');sfx.back();
-  if(o&&o.x!=null){o.fuse=ABORT_FUSE;o.fuseMax=ABORT_FUSE;o.fuseTick=0;showMsg('vein destabilised — get clear before it blows');}}
+  if(o&&o.x!=null){o.fuse=ABORT_FUSE;o.fuseMax=ABORT_FUSE;o.fuseTick=0;showMsg('⚠ GET CLEAR!');}}
 function removeOre(o){map[o.y][o.x]=EMPTY;const i=oreCells.indexOf(o);if(i>=0)oreCells.splice(i,1);}
 
 function genMineGrid(o){
@@ -4969,7 +5031,7 @@ function mineDigSel(){const o=mgOre;if(!o||!o.sel)return;const idx=o.sel.y*MG_N+
 function mgExplode(){const o=mgOre;const dmg=1+Math.floor((o.tier||0)/2);
   player.hearts-=dmg;player.invuln=INVULN;shake=12;sfx.lose();flashDmg(dmg,false);
   burst(player.x+4,player.y+4,28,180,0.7,()=>Math.random()<.5?'#ff5a3c':'#ffd23c');
-  removeOre(o);mgOre=null;hideMine();showMsg('gas pocket blew — vein destroyed');
+  removeOre(o);mgOre=null;hideMine();showMsg('✕ VEIN BLEW');
   if(player.hearts<=0){if(dieOrRevive('blast'))return;}setMode('play');
 }
 function mgCollect(){const o=mgOre;addInv(o.resId,ORE_YIELD);sfx.build();
@@ -5116,8 +5178,7 @@ function crankBust(){
 }
 function closeCrank(){if(!crankObj){if(state.mode==='crank')setMode('play');return;}
   const o=crankObj;o.crankTurns=crankS.turns;o.prog=Math.round(crankS.turns/crankS.need*100);   // keep the world sprite's gauge in step
-  crankObj=null;setMode('play');sfx.back();
-  if(crankS.turns>0)showMsg('valve left part-open — the pressure is still up');}
+  crankObj=null;setMode('play');sfx.back();}
 function crankTurn(){const o=crankObj;if(!o||crankS.doneT>0||deckActive)return;
   const z=crankZone(),ay=crankS.actY||Math.round(VH*0.4),cx=Math.round(VW/2);
   if(z==='turn'){                       // clean actuate: servo fires, a pressure pulse bleeds off
@@ -5143,8 +5204,7 @@ function crankInput(){
   player.drown=0;
   if(crankS.hint>0)crankS.hint-=1/60;
   if(crankS.doneT>0){crankS.doneT-=1/60;crankS.rotor+=crankS.spin/60;crankS.spin*=0.9;
-    if(crankS.doneT<=0){const bust=crankS.bust;crankObj=null;o.crankTurns=0;completeMissionObj(o);setMode('play');
-      if(bust)showMsg('TIMER OUT — the valve blows in your face!');}
+    if(crankS.doneT<=0){crankObj=null;o.crankTurns=0;completeMissionObj(o);setMode('play');}
     return;}
   crankS.time+=1/60;
   if(crankS.time>=crankS.limit){crankBust();return;}
@@ -5353,7 +5413,7 @@ function hackBust(){const S=hackS;
 }
 function closeHack(){if(!hackObj){if(state.mode==='hack')setMode('play');return;}
   hackObj=null;setMode('play');sfx.back();
-  showMsg('link dropped — the node is still locked');}
+  }
 // rotate the cursor round the ring (build) or step the grid cursor (input); both wrap around
 function hackNav(dir){const S=hackS;if(!hackObj||S.doneT>0||S.formT>0)return;
   if(S.phase==='build'){S.ptr=(dir==='left'||dir==='up')?(S.ptr+7)%8:(S.ptr+1)%8;sfx.nav();}
@@ -5405,7 +5465,7 @@ function hackInput(){const S=hackS,o=hackObj;if(!o){if(state.mode==='hack')setMo
   if(S.phase==='form'){S.formT-=1/60;if(S.formT<=0)hackBuildGrid(S.targetSet);return;}
   if(S.phase==='done'){S.doneT-=1/60;if(S.doneT<=0){hackObj=null;completeMissionObj(o);setMode('play');}return;}
   if(S.phase==='bust'){S.doneT-=1/60;
-    if(S.doneT<=0){hackObj=null;completeMissionObj(o);setMode('play');showMsg('TIMER OUT — the console arcs in your face!');}
+    if(S.doneT<=0){hackObj=null;completeMissionObj(o);setMode('play');}
     return;}
   S.time+=1/60;
   if(S.time>=S.limit){hackBust();return;}
@@ -5600,7 +5660,7 @@ function openFlame(o){
 function closeFlame(){                                   // abort — the sac stays live, no progress
   if(!flameObj){if(state.mode==='flame')setMode('play');return;}
   flameObj=null;flameFire=false;setMode('play');sfx.back();
-  showMsg('backed off the sac — it is still live');
+  
 }
 function flameEnd(win){
   if(flameS.doneT>0)return;
@@ -5637,9 +5697,9 @@ function flameInput(){
   if(B.doneT>0){B.doneT-=1/60;updateFlameFx();
     if(B.doneT<=0){const win=B.won;flameObj=null;flameFire=false;setMode('play');
       completeMissionObj(o);
-      if(win){showMsg('SAC BURNED CLEAN — no blowback');shake=Math.max(shake,2);}
+      if(win){shake=Math.max(shake,2);}
       else{podBlasts.push({x:o.x,y:o.y,tier:o.tier,t:0,fuse:0.4,win:false});   // bust: gas erupts right in the diver's face
-        showMsg('TIMER BUST — the sac ruptures on you!');shake=Math.max(shake,8);}}
+        shake=Math.max(shake,8);}}
     return;}
   // ==== aim: analog input + arrows, momentum (drag) + gentle autonomous sway ====
   let ix=(input.jx||0)+((input.right?1:0)-(input.left?1:0));
@@ -6558,7 +6618,7 @@ function dryDockConfirm(){
   const U=SUB_UPGS[ddSel], max=SUB_UPG_MAX[U.k], lv=subLv(U.k);
   if(lv>=max){sfx.deny();return;}
   const cost=subUpgCost(U.k,lv);
-  if((player.subScrap||0)<cost){sfx.deny();showMsg('not enough salvage — '+cost+' needed');return;}
+  if((player.subScrap||0)<cost){sfx.deny();return;}
   player.subScrap-=cost;
   if(!player.subUpg)player.subUpg={};
   player.subUpg[U.k]=lv+1;
