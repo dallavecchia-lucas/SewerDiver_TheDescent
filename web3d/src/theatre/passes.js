@@ -17,7 +17,7 @@ import {
   sin, cos, exp, pow, select, If, Loop, screenUV, screenCoordinate, reflect, saturate, luminance,
 } from 'three/tsl';
 import { NPLATES, P_CARD } from './sheets.js';
-import { translucency, hash2, ign } from './gpu.js';
+import { translucency, hash2, ign, loop } from './gpu.js';
 
 const PI = Math.PI;
 
@@ -26,7 +26,7 @@ const maxc = (v) => max(v.x, max(v.y, v.z));
 const sq = (x) => x.mul(x);
 
 // ------------------------------------------------------------------ irradiance
-export function makeIrradiance(G, T, uScroll, uIrrAlpha, uIrrReset) {
+export function makeIrradiance(G, T, uScroll, uIrrAlpha, uIrrReset, uKeySamples) {
   return mat(Fn(() => {
     const A = G.uAtlas, NP = A.w;
     const pw = A.x.add(A.z.mul(2)), ph = A.y.add(A.z.mul(2));
@@ -52,35 +52,44 @@ export function makeIrradiance(G, T, uScroll, uIrrAlpha, uIrrReset) {
       const Ef = vec3(0).toVar(), Eb = vec3(0).toVar();
       const sv = float(0).toVar(), sd = float(0).toVar();
       const sigE = G.uSigA.add(G.uSigS);
-      Loop(G.uNL, ({ i }) => {
+      loop(G.uNL, 'irl', (i) => {
         const LP = G.uLP.element(i), LC = G.uLC.element(i), LD = G.uLD.element(i);
-        // stochastic point on the light's disc (faces the receiver): soft, distance-true penumbrae
-        const r2 = hash2(screenCoordinate.xy.add(vec2(float(i).mul(19.19), G.uFrameIdx.mul(7.31))));
-        const toL = LP.xyz.sub(P);
-        const l0 = normalize(toL);
-        const t1 = normalize(cross(l0, select(abs(l0.y).lessThan(0.9), vec3(0, 1, 0), vec3(1, 0, 0))));
-        const t2 = cross(l0, t1);
-        const ang = r2.x.mul(2 * PI), rad = sqrt(r2.y).mul(LP.w);
-        const S = LP.xyz.add(t1.mul(cos(ang).mul(rad))).add(t2.mul(sin(ang).mul(rad))).toVar();
-        const dv = S.sub(P);
-        const dist = length(dv);
-        const l = dv.div(dist);
-        const rng = LC.w;
-        const fo = saturate(float(1).sub(sq(dist.div(max(rng, 1e-3)))));
-        const att = select(rng.lessThan(0.0), float(1), fo.mul(fo));
-        const spot = select(LD.w.lessThan(-1.5), float(1), smoothstep(LD.w, LD.w.add(0.07), dot(l.negate(), LD.xyz)));
-        // light outside the bulb only travels through water from the glass inwards
-        const dWater = select(rng.lessThan(0.0), float(58).sub(P.z).div(max(l.z, 0.12)), dist);
-        const wa = exp(sigE.mul(dWater).negate());
-        const ndl = dot(N, l);
-        const base = LC.rgb.mul(att.mul(spot)).mul(wa).toVar();
-        If(maxc(base).mul(abs(ndl)).greaterThan(1e-4), () => {
-          const vis = G.shadow(P.add(N.mul(sign(ndl).mul(0.06))), S, k, T.albedo);
-          If(ndl.greaterThan(0.0), () => { Ef.addAssign(base.mul(ndl).mul(vis)); })
-            .Else(() => { Eb.addAssign(base.mul(ndl.negate()).mul(vis)); });
-          If(i.lessThan(2), () => {           // key + lantern drive the plastic's specular glints
-            const w = luminance(base).mul(abs(ndl));
-            sv.addAssign(w.mul(luminance(vis))); sd.addAssign(w);
+        // key + lantern get several stratified samples per frame, glows one
+        const ns = select(i.lessThan(2), uKeySamples, int(1));
+        const nsF = select(i.lessThan(2), float(uKeySamples), float(1)).toVar();
+        const wS = float(1).div(nsF);
+        const rot = hash2(screenCoordinate.xy.add(vec2(float(i).mul(19.19), G.uFrameIdx.mul(7.31))));
+        loop(ns, 'irs', (si) => {
+          // stratified point on the light's disc (golden-angle spiral, rotated per texel/frame):
+          // soft, distance-true penumbrae
+          const toL = LP.xyz.sub(P);
+          const l0 = normalize(toL);
+          const t1 = normalize(cross(l0, select(abs(l0.y).lessThan(0.9), vec3(0, 1, 0), vec3(1, 0, 0))));
+          const t2 = cross(l0, t1);
+          const fsi = float(si);
+          const ang = fsi.mul(2.39996323).add(rot.x.mul(2 * PI));
+          const rad = sqrt(fsi.add(rot.y).div(nsF)).mul(LP.w);
+          const S = LP.xyz.add(t1.mul(cos(ang).mul(rad))).add(t2.mul(sin(ang).mul(rad))).toVar();
+          const dv = S.sub(P);
+          const dist = length(dv);
+          const l = dv.div(dist);
+          const rng = LC.w;
+          const fo = saturate(float(1).sub(sq(dist.div(max(rng, 1e-3)))));
+          const att = select(rng.lessThan(0.0), float(1), fo.mul(fo));
+          const spot = select(LD.w.lessThan(-1.5), float(1), smoothstep(LD.w, LD.w.add(0.07), dot(l.negate(), LD.xyz)));
+          // light outside the bulb only travels through water from the glass inwards
+          const dWater = select(rng.lessThan(0.0), float(58).sub(P.z).div(max(l.z, 0.12)), dist);
+          const wa = exp(sigE.mul(dWater).negate());
+          const ndl = dot(N, l);
+          const base = LC.rgb.mul(att.mul(spot).mul(wS)).mul(wa).toVar();
+          If(maxc(base).mul(abs(ndl)).greaterThan(1e-5), () => {
+            const vis = G.shadow(P.add(N.mul(sign(ndl).mul(0.06))), S, k, T.albedo);
+            If(ndl.greaterThan(0.0), () => { Ef.addAssign(base.mul(ndl).mul(vis)); })
+              .Else(() => { Eb.addAssign(base.mul(ndl.negate()).mul(vis)); });
+            If(i.lessThan(2), () => {           // key + lantern drive the plastic's specular glints
+              const w = luminance(base).mul(abs(ndl));
+              sv.addAssign(w.mul(luminance(vis))); sd.addAssign(w);
+            });
           });
         });
       });
@@ -92,7 +101,7 @@ export function makeIrradiance(G, T, uScroll, uIrrAlpha, uIrrReset) {
       const valid = pvx.greaterThan(A.z.negate()).and(pvx.lessThan(A.x.add(A.z)))
         .and(pvy.greaterThan(A.z.negate())).and(pvy.lessThan(A.y.add(A.z))).and(uIrrReset.lessThan(0.5)).and(sc.w.greaterThan(0.5));
       const hist = texture(T.irrHist, G.atlasUV(k, pvx, pvy)).level(0);
-      out.assign(select(valid, mix(hist, cur, uIrrAlpha), cur));
+      out.assign(select(valid, mix(hist, cur, sc.z), cur));
     });
     return out;
   })());
@@ -110,7 +119,7 @@ export function makeVolume(G, T, uVolAlpha, steps) {
       // first opaque plate along the ray (thin-plate test is plenty for the fog depth)
       const tHit = float(-2).sub(o.z).div(d.z).toVar();
       const found = float(0).toVar();
-      Loop(NPLATES, ({ i }) => {
+      loop(int(NPLATES), 'vpl', (i) => {
         const k = int(NPLATES - 1).sub(i);
         If(found.lessThan(0.5), () => {
           const h = G.plateHit(k, o, d, 0);
@@ -124,7 +133,7 @@ export function makeVolume(G, T, uVolAlpha, steps) {
       const S = vec3(0).toVar(), Tr = float(1).toVar(), silt = float(0).toVar();
       const ds = tHit.div(steps);
       const sigA = G.uSigA;
-      Loop(steps, ({ i }) => {
+      loop(int(steps), 'vst', (i) => {
         const tt = float(i).add(j).mul(ds);
         const X = o.add(d.mul(tt)).toVar();
         const f = G.sampleField(T.density, X);
@@ -133,7 +142,7 @@ export function makeVolume(G, T, uVolAlpha, steps) {
         const sigS = G.uSigS.mul(float(1).add(sl.mul(3.5)));
         const sigT = sigA.add(sigS).add(vec3(1).sub(G.uDye.rgb).mul(dye.mul(0.012)));
         const Lin = vec3(0).toVar();
-        Loop(G.uNVL, ({ i: li }) => {
+        loop(G.uNVL, 'vli', (li) => {
           const LP = G.uLP.element(li), LC = G.uLC.element(li), LD = G.uLD.element(li);
           const toL = LP.xyz.sub(X);
           const dist = length(toL);
@@ -181,7 +190,7 @@ export function makeCompose(G, T, U) {
       const tf = G.uFrame.z.sub(o.z).div(d.z);
       const pf = o.add(d.mul(tf));
       If(G.frameAlpha(pf).greaterThan(0.5), () => { hitK.assign(99); hitT.assign(tf); });
-      Loop(NPLATES, ({ i }) => {
+      loop(int(NPLATES), 'cpl', (i) => {
         const k = int(NPLATES - 1).sub(i);
         If(hitK.lessThan(0), () => {
           const h = G.plateHit(k, o, d, 0);
@@ -242,7 +251,11 @@ export function makeCompose(G, T, U) {
         const lk = normalize(LP0.xyz.sub(P));
         const keyC = LC0.rgb.mul(exp(G.uSigA.add(G.uSigS).mul(float(58).sub(P.z).div(max(lk.z, 0.12))).negate()));
         const sideLit = keyC.mul(max(dot(N, lk), 0.0)).mul(irr.a.mul(0.6).add(0.25));
-        const diff = alb.rgb.mul(select(side.greaterThan(0.5), irr.rgb.mul(0.55).add(sideLit), irr.rgb));
+        const lit = select(side.greaterThan(0.5), irr.rgb.mul(0.55).add(sideLit), irr.rgb);
+        // neon-like paint is self-lit acrylic: it glows steadily instead of blowing out under the lamps
+        const diff0 = alb.rgb.mul(mix(lit, min(lit, vec3(0.9)).mul(0.6).add(0.32), tr));
+        // the card flat is a backlit display panel: mostly its own light, a little stage light
+        const diff = select(k.equal(int(P_CARD)), alb.rgb.mul(lit.mul(0.18)), diff0);
         // satin clear-coat (normalised Blinn-Phong, n~48) for the key + lantern
         const specOf = (l, c) => {
           const H = normalize(l.add(Vd));
@@ -258,9 +271,9 @@ export function makeCompose(G, T, U) {
         const spec = specOf(lk, keyC).add(specOf(l1n, lanC)).mul(irr.a).mul(float(1).sub(side.mul(0.5)));
         // light piping in acrylic: translucent props glow along their cut edges
         const edgeGlow = alb.rgb.mul(tr).mul(abs(gx).add(abs(gy)).mul(0.9).add(side.mul(0.6))).mul(irr.rgb.add(0.05));
-        const paintGlow = alb.rgb.mul(tr).mul(0.22);
+        const paintGlow = alb.rgb.mul(tr).mul(0.08);
         const cardGlow = select(k.equal(int(P_CARD)), alb.rgb.mul(U.uCardGlow), vec3(0));
-        col.assign(diff.add(spec).add(edgeGlow).add(paintGlow).add(emi.rgb.mul(1.7)).add(cardGlow));
+        col.assign(diff.add(spec).add(edgeGlow).add(paintGlow).add(emi.rgb.mul(0.5)).add(cardGlow));
       }).Else(() => {
         // the box's back wall, behind every plate (only visible past an unfilled bleed)
         tHit.assign(float(-2).sub(o.z).div(d.z));
@@ -288,8 +301,8 @@ export function makeCocTile(G, T, U) {
   return mat(Fn(() => {
     const m = float(0).toVar();
     const tile = vec2(8).div(G.uCanvas);
-    Loop(4, ({ i }) => {
-      Loop(4, ({ i: jj }) => {
+    loop(int(4), 'tx', (i) => {
+      loop(int(4), 'ty', (jj) => {
         const uv = screenUV.add(vec2(float(i).sub(1.5), float(jj).sub(1.5)).mul(tile).mul(0.25));
         const sd = texture(T.compose, uv).level(0).a;
         If(sd.lessThan(900.0), () => { m.assign(max(m, sd.mul(U.uDof.x))); });
@@ -315,7 +328,7 @@ export function makeDof(G, T, U, taps) {
       If(Rr.greaterThan(0.6), () => {
         const sum = c.rgb.toVar(), ws = float(1).toVar();
         const rot = ign(screenCoordinate.xy, G.uFrameIdx).mul(2 * PI);
-        Loop(taps, ({ i }) => {
+        loop(int(taps), 'dft', (i) => {
           const fi = float(i);
           const r = sqrt(fi.add(0.5).div(taps)).mul(Rr);
           const a = fi.mul(2.39996323).add(rot);
@@ -347,7 +360,7 @@ export function makeFinal(G, T, U) {
     const col = texture(T.dof, screenUV).level(0).rgb.toVar();
 
     // --- bubbles stuck to the inside of the faceplate: tiny plano-convex lenses
-    Loop(U.uNB, ({ i }) => {
+    loop(U.uNB, 'gbb', (i) => {
       const B = U.uBub.element(i);
       const dd = w.sub(B.xy);
       const r = length(dd);
@@ -415,6 +428,7 @@ export function makeFinal(G, T, U) {
     If(dv.equal(6), () => { res.assign(vec4(texture(T.density, screenUV).level(0).xyz.mul(vec3(0.5, 0.5, 0.5)), 1)); });
     If(dv.equal(8), () => { const hh = texture(T.hud, screenUV).level(0); res.assign(vec4(hh.rgb.mul(hh.a).add(vec3(0.1, 0, 0)), 1)); });
     If(dv.equal(9), () => { res.assign(dbgHud); });
+    If(dv.equal(10), () => { res.assign(vec4(abs(texture(T.vel, screenUV).level(0).xyz).mul(0.05), 1)); });
     If(dv.equal(7), () => { res.assign(vec4(texture(T.irr, screenUV).level(0).a, 0, 0, 1)); });
     return res;
   })());

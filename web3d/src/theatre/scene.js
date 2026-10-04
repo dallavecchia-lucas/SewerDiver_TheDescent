@@ -48,6 +48,9 @@ export class TheatreScene {
     for (const p of this.plates) {
       const c = calibratePlate(p.z, halfW, halfH, vw, vh);
       p.s = c.s; p.cx = c.cx; p.cy = c.cy;
+      // the card flat is a little smaller than the stage opening, so its hovering edge and the
+      // shadow it throws on the theatre behind always show
+      if (p.i === P_CARD) p.s *= 0.93;
     }
     // fit view-px <-> box mapping as a function of depth (particles, splats, prompts)
     this.depthFit = [0, 10, 20, 30, 40, 50, 57].map((z) => ({ z, ...calibratePlate(z, halfW, halfH, vw, vh) }));
@@ -124,17 +127,19 @@ export class TheatreScene {
     const L = [];
     // room key light: far above the viewer's shoulder, shining down through the faceplate.
     // Big angular size -> soft, distance-true penumbrae. Warm-white, attenuated by the water.
-    L.push({ p: [-38, 120, 235], r: 26, c: [1.0 * 1.9, 0.93 * 1.9, 0.82 * 1.9], range: -1, dir: null, k: -1 });
+    L.push({ p: [-38, 120, 235], r: 26, c: [1.0 * 4.4, 0.95 * 4.4, 0.86 * 4.4], range: -1, dir: null, k: -1 });
     const lan = info.lantern;
     if (lan) {
+      // the helmet lamp hangs just in front of the actors plate and throws its cone back into
+      // the box: the beam lands on the rock right behind the diver and spreads wider on the
+      // back cloth, so every creature in it casts a big, soft shadow-play silhouette
       const P = this.viewToBox(P_ACT, lan.x, lan.y, 4.5);
       const ang = Math.atan2(-lan.ly, lan.lx);           // view +y is down; box +y is up
-      const dx = Math.cos(ang), dy = Math.sin(ang);
-      const dir = new THREE.Vector3(dx, dy, -0.42).normalize();
-      const reach = lan.R * this.plates[P_ACT].s * 1.25;
+      const dir = new THREE.Vector3(Math.cos(ang), Math.sin(ang), -1.15).normalize();
+      const reach = lan.R * this.plates[P_ACT].s * 1.3 + 30;
       const mech = lan.mech ? 1.3 : 1;
-      L.push({ p: P, r: 1.2, c: [0.62 * 4.2 * mech, 0.8 * 4.2 * mech, 1.0 * 4.2 * mech], range: reach, dir: [dir.x, dir.y, dir.z, Math.cos(lan.half * 1.08)], k: P_ACT });
-      L.push({ p: [P[0], P[1], P[2] + 1.5], r: 1.0, c: [0.5 * 1.1, 0.66 * 1.1, 0.85 * 1.1], range: lan.self * this.plates[P_ACT].s * 1.6, dir: null, k: P_ACT });
+      L.push({ p: P, r: 1.3, c: [0.8 * 9 * mech, 0.9 * 9 * mech, 1.0 * 9 * mech], range: reach, dir: [dir.x, dir.y, dir.z, Math.cos(lan.half * 1.18)], k: P_ACT });
+      L.push({ p: [P[0], P[1], P[2] + 1.5], r: 1.0, c: [0.5 * 1.6, 0.66 * 1.6, 0.85 * 1.6], range: lan.self * this.plates[P_ACT].s * 1.6 + 16, dir: null, k: P_ACT });
     } else if (info.boat) {
       const b = info.boat;
       const P = this.viewToBox(P_ACT, b.x + 18, b.y, 5);
@@ -152,8 +157,8 @@ export class TheatreScene {
       if (g.x < -60 || g.y < -60 || g.x > this.vw + 60 || g.y > this.vh + 60) continue;
       const P = this.viewToBox(k, g.x, g.y, 2.6);
       const rgb = String(g.col || '255,255,255').split(',').map((n) => (+n || 0) / 255);
-      const s = this.plates[k].s, I = Math.min(2.2, g.a) * 2.3;
-      L.push({ p: P, r: Math.min(2.5, 0.6 + g.r * s * 0.08), c: [srgb2lin(rgb[0]) * I, srgb2lin(rgb[1]) * I, srgb2lin(rgb[2]) * I], range: g.r * s * 2.1, dir: null, k });
+      const s = this.plates[k].s, I = Math.min(2.2, g.a) * 2.6;
+      L.push({ p: P, r: Math.min(2.5, 0.6 + g.r * s * 0.08), c: [srgb2lin(rgb[0]) * I, srgb2lin(rgb[1]) * I, srgb2lin(rgb[2]) * I], range: g.r * s * 2.2 + 6, dir: null, k });
     }
     this.lights = L;
     return L;

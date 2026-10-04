@@ -40,10 +40,10 @@ export class WaterDirector {
       const bp = S.viewToBox(P_ACT, px, py, 0.5);
       const vx = (P.vx || 0) * 60 * s3, vy = -(P.vy || 0) * 60 * s3;
       const spd = Math.hypot(vx, vy);
-      sp.push({ p: bp, r: 3.2, f: [vx * 3.2, vy * 3.2, 0], d: [spd > 12 ? 0.25 : 0.02, 0, 0] });
+      sp.push({ p: bp, r: 3.2, f: [vx * 3.2, vy * 3.2, 0], d: [spd > 12 ? 1.2 : 0.05, 0, 0] });
       // dash: a sudden burst of speed shoves the water and knocks the nearby plates
       if (spd > this.prevSpeed + 18 && spd > 30) {
-        sp.push({ p: bp, r: 6, f: [vx * 9, vy * 9, 0], d: [1.2, 0, 0] });
+        sp.push({ p: bp, r: 6, f: [vx * 9, vy * 9, 0], d: [9, 0, 0] });
         S.nudge(P_ACT, vx * 0.012, vy * 0.012, 0.6);
       }
       this.prevSpeed = spd;
@@ -59,7 +59,7 @@ export class WaterDirector {
         cr.push({ c, cx, cy, dx, dy, m: Math.hypot(dx, dy) });
       }
       cr.sort((a, b) => b.m - a.m);
-      for (const q of cr.slice(0, 4)) if (q.m > 2) sp.push({ p: S.viewToBox(P_ACT, q.cx, q.cy, 0), r: 3.5, f: [q.dx * 2.6, q.dy * 2.6, 0], d: [q.m > 30 ? 0.35 : 0, 0, 0] });
+      for (const q of cr.slice(0, 4)) if (q.m > 2) sp.push({ p: S.viewToBox(P_ACT, q.cx, q.cy, 0), r: 3.5, f: [q.dx * 2.6, q.dy * 2.6, 0], d: [q.m > 30 ? 2.5 : 0.2, 0, 0] });
       // sparks = mining chips / blasts: a silt puff where they burst
       let puffs = 0;
       for (const q of B.particles) {
@@ -67,7 +67,7 @@ export class WaterDirector {
         this.seen.add(q);
         if (q.type === 'spark' && puffs < 3) {
           puffs++;
-          sp.push({ p: S.viewToBox(P_ACT, q.x - B.RCX, q.y - B.RCY, 0), r: 4, f: [(Math.random() - 0.5) * 60, 25, (Math.random() - 0.5) * 30], d: [2.2, 0, 0.2] });
+          sp.push({ p: S.viewToBox(P_ACT, q.x - B.RCX, q.y - B.RCY, 0), r: 4.5, f: [(Math.random() - 0.5) * 60, 25, (Math.random() - 0.5) * 30], d: [14, 0, 0.2] });
         } else if (q.type === 'bubble') this._spawnBubble(S.viewToBox(P_ACT, q.x - B.RCX, q.y - B.RCY, -2 + Math.random() * 9), q.size || 1.5, q.vy);
       }
       // vents + sludge in view (rescanned a few times a second)
@@ -76,14 +76,14 @@ export class WaterDirector {
       for (const v of this.vents.slice(0, 5)) {
         const bpv = S.viewToBox(P_ROCK, v.x - B.RCX, v.y - B.RCY, 1.5);
         if (v.k === 'thermal') {
-          sp.push({ p: bpv, r: 4, f: [0, 30, 0], d: [0.25, 0, 1.6] });
+          sp.push({ p: bpv, r: 4, f: [0, 30, 0], d: [1.5, 0, 1.6] });
           if (Math.random() < dt * 2.5) this._spawnBubble([bpv[0] + (Math.random() - 0.5) * 3, bpv[1], bpv[2] + Math.random() * 6], 1.2, -40);
-        } else sp.push({ p: bpv, r: 5, f: [0, 4, 0], d: [0.1, 1.4, 0] });
+        } else sp.push({ p: bpv, r: 5, f: [0, 4, 0], d: [0.6, 3.5, 0] });
       }
       // a rising flood: the water comes in from the deck below
       if (B.floodFx) {
         const ff = B.floodFx;
-        for (let i = 0; i < 3; i++) sp.push({ p: S.viewToBox(P_ACT, VW * (0.2 + 0.3 * i), VH + 10, Math.random() * 20 - 10), r: 10, f: [0, 120, 0], d: [2.5, 0.2, 0] });
+        for (let i = 0; i < 3; i++) sp.push({ p: S.viewToBox(P_ACT, VW * (0.2 + 0.3 * i), VH + 10, Math.random() * 20 - 10), r: 10, f: [0, 120, 0], d: [12, 0.5, 0] });
         S.nudge(P_ACT, 0, 0.5, 0);
       }
     } else if (kind === 'sub') {
@@ -94,14 +94,14 @@ export class WaterDirector {
       const spd = 64 * (sub.boosting ? 2.25 : 1) * s3 * 0.55;
       out.current = [-spd, 0, 0, 1.6];
       const bp = S.viewToBox(P_ACT, sub.sx, sub.y, 0);
-      sp.push({ p: [bp[0] - 4, bp[1], bp[2]], r: 4, f: [-spd * 4, 0, 0], d: [sub.boosting ? 0.8 : 0.15, 0, 0] });
+      sp.push({ p: [bp[0] - 4, bp[1], bp[2]], r: 4, f: [-spd * 4, 0, 0], d: [sub.boosting ? 4 : 0.6, 0, 0] });
       for (const q of sub.bub || []) {
         if (this.seen.has(q)) continue; this.seen.add(q);
         if (Math.random() < 0.6) this._spawnBubble(S.viewToBox(P_ACT, q.x, q.y, -2 + Math.random() * 8), q.r || 1, q.vy || -6);
       }
       for (const q of sub.fx || []) {
         if (!q.blast || this.seen.has(q)) continue; this.seen.add(q);
-        sp.push({ p: S.viewToBox(P_ACT, q.x, q.y, 0), r: 8, f: [0, 60, 40], d: [3, 0, 0.5] });
+        sp.push({ p: S.viewToBox(P_ACT, q.x, q.y, 0), r: 8, f: [0, 60, 40], d: [16, 0, 0.5] });
         S.nudge(P_ACT, 0, 0, 1.2);
       }
     }

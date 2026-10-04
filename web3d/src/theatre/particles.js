@@ -8,7 +8,7 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, uniform, texture, vec2, vec3, vec4, float, int,
-  dot, length, max, min, clamp, mix, exp, floor, fract, mod, select, sin, cos, abs, smoothstep, saturate,
+  dot, length, max, min, clamp, mix, exp, floor, fract, mod, select, sin, cos, abs, smoothstep, saturate, pow,
   screenUV, instanceIndex, uv, varying, normalize,
 } from 'three/tsl';
 
@@ -114,7 +114,9 @@ export class Particles {
     const vis = select(sceneSd.greaterThan(900.0), float(0), smoothstep(float(-0.4), float(0.4), sd.sub(sceneSd)));
     const energy = basePx.div(size).mul(basePx.div(size));
     const tint = mix(vec3(0.55, 0.52, 0.45), vec3(0.75, 0.85, 0.9), fract(st.w.mul(7.0)));
-    const col = lightAt(P).mul(tint).mul(self.uSilt.x).mul(clamp(energy, 0.015, 1.0)).mul(vis).mul(0.55);
+    // most silt is dull and barely there; a few flakes catch the light like mica
+    const glint = mix(float(0.12), float(1.0), pow(fract(st.w.mul(13.7)), float(5.0)));
+    const col = lightAt(P).mul(tint).mul(self.uSilt.x).mul(clamp(energy, 0.015, 1.0)).mul(vis).mul(glint).mul(0.16);
     const vCol = varying(col, 'vSiltCol');
     const vBig = varying(smoothstep(float(3.0), float(9.0), size), 'vSiltBig');
     sm.positionNode = vec3(pj.px.x, pj.px.y.negate(), 0);

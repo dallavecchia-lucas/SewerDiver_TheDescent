@@ -145,8 +145,8 @@ export class GPUState {
   // ray/plane intersection + one alpha fetch, so penumbrae come out distance-true.
   shadow(P, S, skipK, albedoTex) {
     const T = vec3(1).toVar();
-    const dv = S.sub(P);
-    Loop(int(NPLATES), ({ i }) => {
+    const dv = S.sub(P).toVar();
+    loop(int(NPLATES), 'shp', (i) => {
       If(i.notEqual(skipK), () => {
         const C = this.uPC.element(i), U = this.uPU.element(i), V = this.uPV.element(i), N = this.uPN.element(i).xyz;
         const den = dot(dv, N);
@@ -185,6 +185,12 @@ export class GPUState {
       gy.add(0.5).add(floor(k.div(G.w)).mul(G.y)).div(AW.y));
     return mix(texture(tex, uvK(k0)).level(0), texture(tex, uvK(k1)).level(0), fz);
   }
+}
+
+// Named loop. TSL calls every Loop() variable "i", so nested loops would shadow each other
+// (an inner "i" silently replaces the outer index). Every loop in the theatre gets its own name.
+export function loop(n, name, fn) {
+  return Loop({ start: int(0), end: n, type: 'int', condition: '<', name }, (o) => fn(o[name]));
 }
 
 // GLSL-style refract (eta = n1/n2), total internal reflection falls back to the incident ray.

@@ -43,7 +43,7 @@ export class TheatreRenderer {
     this.T = {
       albedo: texture(blank), emissive: texture(blank), hud: texture(blank),
       irr: texture(blank), irrHist: texture(blank), vol: texture(blank), volHist: texture(blank),
-      compose: texture(blank), tile: texture(blank), dof: texture(blank), density: texture(blank),
+      compose: texture(blank), tile: texture(blank), dof: texture(blank), density: texture(blank), vel: texture(blank),
     };
     this._makeAtlasTextures();
 
@@ -54,7 +54,8 @@ export class TheatreRenderer {
     this.velNode = texture(this.fluid.velTex);
 
     // ---- passes
-    this.mIrr = makeIrradiance(this.G, this.T, this.uScroll, this.uIrrAlpha, this.uIrrReset);
+    this.uKeySamples = uniform(Q.keySamples || 3, 'int');
+    this.mIrr = makeIrradiance(this.G, this.T, this.uScroll, this.uIrrAlpha, this.uIrrReset, this.uKeySamples);
     this.mVol = makeVolume(this.G, this.T, this.uVolAlpha, Q.volSteps);
     this.mCompose = makeCompose(this.G, this.T, this.U);
     this.mTile = makeCocTile(this.G, this.T, this.U);
@@ -140,7 +141,8 @@ export class TheatreRenderer {
     S.uploadWater(G);
     for (let k = 0; k < NPLATES; k++) {
       const sc = f.scroll ? f.scroll[k] : null;
-      this.uScroll.array[k].set(sc ? sc[0] : 0, sc ? sc[1] : 0, 0, sc ? 1 : 0);
+      const moving = sc && (Math.abs(sc[0]) + Math.abs(sc[1]) > 0.01);
+      this.uScroll.array[k].set(sc ? sc[0] : 0, sc ? sc[1] : 0, moving ? 0.3 : 0.16, sc ? 1 : 0);
     }
     this.uIrrReset.value = this.reset ? 1 : 0;
 
@@ -153,7 +155,7 @@ export class TheatreRenderer {
     const kDof = this.size.h / 1000;
     U.uDof.value.set(0.2 * kDof * f.dofScale, 11 * kDof, 0, 0);
     U.uGrime.value = S.grime;
-    U.uCardGlow.value = S.card.glow * 0.85;
+    U.uCardGlow.value = S.card.glow * 0.95;
     U.uExposure.value = f.exposure || 1.15;
     U.uManualSRGB.value = this.offscreen ? 1 : 0;
     const ins = { x: 0.045, y: 0.03 };
@@ -178,6 +180,7 @@ export class TheatreRenderer {
     this.fluid.step(f.dt);
     this.T.density.value = this.fluid.denTex;
     this.velNode.value = this.fluid.velTex;
+    this.T.vel.value = this.fluid.velTex;
     this.particles.uSilt.value.set(f.siltBright, 1, 0, 0);
     this.particles.update(f.dt);
     this.particles.setBubbles(f.bubbles);

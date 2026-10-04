@@ -155,7 +155,8 @@ function loop(now) {
     if (k === P_CARD) { scroll.push([0, 0]); continue; }
     if (!cam || !prevScroll || prevKind !== kind) { scroll.push(null); continue; }
     const par = kind === 'sub' ? (k === P_BACK ? 0 : 1) : PLATES[k].par;
-    scroll.push([(cam[0] - prevScroll[0]) * par, (cam[1] - prevScroll[1]) * par]);
+    // the legacy rounds parallax layers to whole pixels: reproject by exactly what it drew
+    scroll.push([Math.round(cam[0] * par) - Math.round(prevScroll[0] * par), Math.round(cam[1] * par) - Math.round(prevScroll[1] * par)]);
   }
   const plateVel = scroll.map((s, k) => (s && k !== P_CARD ? [-s[0] * scene.plates[k].s / dt, s[1] * scene.plates[k].s / dt] : null));
   if (cam) prevScroll = cam;
@@ -164,6 +165,8 @@ function loop(now) {
   scene.step(dt);
   const lights = { glows: B && kind !== 'flat' ? B.glows : [], lantern: kind === 'world' ? TH.lantern : null, boat: kind === 'sub' && B ? { x: B.subS.sx, y: B.subS.y } : null };
   scene.buildLights(lights);
+  const only = window.__theatreLights || params.get('lights');   // debug: isolate light groups
+  if (only) scene.lights = scene.lights.filter((l, i) => (only.includes('key') && i === 0) || (only.includes('lantern') && (i === 1 || i === 2)) || (only.includes('glows') && i > 2));
 
   const f = { dt, time: now / 1000, scroll, plateVel, splats: [], current: [0, 0, 0, 0], body: [-motion[0] * 9, -motion[1] * 9, motion[2] * 4], ambientSilt: 0.05, ambientDye: 0 };
   water.frame(B, kind, dt, f);
@@ -171,7 +174,7 @@ function loop(now) {
   f.glassBubbles = water.glass;
   f.siltBright = 1;
   f.hud = kind !== 'flat';
-  f.exposure = 1.18;
+  f.exposure = 1.08;
 
   // autofocus: the focal band follows the diver's row with a soft, slightly lazy pull
   let fy = 0;
@@ -182,10 +185,10 @@ function loop(now) {
   focus.v += (k * (fy - focus.y) - c * focus.v) * dt; focus.y += focus.v * dt;
   focus.z = kind === 'flat' ? scene.plates[P_CARD].z : PLATES[P_ACT].z;
   f.focus = [0, focus.y, focus.z];
-  f.tilt = 1.02;
-  f.dofScale = kind === 'flat' ? 0.55 : 1;
+  f.tilt = kind === 'flat' ? 0.0 : 1.02;          // flat: focus lies on the card, the box behind melts
+  f.dofScale = kind === 'flat' ? 0.35 : 0.62;
 
-  const views = { compose: 1, vol: 2, irr: 3, albedo: 4, coc: 5, fluid: 6, spec: 7, hud: 8, hv: 9 };
+  const views = { compose: 1, vol: 2, irr: 3, albedo: 4, coc: 5, fluid: 6, spec: 7, hud: 8, hv: 9, velocity: 10 };
   renderer.U.uDebugView.value = views[window.__theatreView || params.get('view')] || 0;
   renderer.render(f);
   if (params.has('debug')) debugOverlay();

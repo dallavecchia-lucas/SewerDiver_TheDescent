@@ -14,6 +14,7 @@ import {
   dot, length, max, min, clamp, mix, exp, floor, mod, select, If, Loop, screenUV, sin, cos,
 } from 'three/tsl';
 import { PLATES, NPLATES } from './sheets.js';
+import { loop } from './gpu.js';
 
 export const MAX_SPLATS = 16;
 
@@ -83,7 +84,7 @@ export class Fluid {
         const back = c.P.sub(v0.mul(self.uDt));
         const v = G.sampleField(self.tVel, back).xyz.mul(0.992).toVar();
         // splat impulses (wakes, dashes, blasts, inflows)
-        Loop(self.uNS, ({ i }) => {
+        loop(self.uNS, 'fsp', (i) => {
           const S = self.uSP.element(i), F = self.uSF.element(i);
           const d = c.P.sub(S.xyz);
           const fall = exp(dot(d, d).div(S.w.mul(S.w)).negate());
@@ -99,9 +100,9 @@ export class Fluid {
           sin(c.P.y.mul(0.11).add(t.mul(0.31)).add(sin(c.P.z.mul(0.13).add(t.mul(0.17))))),
           sin(c.P.z.mul(0.09).add(t.mul(0.23)).add(sin(c.P.x.mul(0.12).sub(t.mul(0.19))))),
           sin(c.P.x.mul(0.10).sub(t.mul(0.27)).add(sin(c.P.y.mul(0.08).add(t.mul(0.13))))));
-        v.addAssign(turb.mul(3.2).mul(self.uDt));
+        v.addAssign(turb.mul(2.2).mul(self.uDt));
         // the plates slide through the water and drag it along (viscous coupling)
-        Loop(NPLATES, ({ i }) => {
+        loop(int(NPLATES), 'fpl', (i) => {
           const pv = self.uPlateVel.element(i);
           const z = G.uPC.element(i).z;
           const wgt = exp(c.P.z.sub(z).div(2.2).mul(c.P.z.sub(z).div(2.2)).negate()).mul(pv.w);
@@ -158,7 +159,7 @@ export class Fluid {
         const back = c.P.sub(v.add(vec3(0, -0.9, 0)).mul(self.uDt));
         const d = G.sampleField(self.tDen, back).toVar();
         d.assign(d.mul(vec4(0.9975, 0.9992, 0.985, 1)));
-        Loop(self.uNS, ({ i }) => {
+        loop(self.uNS, 'fsd', (i) => {
           const S = self.uSP.element(i), D = self.uSD.element(i);
           const dd = c.P.sub(S.xyz);
           const fall = exp(dot(dd, dd).div(S.w.mul(S.w)).negate());
