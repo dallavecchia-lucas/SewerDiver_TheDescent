@@ -160,10 +160,7 @@ export function makeVolume(G, T, uVolAlpha, steps) {
           const wa = exp(sigA.add(sigS).mul(dWater).negate());
           const LX = G.uLX.element(li);
           const near = select(LX.z.greaterThan(0.0), smoothstep(LX.z.mul(0.3), LX.z, dist), float(1));
-          // the room key light (range < 0, it shines in from outside the bulb) never scatters in
-          // the water: its shafts read as glare on the tube. Only lights inside the box do.
-          const inBox = select(rng.lessThan(0.0), float(0), float(1));
-          const base = LC.rgb.mul(att.mul(spot).mul(near).mul(inBox)).mul(wa).toVar();
+          const base = LC.rgb.mul(att.mul(spot).mul(near)).mul(wa).toVar();
           If(maxc(base).greaterThan(1e-4), () => {
             // Henyey-Greenstein, forward-scattering silt (g ~ 0.62)
             const g = float(0.62);
@@ -303,7 +300,11 @@ export function makeCompose(G, T, U) {
         // (actors, foreground) keep a satin glint from it; the card flat is a matte display.
         const kSpec = select(k.equal(int(3)).or(k.equal(int(4))), float(0.35), float(0));
         const lSpec = select(k.equal(int(P_CARD)), float(0), float(1));
-        const spec = specOf(lk, keyC).mul(kSpec).add(specOf(l1n, lanC).mul(lSpec)).mul(irr.a).mul(float(1).sub(side.mul(0.5)));
+        // ...but the plastic still catches the room light everywhere: an even satin sheen (no
+        // view-dependent lobe, so no patch) that carries the key light's shadows (irr.a) and
+        // is what lifts the dark walls and makes the shadow play read
+        const sheen = keyC.mul(max(dot(N, lk), 0.0)).mul(U.uSheen).mul(select(k.equal(int(P_CARD)), float(0), float(1)));
+        const spec = specOf(lk, keyC).mul(kSpec).add(specOf(l1n, lanC).mul(lSpec)).add(sheen).mul(irr.a).mul(float(1).sub(side.mul(0.5)));
         // light piping in acrylic: translucent props glow along their cut edges
         const edgeGlow = alb.rgb.mul(tr).mul(abs(gx).add(abs(gy)).mul(0.9).add(side.mul(0.6))).mul(irr.rgb.add(0.05));
         const paintGlow = alb.rgb.mul(tr).mul(0.08);
@@ -549,6 +550,7 @@ export function passUniforms() {
     uCardGlow: uniform(0),
     uDebugView: uniform(0, 'int'),
     uIrrDiv: uniform(2),
+    uSheen: uniform(0.045),                                    // even satin reflection of the room light
     uTint: uniform(new THREE.Vector4(0, 0, 0, 0)),          // display-space wash: rgb (0..1 sRGB) + alpha
   };
 }

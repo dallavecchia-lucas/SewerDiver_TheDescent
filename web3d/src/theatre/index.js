@@ -199,6 +199,7 @@ function loop(now) {
 
   const views = { compose: 1, vol: 2, irr: 3, albedo: 4, coc: 5, fluid: 6, spec: 7, hud: 8, hv: 9, velocity: 10 };
   renderer.U.uDebugView.value = views[window.__theatreView || params.get('view')] || 0;
+  if (params.has('sheen')) renderer.U.uSheen.value = +params.get('sheen');
   renderer.render(f);
   if (params.has('debug')) debugOverlay();
 }

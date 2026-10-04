@@ -195,8 +195,7 @@ export class TheatreScene {
       if (l.dir) G.uLD.array[i].set(l.dir[0], l.dir[1], l.dir[2], l.dir[3]); else G.uLD.array[i].set(0, 0, -1, -2);
     }
     G.uNL.value = L.length;
-    // +1: slot 0 is the room key light, which the volume pass skips (no glare shafts)
-    G.uNVL.value = Math.min(L.length, nvl + 1);
+    G.uNVL.value = Math.min(L.length, nvl);
   }
 
   // ---- water optics follow the game's water: the tier palette, pollution, dry decks
