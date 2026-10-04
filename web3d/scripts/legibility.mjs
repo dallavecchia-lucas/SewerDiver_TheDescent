@@ -74,5 +74,23 @@ console.log(`Inline style="" font sizes below ${MIN_CSS_FONT}px: ${inline.length
 console.log(`ctx.font in world px (shrinks with the canvas): ${canvasFonts.map((n) => n + 'px').join(', ') || 'none'}`);
 failed += rules.length + inline.length + canvasFonts.length;
 
+// ---- 3. toasts: one line, <= 26 characters at the 14px floor (see ui-toast-rewrite.md) ---
+// The literal text is counted as written; each spliced-in value counts as 3 characters (a
+// count or a price), except CITY_NAME, which is up to 23 (GREATER MERIDIAN SPRAWL).
+const TOAST_MAX = 26;
+const toasts = [];
+for (const m of html.matchAll(/showMsg\(((?:'[^']*'|[^;'])*?)\)\s*[;}]/g)) {
+  const arg = m[1];
+  if (!arg.includes("'")) continue;                  // showMsg(t) / showMsg(m): the definition and the dev relay
+  const lit = [...arg.matchAll(/'([^']*)'/g)].map((x) => x[1].replace(/\\u[0-9a-f]{4}/gi, 'x')).join('');
+  const vals = arg.replace(/'[^']*'/g, '').split('+').map((x) => x.trim()).filter(Boolean);
+  const len = lit.length + vals.reduce((n, v) => n + (v === 'CITY_NAME' ? 23 : 3), 0);
+  toasts.push([len, arg]);
+}
+const longToasts = toasts.filter(([n]) => n > TOAST_MAX);
+console.log(`\nToasts: ${toasts.length}, over ${TOAST_MAX} characters: ${longToasts.length}`);
+for (const [n, arg] of longToasts) console.log(`  ${n}  showMsg(${arg})`);
+failed += longToasts.length;
+
 console.log(failed ? `\nFAIL: ${failed} violation(s)` : '\nPASS');
 process.exit(failed ? 1 : 0);

@@ -129,7 +129,8 @@
 
   .toast{position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:4;
     background:rgba(8,16,24,.85);border:1px solid #2c6f8c;color:#bfefff;padding:5px 12px;border-radius:3px;
-    font-size:11px;letter-spacing:2px;text-transform:uppercase;white-space:nowrap;
+    font-size:14px;font-weight:bold;letter-spacing:2px;text-transform:uppercase;white-space:nowrap;
+    max-width:calc(100% - 16px);overflow:hidden;text-overflow:ellipsis;   /* 14px bold = the 8px cap floor; toasts stay <=26 chars, the ellipsis is only a safety net */
     box-shadow:0 0 14px rgba(70,208,255,.25);transition:opacity .25s;}
   .toast.hidden{opacity:0;pointer-events:none;}
 

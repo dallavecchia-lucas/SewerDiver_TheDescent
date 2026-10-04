@@ -1,10 +1,12 @@
-# Toast rewrite: draft for approval
+# Toast rewrite
 
-**Status: draft. Nothing in the game has changed yet.** Mark any row you disagree with,
-and the rest gets applied as written.
+**Status: approved and applied** to `sewerdiverdescentcity12.html` and synced into the 3D
+build (`sewerdiverdescent3d.html`). `npm run legibility` now fails on any toast over 26
+characters.
 
-Applies step 1 of [ui-text-inventory.md](ui-text-inventory.md). There are 80 `showMsg()`
-calls on 79 lines of `sewerdiverdescentcity12.html`; line numbers below refer to that file.
+Applies step 1 of [ui-text-inventory.md](ui-text-inventory.md). There were 80 `showMsg()`
+calls on 79 lines of `sewerdiverdescentcity12.html`. Line numbers below refer to the file
+**before** this change.
 
 ## The budget
 

@@ -373,8 +373,8 @@ space where it matters: the live HUD shrinks while its type gets bigger.
 
 ## Suggested order (smallest change, biggest win)
 
-1. **Toasts.** Cut and shorten them to fit one line. This fixes the clipping bug and is
-   data-only (strings in `showMsg` calls).
+1. ~~**Toasts.**~~ **Done** ([ui-toast-rewrite.md](ui-toast-rewrite.md)): cut and
+   shortened to fit one line, at 14px bold.
 2. **HUD labels → symbols**, and slim the readout to 3 lines. Small drawing changes, all on
    the live screen.
 3. **Keyboard words on touch** (`press space`, menu footers, map hints). Mostly CSS

@@ -129,7 +129,8 @@
 
   .toast{position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:4;
     background:rgba(8,16,24,.85);border:1px solid #2c6f8c;color:#bfefff;padding:5px 12px;border-radius:3px;
-    font-size:11px;letter-spacing:2px;text-transform:uppercase;white-space:nowrap;
+    font-size:14px;font-weight:bold;letter-spacing:2px;text-transform:uppercase;white-space:nowrap;
+    max-width:calc(100% - 16px);overflow:hidden;text-overflow:ellipsis;   /* 14px bold = the 8px cap floor; toasts stay <=26 chars, the ellipsis is only a safety net */
     box-shadow:0 0 14px rgba(70,208,255,.25);transition:opacity .25s;}
   .toast.hidden{opacity:0;pointer-events:none;}
 
@@ -3364,12 +3365,12 @@ function completeMissionObj(o){
   o.done=true;
   const m=layerMissions[o.tier],st=m.steps[o.step];
   const done=missionStepDone(o.tier,o.step);
-  if(done<st.count){showMsg(st.title+' — '+done+'/'+st.count);return;}
+  if(done<st.count){showMsg('◆ TASK '+done+'/'+st.count);return;}
   m.progress++;sfx.craft();
   if(m.progress>=m.steps.length){m.complete=true;sfx.build();
-    if(o.tier<SCHED.length-1)showMsg('ALL TASKS DONE — the control unit by the bulkhead is online');
-    else showMsg('ALL TASKS DONE — the transit gate will take you');}
-  else showMsg(st.title+' done — NEXT: '+m.steps[m.progress].title);
+    if(o.tier<SCHED.length-1)showMsg('◆ ALL DONE · GO TO AIRLOCK');
+    else showMsg('◆ ALL DONE · GATE OPEN');}
+  else showMsg('◆ DONE · NEXT TASK');
 }
 // control unit tripped on layer i — flood a dry deck below first, then play the bulkhead-open animation
 function controlTrigger(i){
@@ -3378,7 +3379,7 @@ function controlTrigger(i){
   if(i+1<SCHED.length&&tierDry[i+1]){
     floodFx={tier:i+1,t:0,dur:3.4};
     shake=Math.max(shake,5);
-    showMsg('deck below is dry — flooding it now, stand by');
+    showMsg('▼ FLOODING · STAND BY');
   } else startBulkAnim(i);
 }
 function startBulkAnim(i){bulkAnims.push({tier:i,t:0,dur:1.0});sfx.boom();shake=Math.max(shake,7);}
@@ -3387,7 +3388,7 @@ function finishBulkAnim(i){
   const g=missionObjs.find(q=>q.tier===i&&q.type==='gate');if(g)g.done=true;  // done only once truly open (save-safe)
   ensureLayerMission(i+1);   // the next layer's quest — normally already built at generation; idempotent
   verifyMissionIntegrity();  // and re-assert every sprite of it is in place before the diver descends
-  showMsg('bulkhead released — descend');
+  showMsg('▼ DESCEND');
 }
 // F pressed on an active machine — each type is its own little action loop
 function missionInteract(o){
@@ -3396,11 +3397,11 @@ function missionInteract(o){
     if(!m.complete){openObjectives(o.tier);return;}   // briefing screen: every task in this layer
     const d=SCHED[o.tier];
     if(d&&d.layerInEnv===3&&gearLevel<=o.tier){const g=TIERS[o.tier]&&TIERS[o.tier].gear;
-      showMsg('new environment below — fabricate the '+(g?g.name:'next dive suit')+' first');sfx.deny();return;}
+      showMsg('✕ NEED THE SUIT · FAB BAY');sfx.deny();return;}
     // the panel eats the layer's #1 composite once, on top of the finished quest (bulkPaid rides the
     // saved mission, so a save caught mid-animation can't charge twice)
     if(!m.bulkPaid){const toll=bulkToll(o.tier);
-      if(!canPay(toll)){showMsg('panel needs 1× '+RES['t'+(o.tier+1)+'fa'].name+' to power the release');sfx.deny();return;}
+      if(!canPay(toll)){showMsg('✕ NEEDS #1 COMPOSITE');sfx.deny();return;}
       pay(toll);m.bulkPaid=true;sfx.craft();}
     controlTrigger(o.tier);return;
   }
@@ -3961,7 +3962,7 @@ function genCreatures(i){
 function cdist(c){return Math.hypot(player.x+4-c.x,player.y+4-c.y);}
 function fungusGrab(c){if(mech&&mech.piloted)return;   // vines can't root a mech — the saw gets them first
   c.state='grab';c.t=0;c.dmgT=0;player.rooted=82;shake=9;sfx.zap();
-  showMsg('it was no ore — the vines have you!');
+  showMsg('⚠ VINES! IT WAS A TRAP');
   burst(c.x,c.y,20,130,0.6,'#7fae3a');}
 function updateCreatures(dt){
   const elo=entTierLo(),ehi=entTierHi();
@@ -4031,7 +4032,7 @@ function updateCompanion(dt){if(!companion)return;const co=companion;
   // whatever it is sitting on goes in the hold, same haul as the diver's own pickup
   collectNear(mixers,co.x,co.y,COMP_GRAB,m=>{addInv(m.resId,1);sfx.pop();burst(m.x,m.y,8,90,0.5,RES[m.resId].col);co.grabFx=0.35;});
   collectNear(scraps,co.x,co.y,COMP_GRAB,s=>{const sd=SCRAPBYID[s.kind];scrapInv[s.kind]=(scrapInv[s.kind]||0)+1;sfx.pop();
-    burst(s.x,s.y,12,110,0.6,sd.col);showMsg('robot · '+sd.name+' ('+sd.coin+' coin)');co.grabFx=0.35;});
+    burst(s.x,s.y,12,110,0.6,sd.col);showMsg('◈ +'+sd.coin+' · ROBOT');co.grabFx=0.35;});
   if(co.grabFx>0)co.grabFx=Math.max(0,co.grabFx-dt);
 }
 
@@ -4070,25 +4071,25 @@ function mechDrain(s){const m=mech;if(!m)return;m.battery=Math.max(0,m.battery-s
   if(m.battery<=0)mechPowerDown();}
 function mechPowerDown(){const m=mech;
   if((player.mechBattery||0)>0){player.mechBattery=0;m.battery=mechBatMax();sfx.build();
-    burst(m.x,m.y,14,120,0.5,'#ffd23c');showMsg('cell spent — the spare slams in');return;}
+    burst(m.x,m.y,14,120,0.5,'#ffd23c');showMsg('▮ SPARE CELL IN');return;}
   m.hookAnchor=null;m.hanging=false;
   if(m.piloted){m.piloted=false;player.x=m.x-4;player.y=m.y-4;player.vx=0;player.vy=-0.4;
     player.invuln=Math.max(player.invuln,40);updateActionLabels();}
   sfx.lose();shake=Math.max(shake,6);
-  showMsg('battery dead — the MULE seizes where it stands. bring it a fresh cell');}
+  showMsg('▮ MULE DEAD · NEEDS CELL');}
 // X near the mech: slot a carried cell into a dead frame, or climb in
 function mechInteract(){const m=mech;
   if(m.battery<=0){
     if((player.mechBattery||0)>0){player.mechBattery=0;m.battery=mechBatMax();sfx.build();
-      burst(m.x,m.y,18,130,0.6,'#ffd23c');showMsg('cell slotted — the MULE rumbles awake');}
-    else{sfx.deny();showMsg('the MULE is dead — craft a battery cell at any workshop (MECH bay)');return;}
+      burst(m.x,m.y,18,130,0.6,'#ffd23c');}
+    else{sfx.deny();showMsg('✕ NEEDS CELL · WORKSHOP');return;}
   }
   m.piloted=true;m.dir=player.dir;m.boostT=mechBoostMax();m.boostOut=false;m.hookAnchor=null;m.hanging=false;
   if(player.attached){player.attached=false;const cb=player.attachedBase||curBase();
     if(cb){cb.endX=player.x+4;cb.endY=player.y+4;}player.attachedBase=null;}
   player.x=m.x-4;player.y=m.y-4;player.vx=0;player.vy=0;player.rooted=0;
   updateActionLabels();
-  sfx.start();showMsg('piloting the MULE — F drill · SPACE hook · hold ↑ boost · X exit · sealed: no O₂ drain');}
+  sfx.start();showMsg('PILOTING · NO AIR DRAIN');}
 // dormant frame keeps honest physics: a mech that dies mid-air falls, lands, and stays put
 function updateMechIdle(dt){const m=mech;
   if(mechOnGround(m)){m.vy=0;m.sawFx=0;return;}
@@ -4103,7 +4104,7 @@ function mechFireHook(m){
   for(let d=8;d<=reach;d+=3){const hx=m.x+axx*d,hy=m.y-4+ayy*d;
     if(solidPx(hx,hy)){m.hookAnchor={x:hx,y:hy};m.hanging=false;mechDrain(MECH_HOOK_COST);
       sfx.dash();burst(hx,hy,6,80,0.4,'#ffd23c');return;}}
-  sfx.deny();showMsg('hook found no purchase within '+mechHookReach()+'u');}
+  sfx.deny();showMsg('✕ HOOK OUT OF REACH');}
 // teleport the MULE to a base pad, exactly as it was left — dead or alive
 function mechCallTo(b){const m=mech;if(!m||!b)return;
   let px0=b.x+18,py0=b.y+4;
@@ -4112,9 +4113,7 @@ function mechCallTo(b){const m=mech;if(!m||!b)return;
     if(!mechCollAt(xx,yy)){px0=xx;py0=yy;break;}}
   m.x=px0;m.y=py0;m.vx=0;m.vy=0;m.off=false;m.piloted=false;m.hookAnchor=null;m.hanging=false;
   updateActionLabels();
-  burst(m.x,m.y,22,150,0.7,'#7fe6ff');bubbleBurst(m.x,m.y-4,8,24,-24,14,1.1,2);sfx.build();
-  showMsg(m.battery>0?'the MULE stomps in — battery at '+Math.round(100*m.battery/mechBatMax())+'%'
-                     :'the MULE is hauled in — dead, its bay waiting for a cell');}
+  burst(m.x,m.y,22,150,0.7,'#7fe6ff');bubbleBurst(m.x,m.y-4,8,24,-24,14,1.1,2);sfx.build();}
 // the piloted step: replaces the diver's movement/hazard block wholesale (called from update())
 function updateMechPiloted(dt){const m=mech,p=player;
   const elo=entTierLo(),ehi=entTierHi();
@@ -4152,7 +4151,7 @@ function updateMechPiloted(dt){const m=mech,p=player;
         // coil hits empty mid-burn: the thruster shuts down then and there — it does NOT keep sipping
         // the trickle of regen to hold a hover. Gravity takes over until the coil is rebuilt.
         if(m.boostT<=0){m.boostOut=true;m.boostFx=0;boosting=false;sfx.deny();shake=Math.max(shake,3);
-          burst(m.x,m.y+8,6,50,0.35,'#ff9a3c',1);showMsg('thruster burnt out — coil rebuilding');}}
+          burst(m.x,m.y+8,6,50,0.35,'#ff9a3c',1);}}
     }else m.jumpHeld=false;
     m.vy+=MECH_GRAV;m.vy*=0.96;if(m.vy>3.0)m.vy=3.0;
     m.x+=m.vx;if(mechColl(m)){m.x-=m.vx;const s=Math.sign(m.vx)||0;let g=0;
@@ -4183,9 +4182,9 @@ function updateMechPiloted(dt){const m=mech,p=player;
         m.drillFx=6;shake=Math.max(shake,4);sfx.boom();
         burst(target.x*TS+8,target.y*TS+8,14,130,0.5,RES[rid].col);
         showReward(rid,ORE_YIELD);}
-      else showMsg('cell dead — the drill won’t spin');}
-    else if(nearMission)showMsg('the MULE’s hands are too big for that — step out (X) to work it');
-    else showMsg('no ore in the drill’s reach');}
+      else showMsg('▮ CELL DEAD');}
+    else if(nearMission)showMsg('✕ STEP OUT TO USE');
+    else showMsg('✕ NO ORE IN REACH');}
   // --- kill-saw: always hot while the cell has charge; contact removes the creature for good ---
   for(const c of creatures){if(c.tier<elo||c.tier>ehi||c.dead)continue;
     if(Math.hypot(cx-c.x,cy-c.y)<13&&m.battery>0){
@@ -4195,26 +4194,24 @@ function updateMechPiloted(dt){const m=mech,p=player;
       const deceiver=(c.type==='angler'||c.type==='fungus'||c.type==='mermaid');
       if(deceiver&&Math.random()<MECH_DROP_CHANCE){
         const r=Math.random(),kind=r<0.2?'idol':r<0.6?'plate':'coil';
-        scraps.push({x:c.x,y:c.y,kind,ph:Math.random()*6,got:false,tier:c.tier});
-        showMsg('the saw shreds the '+c.type+' — '+SCRAPBYID[kind].name+' spills out');}
-      else showMsg('sawed the '+c.type+' apart — this one’s gone for good');}}
+        scraps.push({x:c.x,y:c.y,kind,ph:Math.random()*6,got:false,tier:c.tier});}}}
   if(creatures.some(c=>c.dead))creatures=creatures.filter(c=>!c.dead);
   // --- exit (X) ---
   if(clipEdge){clipEdge=false;
     m.piloted=false;m.hookAnchor=null;m.hanging=false;
     p.x=m.x-4;p.y=m.y-4;p.vx=0;p.vy=0;p.invuln=Math.max(p.invuln,30);
     updateActionLabels();
-    sfx.back();showMsg('stepped out — the MULE holds position');return;}
+    sfx.back();return;}
   // --- world interactions the diver path normally handles ---
   const _tb=bases[tAt(p.y)];
   nearBase=(_tb&&Math.hypot(cx-_tb.x,cy-_tb.y)<=DOCK_R)?_tb:null;
   if(cityExit){const ed=Math.hypot(cx-cityExit.x,cy-cityExit.y);
     if(ed<15&&!cityExit.cool){cityExit.cool=true;
-      showMsg('the transit gate is too tight for the MULE — step out (X) to ride the grid');}
+      showMsg('✕ STEP OUT TO ENTER');}
     if(ed>44)cityExit.cool=false;}
   collectNear(mixers,cx,cy,14,mm=>{addInv(mm.resId,1);sfx.pop();burst(mm.x,mm.y,8,90,0.5,RES[mm.resId].col);});
   collectNear(scraps,cx,cy,14,s=>{const sd=SCRAPBYID[s.kind];scrapInv[s.kind]=(scrapInv[s.kind]||0)+1;sfx.pop();
-    burst(s.x,s.y,12,110,0.6,sd.col);showMsg('salvage · '+sd.name+' ('+sd.coin+' coin)');});
+    burst(s.x,s.y,12,110,0.6,sd.col);showMsg('◈ +'+sd.coin);});
   updateCreatures(dt);
   updateCompanion(dt);
   // --- oxygen: the cockpit is SEALED and runs its own scrubber — the cell is the only thing you spend ---
@@ -4526,7 +4523,7 @@ function applyGear(idx){const s=TIERS[idx].gear.stats;
   gearLevel=idx+1;
   burst(player.x+4,player.y+4,26,170,0.7,'#ffe27a');
   sfx.build();
-  showMsg(TIERS[idx].gear.name+' equipped — the next environment will let you through');
+  
 }
 // ====== AIR ROPE + BASES ======
 function curBase(){const t=tAt(player.y);const b=bases[t];return (b&&b.active)?b:null;}
@@ -4559,8 +4556,8 @@ function activateBase(b){const kit={};kit['t'+b.tier+'fb']=1;
     bubbleBurst(b.x,b.y-2,10,20,-26,16,1.3,2);
     sfx.build();
     // bulkheads are owned by the layer's quest + control unit now — the base is air and crafting only
-    showMsg('base online — air line live, clip on with ⚓');}
-  else showMsg('haul 1 '+RES['t'+b.tier+'fb'].name+' down here — built one layer up — to power this base');
+    showMsg('⚓ BASE ONLINE');}
+  else showMsg('✕ NEEDS #2 COMPOSITE');
 }
 function chip(id){const r=RES[id];return '<span class="chip">'+iconSVG(id,18)+'<span class="n">'+r.name+'</span><span class="q">'+invGet(id)+'</span></span>';}
 function need(m,curT){return Object.keys(m).map(id=>{const r=RES[id],nd=m[id],hv=invGet(id),ok=hv>=nd,it=idTier(id)-1,carry=it<curT;
@@ -4996,35 +4993,35 @@ craftEl.addEventListener('click',e=>{const b=e.target.closest('[data-craft]');if
     const rc=ropeCost(tAt(player.y));if(!canPay(rc)){craftDeny();return;}
     pay(rc);bb.ropeLen=Math.min(ROPE_MAX,bb.ropeLen+ROPE_STEP);sfx.build();
     burst(player.x+4,player.y+4,14,120,0.6,'#c9a14a');
-    showMsg('air line extended to '+bb.ropeLen+'u');buildCraft();}
+    buildCraft();}
   else if(p[0]==='sell'){const id=p[1];if((scrapInv[id]||0)>0){scrapInv[id]--;coins+=SCRAPBYID[id].coin;sfx.pop();buildCraft();}}
-  else if(v==='sellall'){let got=0;for(const id in scrapInv){got+=(scrapInv[id]||0)*SCRAPBYID[id].coin;scrapInv[id]=0;}if(got>0){coins+=got;sfx.build();showMsg('cashed in salvage · +'+got+' coin');}buildCraft();}
+  else if(v==='sellall'){let got=0;for(const id in scrapInv){got+=(scrapInv[id]||0)*SCRAPBYID[id].coin;scrapInv[id]=0;}if(got>0){coins+=got;sfx.build();}buildCraft();}
   else if(p[0]==='buy'){buyUpgrade(p[1]);buildCraft();}
   else if(p[0]==='o2tank'){const vv=+p[1],e=envOfTier(tAt(player.y)),tk=progFlags(player,'o2tank',e);
     if(tk[vv]||(vv>0&&!tk[vv-1])||!canPay(o2TankCost(e,vv))){craftDeny();return;}
     pay(o2TankCost(e,vv));tk[vv]=true;player.tankBonus=(player.tankBonus||0)+TANK_STEP;player.maxOxygen+=TANK_STEP;player.oxygen=player.maxOxygen;
-    sfx.build();showMsg('O₂ tank V'+(vv+1)+' fitted · +'+TANK_STEP+' max air');
+    sfx.build();
     burst(player.x+4,player.y+4,16,110,0.6,'#46d0ff');buildCraft();}
   else if(p[0]==='o2reg'){const vv=+p[1],e=envOfTier(tAt(player.y)),rg=progFlags(player,'o2reg',e);
     if(rg[vv]||(vv>0&&!rg[vv-1])||!canPay(o2RegCost(e,vv))){craftDeny();return;}
     pay(o2RegCost(e,vv));rg[vv]=true;recalcOxyDrain();
-    sfx.build();showMsg('O\u2082 regulator V'+(vv+1)+' fitted \u00b7 air drain \u2212'+Math.round((1-player.oxyDrainMul)*100)+'%');
+    sfx.build();
     burst(player.x+4,player.y+4,16,110,0.6,'#46d0ff');buildCraft();}
-  else if(p[0]==='buyres'){const T=+p[1],id='t'+(T+1)+'ra',price=5+T*4;if(coins<price){showMsg('need '+price+' coin');craftDeny();return;}
-    coins-=price;addInv(id,1);sfx.pop();showMsg('bought 1\u00d7 '+RES[id].name);buildCraft();}
+  else if(p[0]==='buyres'){const T=+p[1],id='t'+(T+1)+'ra',price=5+T*4;if(coins<price){craftDeny();return;}
+    coins-=price;addInv(id,1);sfx.pop();buildCraft();}
   else if(p[0]==='tab'){if(craftTab!==p[1]){craftTab=p[1];mDiv=null;mGridIdx=0;}mZone='tab';mIdx=(craftTab==='shop'?1:0);sfx.pop();buildCraft();}
   else if(v==='lens'){const e=envOfTier(tAt(player.y)),lf=progFlags(player,'lensUpg',e);
     let lv=0;while(lv<4&&lf[lv])lv++;
     if(lv>=4){buildCraft();return;}
     const lc=lensCost(e,lv);if(!RES['t'+(envTier(e,lv)+1)+'fb']){craftDeny();return;}
-    if(canPay(lc)){pay(lc);lf[lv]=true;player.lanternLevel=(player.lanternLevel||0)+1;sfx.build();showMsg('lens V'+(lv+1)+' ground — the beam reaches '+(player.lanternLevel*10)+'% further');
+    if(canPay(lc)){pay(lc);lf[lv]=true;player.lanternLevel=(player.lanternLevel||0)+1;sfx.build();
       burst(player.x+4,player.y+4,14,120,0.5,'#ffe27a');}buildCraft();}
   else if(v==='seal'){const T0=tAt(player.y);if(envOfTier(T0)<1||(player.seals&&player.seals[T0])){buildCraft();return;}
     const sc=sealCost(T0);
-    if(canPay(sc)){pay(sc);player.seals[T0]=true;sfx.build();showMsg('hazard seal V'+((SCHED[T0]?SCHED[T0].layerInEnv:T0%4)+1)+' fitted — this layer bites less now');
+    if(canPay(sc)){pay(sc);player.seals[T0]=true;sfx.build();
       burst(player.x+4,player.y+4,16,110,0.6,'#7dff4a');}buildCraft();}
   else if(v==='medkit'){const T0=tAt(player.y);const mc={};mc['t'+(T0+1)+'ra']=1;mc['t'+(T0+1)+'ma']=1;
-    if((player.medkits||0)<5&&canPay(mc)){pay(mc);player.medkits=(player.medkits||0)+1;sfx.build();showMsg('patch kit stowed ('+player.medkits+')');}buildCraft();}
+    if((player.medkits||0)<5&&canPay(mc)){pay(mc);player.medkits=(player.medkits||0)+1;sfx.build();}buildCraft();}
   else if(p[0]==='buypart'){buyPart(p[1]);buildCraft();}
   else if(p[0]==='machine'){buildMachine(p[1]);buildCraft();}
   else if(v==='mbat'){const t=tAt(player.y),bc=mechBatteryCost(t);
@@ -5040,14 +5037,10 @@ craftEl.addEventListener('click',e=>{const b=e.target.closest('[data-craft]');if
     player[key]=player[key]||{};
     if(player[key][e]||(kind==='hook'&&mechHookReach()>=MECH_HOOK_MAX)){craftDeny();return;}
     const cost=mechUpgCost(kind,e);
-    if(coins<cost){showMsg('need '+cost+' coin');craftDeny();return;}
+    if(coins<cost){craftDeny();return;}
     coins-=cost;player[key][e]=true;
     if(kind==='bat'&&mech.battery>0)mech.battery=Math.min(mech.battery+MECH_BAT_STEP,mechBatMax());  // a bigger cell tops up a live one
     sfx.build();burst(player.x+4,player.y+4,16,110,0.6,'#7fe6ff');
-    showMsg(kind==='bat'?'battery cell upgraded — '+mechBatMax().toFixed(0)+'s cap'
-           :kind==='boost'?'coil rewound deeper — '+mechBoostMax().toFixed(1)+'s of boost held'
-           :kind==='regen'?'coil charger uprated — '+mechBoostRegen().toFixed(2)+'/s back, '+mechBoostRebuild().toFixed(1)+'s to clear a burnout'
-           :'hook drum extended — '+mechHookReach()+'u reach');
     buildCraft();}
 });
 function expandInputs(m){const a=[];for(const id in m)for(let i=0;i<m[id];i++)a.push(id);return a.slice(0,6);}
@@ -5096,13 +5089,13 @@ function hurt(dmg,fromX,fromY){
 function dieOrRevive(reason){
   if((player.medkits||0)>0){player.medkits--;player.hearts=2;player.invuln=INVULN;shake=8;player.rooted=0;
     burst(player.x+4,player.y+4,16,120,0.6,'#5dff8a');
-    sfx.air();showMsg('patch kit auto-applied — back from the brink');return false;}
+    sfx.air();showMsg('✚ PATCH KIT SAVED YOU');return false;}
   player.hearts=0;state.loseReason=reason;setMode('lose');sfx.lose();return true;
 }
-function useMedkit(){if((player.medkits||0)<=0){showMsg('no patch kits');return;}if(player.hearts>=player.maxHearts){showMsg('already at full health');return;}
+function useMedkit(){if((player.medkits||0)<=0){showMsg('✕ NO PATCH KITS');return;}if(player.hearts>=player.maxHearts){showMsg('✕ HP FULL');return;}
   player.medkits--;player.hearts=Math.min(player.maxHearts,player.hearts+2);sfx.build();
   burst(player.x+4,player.y+4,12,90,0.5,'#5dff8a');
-  showMsg('patch kit used · +2');}
+  showMsg('✚ +2 HP');}
 
 // ============ OVERLAYS ============
 const TITLE_HTML=`
@@ -5405,7 +5398,7 @@ function travelToCity(ch){
   particles=[];shake=0;lockMsgCD=0;miningCell=null;mgOre=null;
   camera.x=clamp(p.x-VW/2,0,MW*TS-VW);camera.y=clamp(p.y-VH/2,0,MH*TS-VH);
   setMode('play');saveGame();sfx.build();
-  showMsg('CITY '+CITY+' — '+CITY_NAME+' · '+envCount(CITY)+' environments down there'+(sold?' · deep cargo sold for '+sold+' coin':''));
+  showMsg('▼ '+CITY_NAME);
 }
 
 // ============ UPDATE ============
@@ -5438,7 +5431,7 @@ function update(dt){
   // infested-layer callout, first time the diver (or the MULE) drops into one
   {const it=tAt(p.y);
    if(it!==lastInfestTier){lastInfestTier=it;
-     if(tierInfested[it])showMsg('⚠ infested layer — nests everywhere. the MULE’s saw clears them for good');}}
+     if(tierInfested[it])showMsg('⚠ INFESTED LAYER');}}
   // ===== MECH: piloted mode replaces the diver's movement/hazard block wholesale =====
   nearMech=null;
   if(mech&&!mech.off){
@@ -5476,7 +5469,7 @@ function update(dt){
     if(ed<15&&!cityExit.cool){
       if(missionComplete(cityExit.tier)){openCityMap();return;}
       const m=missionFor(cityExit.tier),st=m&&m.steps[m.progress];
-      showMsg('finale sector sealed — objective pending: '+(st?st.title:'unknown'));
+      showMsg('✕ GATE SEALED · TASKS LEFT');
       cityExit.cool=true;
     }
     if(ed>44)cityExit.cool=false;
@@ -5487,15 +5480,15 @@ function update(dt){
     if(nearMission){missionInteract(nearMission);return;}
     if(nearFungus){fungusGrab(nearFungus);return;}
     if(target){openMine(target);return;}
-    showMsg('move onto ore to mine it');}
+    showMsg('✕ NOTHING TO MINE');}
   // CLIP (X): board the mech, power a dead base, else clip / unclip the air line
   if(clipEdge){clipEdge=false;
     if(nearMech){mechInteract();return;}
     if(nearBase&&!nearBase.active){activateBase(nearBase);return;}
-    if(p.attached){p.attached=false;const cb=p.attachedBase||curBase();if(cb){cb.endX=p.x+4;cb.endY=p.y+4;}p.attachedBase=null;sfx.air();showMsg('unclipped — the line stays where you dropped it');}
+    if(p.attached){p.attached=false;const cb=p.attachedBase||curBase();if(cb){cb.endX=p.x+4;cb.endY=p.y+4;}p.attachedBase=null;sfx.air();}
     else{const cb=curBase();
-      if(cb&&clipReach(cb)){p.attached=true;p.attachedBase=cb;sfx.air();showMsg('clipped to the air line');}
-      else showMsg('get near the base or the dropped line to clip');}}
+      if(cb&&clipReach(cb)){p.attached=true;p.attachedBase=cb;sfx.air();}
+      else showMsg('✕ TOO FAR FROM THE LINE');}}
 
   // physics
   p.vx+=ax*acc; p.vy+=ay*acc+GRAV;
@@ -5521,7 +5514,7 @@ function update(dt){
   collectNear(mixers,cx,cy,12,m=>{addInv(m.resId,1);sfx.pop();burst(m.x,m.y,8,90,0.5,RES[m.resId].col);});
   // valuable scrap pickup
   collectNear(scraps,cx,cy,12,s=>{const sd=SCRAPBYID[s.kind];scrapInv[s.kind]=(scrapInv[s.kind]||0)+1;sfx.pop();
-    burst(s.x,s.y,12,110,0.6,sd.col);showMsg('salvage · '+sd.name+' ('+sd.coin+' coin)');});
+    burst(s.x,s.y,12,110,0.6,sd.col);showMsg('◈ +'+sd.coin);});
   updateCreatures(dt);
   updateCompanion(dt);
 
@@ -6010,17 +6003,17 @@ function sealIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" vi
 function lensIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><defs><radialGradient id="lg"><stop offset="0" stop-color="#fff7d6"/><stop offset="1" stop-color="#ffcf4a"/></radialGradient></defs><ellipse cx="8" cy="8" rx="3.4" ry="5.6" fill="url(#lg)" stroke="#b8862a" stroke-width="1"/><path d="M8 2.6 V13.4" stroke="#b8862a" stroke-width=".8" opacity=".6"/><path d="M2 8 L0.6 5 M2 8 L0.6 11 M14 8 L15.4 5 M14 8 L15.4 11" stroke="#ffe27a" stroke-width="1.2"/></svg>';}
 function buyUpgrade(kind){
   // spare tank left the shop — O2 tanks are crafted in the workshop's O2 GEAR division now
-  if(kind==='filter'){if(envOfTier(tAt(player.y))<1){showMsg('no pollution in this environment — filters matter deeper down');return;}
-    if((player.filterBonus||0)>=FILT_MAX-1e-6){showMsg('filters maxed');return;}
+  if(kind==='filter'){if(envOfTier(tAt(player.y))<1){return;}
+    if((player.filterBonus||0)>=FILT_MAX-1e-6){return;}
     const cnt=Math.round((player.filterBonus||0)/FILT_STEP),cost=14+cnt*9;
-    if(coins<cost){showMsg('need '+cost+' coin');return;}
+    if(coins<cost){return;}
     coins-=cost;player.filterBonus=(player.filterBonus||0)+FILT_STEP;
-    sfx.build();showMsg('filter cartridge fitted · pollution down');}
-  else if(kind==='map'){if(player.hasMap){showMsg('sector-nav already installed');return;}
-    if(coins<MAP_COST){showMsg('need '+MAP_COST+' coin');return;}
+    sfx.build();}
+  else if(kind==='map'){if(player.hasMap){return;}
+    if(coins<MAP_COST){return;}
     coins-=MAP_COST;player.hasMap=true;
     burst(player.x+4,player.y+4,18,120,0.6,'#46d0ff');
-    sfx.build();showMsg('sector-nav online — minimap live on your HUD');}
+    sfx.build();}
 }
 function mapIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><rect x="2.5" y="2" width="11" height="12" rx="1.5" fill="#0c2230" stroke="#2c6f8c" stroke-width="1"/><path d="M5 3 V13 M11 3 V13" stroke="#1d4456" stroke-width="0.8"/><path d="M3 5.5 H13 M3 10.5 H13" stroke="#1d4456" stroke-width="0.8"/><rect x="7" y="6.5" width="2.4" height="2.4" fill="none" stroke="#46d0ff" stroke-width="1"/><circle cx="8.2" cy="7.7" r="0.7" fill="#7dffc0"/><circle cx="5" cy="4" r="0.8" fill="#5fe6ff"/><circle cx="11" cy="12" r="0.8" fill="#ffd23c"/></svg>';}
 function partIcon(id,sz){
@@ -6037,22 +6030,21 @@ function machIcon(id,sz){
 }
 function canPayParts(c){for(const id in c)if((partsInv[id]||0)<c[id])return false;return true;}
 function payParts(c){for(const id in c)partsInv[id]=(partsInv[id]||0)-c[id];}
-function buyPart(id){const pt=PARTBYID[id];if(coins<pt.coin){showMsg('need '+pt.coin+' coin');return;}coins-=pt.coin;partsInv[id]=(partsInv[id]||0)+1;sfx.pop();}
+function buyPart(id){const pt=PARTBYID[id];if(coins<pt.coin){return;}coins-=pt.coin;partsInv[id]=(partsInv[id]||0)+1;sfx.pop();}
 function buildMachine(id){const m=MACHBYID[id];if(!m)return;
-  if(id==='robot'&&companion){showMsg('you already have a scrappy robot');return;}
-  if(id==='floodlight'&&player.builtFloodlight){showMsg('floodlight already fitted');return;}
-  if(id==='thruster'&&player.builtThruster){showMsg('thruster pack already fitted');return;}
-  if(id==='mech'&&mech){showMsg('you already own the MULE');return;}
-  if(!canPayParts(m.cost)){showMsg('not enough parts — buy them above');return;}
+  if(id==='robot'&&companion){return;}
+  if(id==='floodlight'&&player.builtFloodlight){return;}
+  if(id==='thruster'&&player.builtThruster){return;}
+  if(id==='mech'&&mech){return;}
+  if(!canPayParts(m.cost)){return;}
   payParts(m.cost);sfx.build();
   burst(player.x+4,player.y+4,18,120,0.6,'#46d0ff');
-  if(id==='robot'){companion={x:player.x+4,y:player.y+4,ph:0};showMsg('scrappy robot online — it grabs loot for you');}
-  else if(id==='floodlight'){player.builtFloodlight=true;player.lightBonus=(player.lightBonus||0)+40;player.lightRadius+=40;showMsg('floodlight rig fitted — the dark pulls back');}
-  else if(id==='thruster'){player.builtThruster=true;player.mvBonus=(player.mvBonus||0)+0.18;player.maxvMul+=0.18;showMsg('thruster pack fitted — faster swimming');}
+  if(id==='robot'){companion={x:player.x+4,y:player.y+4,ph:0};}
+  else if(id==='floodlight'){player.builtFloodlight=true;player.lightBonus=(player.lightBonus||0)+40;player.lightRadius+=40;}
+  else if(id==='thruster'){player.builtThruster=true;player.mvBonus=(player.mvBonus||0)+0.18;player.maxvMul+=0.18;}
   else if(id==='mech'){const b=bases[tAt(player.y)];
     mech={x:player.x+4,y:player.y+4,vx:0,vy:0,dir:1,battery:0,piloted:false,off:false,boostT:0,boostOut:false,hookAnchor:null,hanging:false};
-    if(b)mechCallTo(b);
-    showMsg('DV-8 “MULE” assembled — its battery bay is EMPTY. craft a cell in the workshop’s MECH bay');}
+    if(b)mechCallTo(b);}
 }
 
 function drawNode(n){
@@ -6504,7 +6496,7 @@ function frame(now){
   else if(state.mode==='flame'){flameInput();}
   else if(state.mode==='hack'){hackInput();}
   else if(state.mode==='craft'){if(queueCraft){queueCraft=false;toggleCraft(false);}}
-  else if(state.mode==='play'){if(queueCraft){queueCraft=false;if(nearBase&&nearBase.active)toggleCraft(true);else showMsg('dock at a powered base to craft');}}
+  else if(state.mode==='play'){if(queueCraft){queueCraft=false;if(nearBase&&nearBase.active)toggleCraft(true);else showMsg('✕ NO POWERED BASE HERE');}}
   else if(state.mode==='inv'){if(queueCraft){queueCraft=false;toggleInv(false);}}
   else if(state.mode==='pause'){if(actionEdge){actionEdge=false;resumeGame();}}
   else if(state.mode==='sub'){subInput();queueCraft=false;}
@@ -6549,7 +6541,7 @@ function openMine(o){
 }
 function hideMine(){mineEl.classList.add('hidden');}
 function closeMine(){const o=mgOre;mgOre=null;setMode('play');sfx.back();
-  if(o&&o.x!=null){o.fuse=ABORT_FUSE;o.fuseMax=ABORT_FUSE;o.fuseTick=0;showMsg('vein destabilised — get clear before it blows');}}
+  if(o&&o.x!=null){o.fuse=ABORT_FUSE;o.fuseMax=ABORT_FUSE;o.fuseTick=0;showMsg('⚠ GET CLEAR!');}}
 function removeOre(o){map[o.y][o.x]=EMPTY;const i=oreCells.indexOf(o);if(i>=0)oreCells.splice(i,1);}
 
 function genMineGrid(o){
@@ -6627,7 +6619,7 @@ function mineDigSel(){const o=mgOre;if(!o||!o.sel)return;const idx=o.sel.y*MG_N+
 function mgExplode(){const o=mgOre;const dmg=1+Math.floor((o.tier||0)/2);
   player.hearts-=dmg;player.invuln=INVULN;shake=12;sfx.lose();flashDmg(dmg,false);
   burst(player.x+4,player.y+4,28,180,0.7,()=>Math.random()<.5?'#ff5a3c':'#ffd23c');
-  removeOre(o);mgOre=null;hideMine();showMsg('gas pocket blew — vein destroyed');
+  removeOre(o);mgOre=null;hideMine();showMsg('✕ VEIN BLEW');
   if(player.hearts<=0){if(dieOrRevive('blast'))return;}setMode('play');
 }
 function mgCollect(){const o=mgOre;addInv(o.resId,ORE_YIELD);sfx.build();
@@ -6774,8 +6766,7 @@ function crankBust(){
 }
 function closeCrank(){if(!crankObj){if(state.mode==='crank')setMode('play');return;}
   const o=crankObj;o.crankTurns=crankS.turns;o.prog=Math.round(crankS.turns/crankS.need*100);   // keep the world sprite's gauge in step
-  crankObj=null;setMode('play');sfx.back();
-  if(crankS.turns>0)showMsg('valve left part-open — the pressure is still up');}
+  crankObj=null;setMode('play');sfx.back();}
 function crankTurn(){const o=crankObj;if(!o||crankS.doneT>0||deckActive)return;
   const z=crankZone(),ay=crankS.actY||Math.round(VH*0.4),cx=Math.round(VW/2);
   if(z==='turn'){                       // clean actuate: servo fires, a pressure pulse bleeds off
@@ -6801,8 +6792,7 @@ function crankInput(){
   player.drown=0;
   if(crankS.hint>0)crankS.hint-=1/60;
   if(crankS.doneT>0){crankS.doneT-=1/60;crankS.rotor+=crankS.spin/60;crankS.spin*=0.9;
-    if(crankS.doneT<=0){const bust=crankS.bust;crankObj=null;o.crankTurns=0;completeMissionObj(o);setMode('play');
-      if(bust)showMsg('TIMER OUT — the valve blows in your face!');}
+    if(crankS.doneT<=0){crankObj=null;o.crankTurns=0;completeMissionObj(o);setMode('play');}
     return;}
   crankS.time+=1/60;
   if(crankS.time>=crankS.limit){crankBust();return;}
@@ -7011,7 +7001,7 @@ function hackBust(){const S=hackS;
 }
 function closeHack(){if(!hackObj){if(state.mode==='hack')setMode('play');return;}
   hackObj=null;setMode('play');sfx.back();
-  showMsg('link dropped — the node is still locked');}
+  }
 // rotate the cursor round the ring (build) or step the grid cursor (input); both wrap around
 function hackNav(dir){const S=hackS;if(!hackObj||S.doneT>0||S.formT>0)return;
   if(S.phase==='build'){S.ptr=(dir==='left'||dir==='up')?(S.ptr+7)%8:(S.ptr+1)%8;sfx.nav();}
@@ -7063,7 +7053,7 @@ function hackInput(){const S=hackS,o=hackObj;if(!o){if(state.mode==='hack')setMo
   if(S.phase==='form'){S.formT-=1/60;if(S.formT<=0)hackBuildGrid(S.targetSet);return;}
   if(S.phase==='done'){S.doneT-=1/60;if(S.doneT<=0){hackObj=null;completeMissionObj(o);setMode('play');}return;}
   if(S.phase==='bust'){S.doneT-=1/60;
-    if(S.doneT<=0){hackObj=null;completeMissionObj(o);setMode('play');showMsg('TIMER OUT — the console arcs in your face!');}
+    if(S.doneT<=0){hackObj=null;completeMissionObj(o);setMode('play');}
     return;}
   S.time+=1/60;
   if(S.time>=S.limit){hackBust();return;}
@@ -7258,7 +7248,7 @@ function openFlame(o){
 function closeFlame(){                                   // abort — the sac stays live, no progress
   if(!flameObj){if(state.mode==='flame')setMode('play');return;}
   flameObj=null;flameFire=false;setMode('play');sfx.back();
-  showMsg('backed off the sac — it is still live');
+  
 }
 function flameEnd(win){
   if(flameS.doneT>0)return;
@@ -7295,9 +7285,9 @@ function flameInput(){
   if(B.doneT>0){B.doneT-=1/60;updateFlameFx();
     if(B.doneT<=0){const win=B.won;flameObj=null;flameFire=false;setMode('play');
       completeMissionObj(o);
-      if(win){showMsg('SAC BURNED CLEAN — no blowback');shake=Math.max(shake,2);}
+      if(win){shake=Math.max(shake,2);}
       else{podBlasts.push({x:o.x,y:o.y,tier:o.tier,t:0,fuse:0.4,win:false});   // bust: gas erupts right in the diver's face
-        showMsg('TIMER BUST — the sac ruptures on you!');shake=Math.max(shake,8);}}
+        shake=Math.max(shake,8);}}
     return;}
   // ==== aim: analog input + arrows, momentum (drag) + gentle autonomous sway ====
   let ix=(input.jx||0)+((input.right?1:0)-(input.left?1:0));
@@ -8207,7 +8197,7 @@ function dryDockConfirm(){
   const U=SUB_UPGS[ddSel], max=SUB_UPG_MAX[U.k], lv=subLv(U.k);
   if(lv>=max){sfx.deny();return;}
   const cost=subUpgCost(U.k,lv);
-  if((player.subScrap||0)<cost){sfx.deny();showMsg('not enough salvage — '+cost+' needed');return;}
+  if((player.subScrap||0)<cost){sfx.deny();return;}
   player.subScrap-=cost;
   if(!player.subUpg)player.subUpg={};
   player.subUpg[U.k]=lv+1;
