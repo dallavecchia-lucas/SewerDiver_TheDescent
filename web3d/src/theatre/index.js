@@ -11,7 +11,6 @@ import { PlateAtlas, MARGIN, PLATES, NPLATES, P_CARD, P_ACT, P_BACK } from './sh
 import { TheatreScene } from './scene.js';
 import { Quality } from './quality.js';
 import { WaterDirector } from './water.js';
-import { drawForeground } from './foreground.js';
 import { OPT, glassRay, eyePos } from './optics.js';
 
 const params = new URLSearchParams(location.search);
@@ -32,7 +31,6 @@ const TH = {
   // full-screen colour washes (damage, exposure, sub flashes): collected per game frame and
   // spread over the whole tube face by the final pass instead of the inset HUD print
   tint(rgb, a) { (this._pend || (this._pend = [])).push([rgb, a]); },
-  drawForeground(ctx) { drawForeground(ctx, this.bridge, MARGIN); },
 
   // pointer (client px) -> game-view px on the card flat, back through the glass + water
   clientToCard(cx, cy) { return mapClientToPlate(cx, cy, P_CARD); },

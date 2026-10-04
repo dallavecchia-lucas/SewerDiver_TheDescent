@@ -4008,7 +4008,7 @@ function render(){
   const pgx=player.x+4-RCX,pgy=player.y+4-RCY;
   const lx=player.lookX||1,ly=player.lookY||0,LR=lanternRadius();
   const flick=1+Math.sin(state.tick*0.5)*0.015+Math.sin(state.tick*0.21)*0.02;  // subtle lantern flicker
-  if(TH){sw(4);TH.drawForeground(ctx);TH.atlas.end();ctx=flatCtx;
+  if(TH){TH.atlas.end();ctx=flatCtx;
     TH.lantern={x:pgx,y:pgy,lx,ly,R:LR*flick,half:LANT_HALF,self:SELF_R,mech:!!(mech&&mech.piloted)};}
   else{
   mctx.globalCompositeOperation='source-over';const mw=hex2rgb(w[2]);mctx.fillStyle='rgba('+(mw[0]*0.55|0)+','+(mw[1]*0.55|0)+','+(mw[2]*0.55|0)+',0.66)';mctx.fillRect(0,0,VW,VH);
