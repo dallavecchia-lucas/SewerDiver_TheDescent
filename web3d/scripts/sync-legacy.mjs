@@ -43,6 +43,9 @@ patch('ctx is routable',
 const TH=(typeof window!=='undefined'&&window.SD_THEATRE&&window.SD_THEATRE.enabled)?window.SD_THEATRE:null;
 let GLK=3, TM=0;                  // plate the next glow belongs to · plate bleed in world px (0 = flat)
 function sw(k){if(TH){ctx=TH.atlas.use(k);GLK=k;}}
+function fullTint(rgb,a){            // full-screen colour wash: the theatre spreads it over the whole bulb
+  if(TH){TH.tint(rgb,a);return;}
+  ctx.fillStyle='rgba('+rgb+','+a.toFixed(3)+')';ctx.fillRect(0,0,VW,VH);}
 function canvasPt(e){                 // pointer -> game-view px, through the bulb's optics when 3D
   if(TH&&TH.ready)return TH.clientToCard(e.clientX,e.clientY);
   const r=canvas.getBoundingClientRect();return [(e.clientX-r.left)/r.width*VW,(e.clientY-r.top)/r.height*VH];}`);
@@ -114,7 +117,7 @@ patch('render: prompt through the optics',
 patch('render: HUD printed on the glass',
   "  if(player.tint>0&&player.tintCol){ctx.fillStyle='rgba('+player.tintCol+','+(player.tint*0.22).toFixed(3)+')';ctx.fillRect(0,0,VW,VH);}\n  drawHUD(tier);\n}",
   "  if(TH)ctx=TH.atlas.beginHud();\n" +
-  "  if(player.tint>0&&player.tintCol){ctx.fillStyle='rgba('+player.tintCol+','+(player.tint*0.22).toFixed(3)+')';ctx.fillRect(0,0,VW,VH);}\n  drawHUD(tier);\n" +
+  "  if(player.tint>0&&player.tintCol){fullTint(player.tintCol,player.tint*0.22);}\n  drawHUD(tier);\n" +
   "  if(TH){ctx=flatCtx;TH.worldFrame();}\n}");
 
 // ---- renderSub(): the pipe run -> plates
@@ -153,6 +156,14 @@ patch('sub: close murk branch + HUD on glass',
 patch('node-only require',
   "return require('./archetypes-60.js').ARCH_ORDER;",
   "throw new Error('ARCH_ORDER missing');   // (node-only validation path removed in the 3D build)");
+
+patch('sub: flashes wash the whole bulb',
+  "  if(subS.hitFlash>0){px(ctx,0,0,VW,VH,'rgba(255,60,60,'+(subS.hitFlash*0.24).toFixed(3)+')');}\n" +
+  "  if(subS.killT>0){const k=clamp(1-subS.killT/1.9,0,1);px(ctx,0,0,VW,VH,'rgba(255,255,255,'+(k*k*0.9).toFixed(3)+')');}\n" +
+  "  if(subS.doneT>0){const k=clamp(1-subS.doneT/1.6,0,1);px(ctx,0,0,VW,VH,'rgba(70,208,255,'+(k*0.5).toFixed(3)+')');}\n",
+  "  if(subS.hitFlash>0){fullTint('255,60,60',subS.hitFlash*0.24);}\n" +
+  "  if(subS.killT>0){const k=clamp(1-subS.killT/1.9,0,1);fullTint('255,255,255',k*k*0.9);}\n" +
+  "  if(subS.doneT>0){const k=clamp(1-subS.doneT/1.6,0,1);fullTint('70,208,255',k*0.5);}\n");
 
 // ---- pointer input goes back through the glass
 patch('mine taps through optics',

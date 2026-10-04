@@ -82,7 +82,11 @@ export function makeIrradiance(G, T, uScroll, uIrrAlpha, uIrrReset, uKeySamples)
           const dWater = select(rng.lessThan(0.0), float(58).sub(P.z).div(max(l.z, 0.12)), dist);
           const wa = exp(sigE.mul(dWater).negate());
           const ndl = dot(N, l);
-          const base = LC.rgb.mul(att.mul(spot).mul(wS)).mul(wa).toVar();
+          // a lamp does not light the diver wearing it: receivers on its own plate within the
+          // carrier radius are excluded (LX: plate, radius)
+          const LX = G.uLX.element(i);
+          const self = select(float(k).equal(LX.x), smoothstep(LX.y.mul(0.55), LX.y, length(P.xy.sub(LP.xy))), float(1));
+          const base = LC.rgb.mul(att.mul(spot).mul(wS).mul(self)).mul(wa).toVar();
           If(maxc(base).mul(abs(ndl)).greaterThan(1e-5), () => {
             const vis = G.shadow(P.add(N.mul(sign(ndl).mul(0.06))), S, k, T.albedo);
             If(ndl.greaterThan(0.0), () => { Ef.addAssign(base.mul(ndl).mul(vis)); })
@@ -154,7 +158,9 @@ export function makeVolume(G, T, uVolAlpha, steps) {
           const spot = select(LD.w.lessThan(-1.5), float(1), smoothstep(LD.w, LD.w.add(0.07), dot(l.negate(), LD.xyz)));
           const dWater = select(rng.lessThan(0.0), float(58).sub(X.z).div(max(l.z, 0.12)), dist);
           const wa = exp(sigA.add(sigS).mul(dWater).negate());
-          const base = LC.rgb.mul(att.mul(spot)).mul(wa).toVar();
+          const LX = G.uLX.element(li);
+          const near = select(LX.z.greaterThan(0.0), smoothstep(LX.z.mul(0.3), LX.z, dist), float(1));
+          const base = LC.rgb.mul(att.mul(spot).mul(near)).mul(wa).toVar();
           If(maxc(base).greaterThan(1e-4), () => {
             // Henyey-Greenstein, forward-scattering silt (g ~ 0.62)
             const g = float(0.62);
@@ -285,7 +291,9 @@ export function makeCompose(G, T, U) {
         const rng1 = LC1.w;
         const fo1 = saturate(float(1).sub(sq(d1.div(max(rng1, 1e-3)))));
         const sp1 = select(LD1.w.lessThan(-1.5), float(1), smoothstep(LD1.w, LD1.w.add(0.07), dot(l1n.negate(), LD1.xyz)));
-        const lanC = LC1.rgb.mul(select(rng1.lessThan(0.0), float(1), fo1.mul(fo1)).mul(sp1)).mul(exp(G.uSigA.add(G.uSigS).mul(d1).negate()));
+        const LX1 = G.uLX.element(kN);
+        const self1 = select(float(k).equal(LX1.x), smoothstep(LX1.y.mul(0.55), LX1.y, length(P.xy.sub(LP1.xy))), float(1));
+        const lanC = LC1.rgb.mul(select(rng1.lessThan(0.0), float(1), fo1.mul(fo1)).mul(sp1).mul(self1)).mul(exp(G.uSigA.add(G.uSigS).mul(d1).negate()));
         const spec = specOf(lk, keyC).add(specOf(l1n, lanC)).mul(irr.a).mul(float(1).sub(side.mul(0.5)));
         // light piping in acrylic: translucent props glow along their cut edges
         const edgeGlow = alb.rgb.mul(tr).mul(abs(gx).add(abs(gy)).mul(0.9).add(side.mul(0.6))).mul(irr.rgb.add(0.05));
@@ -411,15 +419,16 @@ export function makeFinal(G, T, U) {
     const streak = smoothstep(float(0.6), float(0.95), gt.b).mul(top).mul(U.uGrime).mul(0.5);
     film.addAssign(streak);
     const vol = texture(T.vol, screenUV).level(0).rgb;
+    // dirt on glass mostly absorbs: it dims and browns what is behind it, it does not glow
     const grimeTint = vec3(0.42, 0.38, 0.22).mul(G.uWaterCol.mul(0.6).add(vec3(0.4, 0.43, 0.3)));
-    col.assign(col.mul(float(1).sub(film.mul(0.5))).add(grimeTint.mul(film).mul(vol.mul(5.0).add(G.uAmbient.mul(2.0)).add(0.012))));
+    col.assign(col.mul(float(1).sub(film.mul(0.42))).add(grimeTint.mul(film).mul(vol.mul(0.9).add(G.uAmbient.mul(0.5)))));
 
     // --- outer glass: Fresnel reflection of the room + total internal reflection at the rim
     const R = G.glassRay(w);
     const F0 = float(0.04);
     const fres = F0.add(float(1).sub(F0).mul(pow(float(1).sub(R.cosi), 5.0)));
     const rd = reflect(R.d0, R.n1);
-    col.addAssign(room(rd).mul(fres).mul(1.15));
+    col.addAssign(room(rd).mul(fres).mul(0.6));
     const rimBand = smoothstep(float(0.9), float(0.995), rr).mul(smoothstep(float(1.02), float(0.995), rr));
     col.assign(col.mul(float(1).sub(rimBand.mul(0.55))).add(vec3(0.16, 0.2, 0.22).mul(pow(rimBand, 3.0)).mul(0.35)));
 
@@ -440,7 +449,11 @@ export function makeFinal(G, T, U) {
     const graded0 = saturate(con.mul(vig));
     // the HUD is printed on the glass: blended after tone mapping, in display (sRGB) space,
     // exactly like the original canvas did it (a damage tint must not flood the scene)
-    const gS = pow(graded0, vec3(1 / 2.2)), hS = pow(hud.rgb, vec3(1 / 2.2));
+    const gS0 = pow(graded0, vec3(1 / 2.2)), hS = pow(hud.rgb, vec3(1 / 2.2));
+    // damage / exposure wash over the whole tube face (environment-coloured), a touch
+    // stronger toward the rim, blended like the original canvas fill
+    const tA = saturate(U.uTint.w.mul(float(0.88).add(smoothstep(float(0.35), float(1.0), rr).mul(0.3))));
+    const gS = mix(gS0, U.uTint.rgb, tA);
     const graded = pow(mix(gS, hS, hudA), vec3(2.2));
 
     // --- CRT bezel: a dark rubber gasket hugging the tube face, fading into the console shell
@@ -485,13 +498,10 @@ function vnoise(p) {
 function fbm(p) {
   return vnoise(p).mul(0.5).add(vnoise(p.mul(2.03).add(1.7)).mul(0.25)).add(vnoise(p.mul(4.01).add(3.1)).mul(0.125)).add(vnoise(p.mul(8.1).add(7.7)).mul(0.0625));
 }
-// a dim room seen in the faceplate: dark walls, one soft window highlight, a warm lamp
 function room(d) {
-  const base = mix(vec3(0.006, 0.007, 0.009), vec3(0.03, 0.033, 0.04), saturate(d.y.mul(0.5).add(0.5)));
-  const win = smoothstep(float(0.92), float(0.985), dot(d, normalize(vec3(-0.42, 0.5, 0.76))));
-  const winBars = smoothstep(float(0.02), float(0.0), abs(fract(d.x.mul(6.0)).sub(0.5)).sub(0.47));
-  const lamp = smoothstep(float(0.975), float(0.998), dot(d, normalize(vec3(0.55, 0.28, 0.79))));
-  return base.add(vec3(0.75, 0.82, 0.9).mul(win.mul(float(1).sub(winBars.mul(0.7))))).add(vec3(1.0, 0.72, 0.42).mul(lamp).mul(0.6));
+  // a dark room: no window or lamp hot spots (they read as glare on the tube face), only
+  // the faint dim gradient that lets the curved glass register as glass
+  return mix(vec3(0.004, 0.005, 0.006), vec3(0.018, 0.02, 0.024), saturate(d.y.mul(0.5).add(0.5)));
 }
 
 // uniforms owned by the passes (not by the scene)
@@ -509,5 +519,6 @@ export function passUniforms() {
     uCardGlow: uniform(0),
     uDebugView: uniform(0, 'int'),
     uIrrDiv: uniform(2),
+    uTint: uniform(new THREE.Vector4(0, 0, 0, 0)),          // display-space wash: rgb (0..1 sRGB) + alpha
   };
 }

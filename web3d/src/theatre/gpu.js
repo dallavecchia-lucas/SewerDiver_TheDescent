@@ -38,6 +38,8 @@ export class GPUState {
     this.uLP = uniformArray(arr4(MAX_LIGHTS), 'vec4');
     this.uLC = uniformArray(arr4(MAX_LIGHTS), 'vec4');
     this.uLD = uniformArray(arr4(MAX_LIGHTS), 'vec4');
+    // per-light extras: plate it is carried on · carrier exclusion radius mm · volumetric near-field fade mm
+    this.uLX = uniformArray(arr4(MAX_LIGHTS), 'vec4');
     this.uNL = uniform(0, 'int');
     this.uNVL = uniform(0, 'int');           // the first N lights also scatter in the water volume
     // ---- water optics (per mm)

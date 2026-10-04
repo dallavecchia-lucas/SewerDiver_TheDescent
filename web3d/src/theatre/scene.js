@@ -130,8 +130,9 @@ export class TheatreScene {
     // the stage's key light dims with every environment you descend (darkness is a mechanic
     // in this game); the Floodlight Rig upgrade lifts it again
     const kI = 4.4 * (info.keyScale == null ? 1 : info.keyScale);
-    L.push({ p: [-46, 82, 235], r: 26, c: [1.0 * kI, 0.95 * kI, 0.86 * kI], range: -1, dir: null, k: -1 });
+    L.push({ p: [-46, 82, 235], r: 26, c: [1.0 * kI, 0.95 * kI, 0.86 * kI], range: -1, dir: null, k: -1, tag: 'key' });
     const lan = info.lantern;
+    let selfPool = null;
     if (lan) {
       // the helmet lamp hangs just in front of the actors plate and throws its cone back into
       // the box: the beam lands on the rock right behind the diver and spreads wider on the
@@ -141,13 +142,18 @@ export class TheatreScene {
       const dir = new THREE.Vector3(Math.cos(ang), Math.sin(ang), -1.15).normalize();
       const reach = lan.R * this.plates[P_ACT].s * 1.3 + 30;
       const mech = lan.mech ? 1.3 : 1;
-      L.push({ p: P, r: 1.3, c: [0.8 * 9 * mech, 0.9 * 9 * mech, 1.0 * 9 * mech], range: reach, dir: [dir.x, dir.y, dir.z, Math.cos(lan.half * 1.18)], k: P_ACT });
-      L.push({ p: [P[0], P[1], P[2] + 1.5], r: 1.0, c: [0.5 * 1.6, 0.66 * 1.6, 0.85 * 1.6], range: lan.self * this.plates[P_ACT].s * 1.6 + 16, dir: null, k: P_ACT });
+      // carrier radius: the lamp never lights the diver (or the MULE) wearing it, and its
+      // scattering in the water fades in over the first few mm instead of a hot halo
+      const carrier = (lan.mech ? 16 : 10) * this.plates[P_ACT].s;
+      L.push({ p: P, r: 1.3, c: [0.8 * 9 * mech, 0.9 * 9 * mech, 1.0 * 9 * mech], range: reach, dir: [dir.x, dir.y, dir.z, Math.cos(lan.half * 1.18)], k: P_ACT, x: [P_ACT, carrier, 9], tag: 'lantern' });
+      // the soft pool around you lights your surroundings, not you; it is not volumetric
+      // (it goes last, after the glows, so it never counts toward the scattering lights)
+      selfPool = { p: [P[0], P[1], P[2] + 1.5], r: 1.0, c: [0.5 * 1.6, 0.66 * 1.6, 0.85 * 1.6], range: lan.self * this.plates[P_ACT].s * 1.6 + 16, dir: null, k: P_ACT, x: [P_ACT, carrier, 0], tag: 'lantern' };
     } else if (info.boat) {
       const b = info.boat;
       const P = this.viewToBox(P_ACT, b.x + 18, b.y, 5);
-      L.push({ p: P, r: 1.4, c: [0.85 * 3.6, 0.9 * 3.6, 1.0 * 3.6], range: 140 * this.plates[P_ACT].s, dir: [0.96, 0, -0.28, Math.cos(0.55)], k: P_ACT });
-      L.push({ p: [P[0] - 6, P[1], P[2] + 1], r: 1, c: [0.4, 0.5, 0.6], range: 30 * this.plates[P_ACT].s, dir: null, k: P_ACT });
+      L.push({ p: P, r: 1.4, c: [0.85 * 3.6, 0.9 * 3.6, 1.0 * 3.6], range: 140 * this.plates[P_ACT].s, dir: [0.96, 0, -0.28, Math.cos(0.55)], k: P_ACT, x: [P_ACT, 6 * this.plates[P_ACT].s, 9], tag: 'lantern' });
+      selfPool = { p: [P[0] - 6, P[1], P[2] + 1], r: 1, c: [0.4, 0.5, 0.6], range: 30 * this.plates[P_ACT].s, dir: null, k: P_ACT, x: [P_ACT, 14 * this.plates[P_ACT].s, 0], tag: 'lantern' };
     }
     // glows -> small area lights hovering just in front of their plate. Neighbouring glows
     // (a row of sludge tiles, a lamp column) merge into one light per 40 px cell with a
@@ -167,12 +173,14 @@ export class TheatreScene {
     }
     const merged = [...cells.values()].map((c) => ({ ...c, x: c.x / c.w, y: c.y / c.w, a: Math.sqrt(c.a2), cc: c.c.map((v) => v / c.w) }));
     merged.sort((p, q) => q.a * q.r - p.a * p.r);
+    const cap = MAX_LIGHTS - (selfPool ? 1 : 0);
     for (const g of merged) {
-      if (L.length >= MAX_LIGHTS) break;
+      if (L.length >= cap) break;
       const P = this.viewToBox(g.k, g.x, g.y, 2.6);
       const s = this.plates[g.k].s, I = Math.min(1.6, g.a) * 1.7;
-      L.push({ p: P, r: Math.min(2.5, 0.6 + g.r * s * 0.08), c: [g.cc[0] * I, g.cc[1] * I, g.cc[2] * I], range: g.r * s * 2.2 + 6, dir: null, k: g.k });
+      L.push({ p: P, r: Math.min(2.5, 0.6 + g.r * s * 0.08), c: [g.cc[0] * I, g.cc[1] * I, g.cc[2] * I], range: g.r * s * 2.2 + 6, dir: null, k: g.k, tag: 'glow' });
     }
+    if (selfPool) L.push(selfPool);
     this.lights = L;
     return L;
   }
@@ -180,7 +188,8 @@ export class TheatreScene {
     const L = this.lights;
     for (let i = 0; i < MAX_LIGHTS; i++) {
       const l = L[i];
-      if (!l) { G.uLP.array[i].set(0, 0, -999, 0); G.uLC.array[i].set(0, 0, 0, 0); G.uLD.array[i].set(0, 0, 0, -2); continue; }
+      if (!l) { G.uLP.array[i].set(0, 0, -999, 0); G.uLC.array[i].set(0, 0, 0, 0); G.uLD.array[i].set(0, 0, 0, -2); G.uLX.array[i].set(-1, 0, 0, 0); continue; }
+      if (l.x) G.uLX.array[i].set(l.x[0], l.x[1], l.x[2], 0); else G.uLX.array[i].set(-1, 0, 0, 0);
       G.uLP.array[i].set(l.p[0], l.p[1], l.p[2], l.r);
       G.uLC.array[i].set(l.c[0], l.c[1], l.c[2], l.range);
       if (l.dir) G.uLD.array[i].set(l.dir[0], l.dir[1], l.dir[2], l.dir[3]); else G.uLD.array[i].set(0, 0, -1, -2);

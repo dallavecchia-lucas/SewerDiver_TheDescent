@@ -169,6 +169,7 @@ export class TheatreRenderer {
     const ins = { x: 0.045, y: 0.03 };
     U.uHudRect.value.set(this.view.x + this.view.w * ins.x, this.view.y + this.view.h * ins.y, this.view.w * (1 - 2 * ins.x), this.view.h * (1 - 2 * ins.y));
     U.uHudOn.value = f.hud ? 1 : 0;
+    if (f.tint) U.uTint.value.set(f.tint[0], f.tint[1], f.tint[2], f.tint[3]); else U.uTint.value.set(0, 0, 0, 0);
     const nb = Math.min(24, f.glassBubbles.length);
     for (let i = 0; i < 24; i++) { const b = f.glassBubbles[i]; if (b) U.uBub.array[i].set(b.x, b.y, b.r, b.a); else U.uBub.array[i].set(0, 0, 0, 0); }
     U.uNB.value = nb;

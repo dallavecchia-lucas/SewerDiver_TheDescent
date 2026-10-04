@@ -27,8 +27,11 @@ const TH = {
   stats: { backend: 'none', fps: 0, tier: '', scale: 1 },
 
   bind(b) { this.bridge = b; },
-  worldFrame() { this._gameStamp = performance.now(); this._lastKind = 'world'; },
-  subFrame() { this._gameStamp = performance.now(); this._lastKind = 'sub'; this.lantern = null; },
+  worldFrame() { this._gameStamp = performance.now(); this._lastKind = 'world'; this._tints = this._pend || []; this._pend = []; },
+  subFrame() { this._gameStamp = performance.now(); this._lastKind = 'sub'; this.lantern = null; this._tints = this._pend || []; this._pend = []; },
+  // full-screen colour washes (damage, exposure, sub flashes): collected per game frame and
+  // spread over the whole tube face by the final pass instead of the inset HUD print
+  tint(rgb, a) { (this._pend || (this._pend = [])).push([rgb, a]); },
   drawForeground(ctx) { drawForeground(ctx, this.bridge, MARGIN); },
 
   // pointer (client px) -> game-view px on the card flat, back through the glass + water
@@ -171,7 +174,7 @@ function loop(now) {
   const lights = { glows: B && kind !== 'flat' ? B.glows : [], lantern: kind === 'world' ? TH.lantern : null, boat: kind === 'sub' && B ? { x: B.subS.sx, y: B.subS.y } : null, keyScale };
   scene.buildLights(lights);
   const only = window.__theatreLights || params.get('lights');   // debug: isolate light groups
-  if (only) scene.lights = scene.lights.filter((l, i) => (only.includes('key') && i === 0) || (only.includes('lantern') && (i === 1 || i === 2)) || (only.includes('glows') && i > 2));
+  if (only) scene.lights = scene.lights.filter((l) => (only.includes('key') && l.tag === 'key') || (only.includes('lantern') && l.tag === 'lantern') || (only.includes('glows') && l.tag === 'glow'));
 
   const f = { dt, time: now / 1000, scroll, plateVel, splats: [], current: [0, 0, 0, 0], body: [-motion[0] * 9, -motion[1] * 9, motion[2] * 4], ambientSilt: 0.05, ambientDye: 0 };
   water.frame(B, kind, dt, f);
@@ -179,6 +182,7 @@ function loop(now) {
   f.glassBubbles = water.glass;
   f.siltBright = 1;
   f.hud = kind !== 'flat';
+  f.tint = kind === 'flat' ? null : washFor(B, kind, TH._tints || []);
   f.exposure = 1.08;
 
   // autofocus: the focal band follows the diver's row with a soft, slightly lazy pull
@@ -197,6 +201,33 @@ function loop(now) {
   renderer.U.uDebugView.value = views[window.__theatreView || params.get('view')] || 0;
   renderer.render(f);
   if (params.has('debug')) debugOverlay();
+}
+
+// The legacy pollution wash is a flat toxic green everywhere. In the theatre it takes the
+// colour scheme of the environment you are in: its accent paint, pulled a little toward its
+// water, so a cyber-sewer stings cyan, a radioactive stack yellow-green, a chem lab violet.
+const POLLUTION = '80,255,60';
+function envWash(B) {
+  const t = B.tAt(B.player.y);
+  const th = B.THEME && B.THEME[t];
+  const acc = th && th.pal && th.pal.acc2 ? th.pal.acc2.split(',').map(Number) : [80, 255, 60];
+  const w = (B.TIERS[t] && B.TIERS[t].water && B.TIERS[t].water[0]) || '#204050';
+  const h = w.replace('#', ''), wr = [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  const m = Math.max(wr[0], wr[1], wr[2], 1), wl = wr.map((c) => (c / m) * 200);   // water hue at a usable brightness
+  return acc.map((c, i) => c * 0.78 + wl[i] * 0.22);
+}
+function washFor(B, kind, tints) {
+  if (!tints.length || !B || !B.player) return null;
+  let rgb = [0, 0, 0], A = 0;
+  for (const [col, a0] of tints) {
+    const a = Math.max(0, Math.min(1, a0));
+    if (a <= 0) continue;
+    const c = (col === POLLUTION && kind === 'world') ? envWash(B) : String(col).split(',').map(Number);
+    const keep = A * (1 - a), nA = keep + a;     // successive "over" blends, like stacked canvas fills
+    rgb = rgb.map((v, i) => (v * keep + (c[i] / 255) * a) / Math.max(nA, 1e-6));
+    A = nA;
+  }
+  return A > 0 ? [rgb[0], rgb[1], rgb[2], A] : null;
 }
 
 function debugOverlay() {
