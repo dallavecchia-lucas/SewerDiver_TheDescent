@@ -6,6 +6,7 @@
 // theatre just swaps that ctx between plate regions (clip + translate), so not a single
 // draw function had to be rewritten.
 
+export const HUD_INSET = { x: 0.045, y: 0.03 };   // the HUD print sits this far inside the view, per side
 export const MARGIN = 40;            // world px of bleed around the view, revealed by head parallax / hover
 
 // id order == atlas row order == shader plate index

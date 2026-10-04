@@ -375,8 +375,21 @@ space where it matters: the live HUD shrinks while its type gets bigger.
 
 1. ~~**Toasts.**~~ **Done** ([ui-toast-rewrite.md](ui-toast-rewrite.md)): cut and
    shortened to fit one line, at 14px bold.
-2. **HUD labels → symbols**, and slim the readout to 3 lines. Small drawing changes, all on
-   the live screen.
+2. ~~**HUD labels → symbols**~~ **Done, to the player's spec:** the whole diving HUD is now a
+   90s-TV on-screen display in one phosphor green, drawn into the canvas (so the 3D build shows
+   it through the flooded glass):
+   - **HP**: heart + one continuous bar. Hits blink it, then it settles shorter. Drain damage
+     (drowning, pollution / heat burn) shortens it with no animation. It is true red while the
+     tank is empty.
+   - **O₂**: bubble + a segmented bar (one segment per 10 units of tank, so bigger tanks add
+     segments) that drops a whole segment at a time, plus the air-line ⚓ (lit while clipped).
+     It disappears when the tank is empty.
+   - **Right column**: city skyline + `layer/total`, clipboard + `tasks done/total` for the
+     layer (every machine counts; the `◆ TASK` toast uses the same count).
+   - **Gone from the HUD**: depth, city name, layer name, the mission title, coins, patch-kit
+     and spare-cell counts, the MULE key line, the infested / pollution flags and the minimap's
+     NAV caption. Toasts and the context prompt are OSD lines too.
+   - Text is drawn at 1× or 2× so its capitals stay at or above the 8 px floor on every phone.
 3. **Keyboard words on touch** (`press space`, menu footers, map hints). Mostly CSS
    `.pconly` toggles, which already exist.
 4. **Minigame state words → symbols**, and first-attempt-only hints.

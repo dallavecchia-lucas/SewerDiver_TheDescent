@@ -3201,6 +3201,9 @@ function buildLayerMission(n){
   return {steps,exit:chain[chain.length-1],progress:0,complete:steps.length===0};
 }
 function missionFor(n){return layerMissions[n]||null;}
+// every machine of the layer's quest is one task: [done, total], or null when the layer has none
+function layerTasks(n){const m=layerMissions[n];if(!m||!m.steps.length)return null;let done=0,tot=0;
+  m.steps.forEach((st,k)=>{tot+=st.count;done+=k<m.progress?st.count:k===m.progress?Math.min(st.count,missionStepDone(n,k)):0;});return [done,tot];}
 function missionComplete(n){const m=layerMissions[n];return !!m&&m.complete;}
 const _missionSolidAt=(xx,yy)=>{const t=(yy>=0&&yy<MH&&xx>=0&&xx<MW)?map[yy][xx]:WALL;return t===ROCK||t===WALL;};
 /* ---- objectives and creatures never share a seat ---------------------------
@@ -3365,7 +3368,7 @@ function completeMissionObj(o){
   o.done=true;
   const m=layerMissions[o.tier],st=m.steps[o.step];
   const done=missionStepDone(o.tier,o.step);
-  if(done<st.count){showMsg('◆ TASK '+done+'/'+st.count);return;}
+  if(done<st.count){const lt=layerTasks(o.tier);showMsg('◆ TASK '+lt[0]+'/'+lt[1]);return;}
   m.progress++;sfx.craft();
   if(m.progress>=m.steps.length){m.complete=true;sfx.build();
     if(o.tier<SCHED.length-1)showMsg('◆ ALL DONE · GO TO AIRLOCK');
@@ -3587,7 +3590,10 @@ const rewardEl=document.getElementById('reward'),rwIcon=document.getElementById(
 const craftfxEl=document.getElementById('craftfx'),cfIn=document.getElementById('cfIn'),cfOut=document.getElementById('cfOut'),cfLabel=document.getElementById('cfLabel');
 let rewardTimer=null,craftBusy=false;
 let toastTimer=null;
-function showMsg(t){toastEl.textContent=t;toastEl.classList.remove('hidden');clearTimeout(toastTimer);toastTimer=setTimeout(()=>toastEl.classList.add('hidden'),2200);}
+// toasts are printed by the on-screen display (drawHUD), so in the 3D build they sit in the
+// flooded glass with the rest of the HUD instead of floating over it as a DOM box
+let osdToast=null;
+function showMsg(t){osdToast={text:String(t).toUpperCase(),t0:performance.now()};}
 
 // ============ WORLD GEN ============
 function fillRect(x0,y0,x1,y1,t){for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++)if(x>=0&&y>=0&&x<MW&&y<MH)map[y][x]=t;}
@@ -5070,7 +5076,7 @@ function toggleCraft(open){if(open){if(tutorialsOn&&!baseIntroSeen){baseIntroSee
 
 // ============ DAMAGE ============
 // HP-bar damage flash: env=true shows radioactive yellow-green chunk + ☢ symbol; else red chunk
-function flashDmg(units,env){if(units<=0)return;player.dmgFx={chunk:units,t:0,env:!!env};}
+function flashDmg(units,env){if(units<=0||env)return;player.dmgFx={chunk:units,t:0,env:false};}   // drain (env) damage: no animation
 function drawRadSymbol(x,y,r,a){ctx.save();ctx.globalAlpha=a;
   ctx.fillStyle='#ffd21f';ctx.beginPath();ctx.arc(x,y,r,0,6.2832);ctx.fill();
   ctx.fillStyle='#ffe98a';ctx.beginPath();ctx.arc(x,y,r,0,6.2832);ctx.lineWidth=0;ctx.fill();
@@ -5695,15 +5701,8 @@ function render(){
   else if(nearMission){pt=missionVerb(nearMission);pk=(pt==='BACK OFF')?null:'mine';ptx=nearMission.x;pty=nearMission.y-26;}
   else if(nearOre){pt=(mech&&mech.piloted)?'DRILL':'MINE';pk='mine';ptx=nearOre.x*TS+8;pty=nearOre.y*TS;}
   else if(nearFungus){pt='MINE';pk='mine';ptx=nearFungus.x;pty=nearFungus.y-10;}
-  if(state.mode==='play'&&pt){
-    const cw=canvas.clientWidth,ch=canvas.clientHeight;
-    const sx=(ptx-camera.x)/VW*cw+canvas.offsetLeft;
-    const sy=(pty-camera.y)/VH*ch+canvas.offsetTop;
-    // rebuilt only when the verb, the control or the input source actually changes — this runs every frame
-    const sig=pt+'|'+(pk||'')+'|'+(pcMode?pcSrc:'touch');
-    if(orePrompt._sig!==sig){orePrompt._sig=sig;orePrompt.innerHTML=ipMark(pk)+'<span class="ip-lbl">'+pt+'</span>';}
-    orePrompt.style.left=Math.round(sx)+'px';orePrompt.style.top=Math.round(sy)+'px';orePrompt.style.display='flex';
-  }else orePrompt.style.display='none';
+  osdPrompt=(state.mode==='play'&&pt)?{text:pt,kind:pk,x:ptx-RCX,y:pty-RCY}:null;   // printed by drawHUD
+  orePrompt.style.display='none';
   if(player.tint>0&&player.tintCol){ctx.fillStyle='rgba('+player.tintCol+','+(player.tint*0.22).toFixed(3)+')';ctx.fillRect(0,0,VW,VH);}
   drawHUD(tier);
 }
@@ -6311,6 +6310,12 @@ const FONT3={O:['111','101','101','101','111'],X:['101','101','010','101','101']
   W:['10001','10001','10101','10101','10101'],  // two full-height outer legs + a shorter centre leg — no crossbar, so it can't read as H
   '0':['111','101','101','101','111'],'1':['010','110','010','010','111'],'2':['111','001','111','100','111'],'3':['111','001','111','001','111'],'4':['101','101','111','001','001'],'5':['111','100','111','001','111'],'6':['111','100','111','101','111'],'7':['111','001','010','010','010'],'8':['111','101','111','101','111'],'9':['111','101','111','001','111'],
   '%':['101','001','010','100','101'],'/':['001','001','010','100','100'],'.':['000','000','000','000','010'],'-':['000','000','111','000','000'],':':['000','010','000','010','000'],'>':['100','010','001','010','100'],'<':['001','010','100','010','001'],
+  K:['101','101','110','101','101'],Z:['111','001','010','100','111'],Q:['111','101','101','111','001'],J:['001','001','001','101','111'],
+  '!':['1','1','1','0','1'],'#':['01010','11111','01010','11111','01010'],'+':['000','010','111','010','000'],'·':['0','0','1','0','0'],
+  // the toast symbols, drawn as glyphs so every OSD line is one font (see ui-toast-rewrite.md)
+  '✕':['10001','01010','00100','01010','10001'],'⚠':['00100','01110','11011','11111','11011'],'◆':['00100','01110','11111','01110','00100'],
+  '▼':['11111','11111','01110','01110','00100'],'◈':['00100','01110','11011','01110','00100'],'▮':['010','111','111','111','111'],
+  '✚':['00100','00100','11111','00100','00100'],'⚓':['01110','00100','10101','10101','01110'],
   ' ':['000','000','000','000','000']};
 function glyphW(ch){const g=FONT3[ch];return g?g[0].length:3;}
 function pxText(c,str,x,y,col){let cx=x;for(const ch of str){const g=FONT3[ch];if(g){const w=g[0].length;for(let r=0;r<5;r++)for(let i=0;i<w;i++)if(g[r][i]==='1')px(c,cx+i,y+r,1,1,col);cx+=w+1;}else cx+=4;}}
@@ -6334,70 +6339,105 @@ function pxDisc(c,cx,cy,r,col){
 }
 function drawHeart(c,x,y,on){const col=on?'#ff4d5e':'#33272c';const p=['0110110','1111111','1111111','0111110','0011100','0001000'];
   for(let r=0;r<6;r++)for(let i=0;i<7;i++)if(p[r][i]==='1')px(c,x+i,y+r,1,1,col);if(on)px(c,x+1,y+1,1,1,'#ff97a1');}
+// ===== ON-SCREEN DISPLAY ===================================================================
+// Every diving readout is printed like the channel / volume overlay of a cheap 90s TV: one
+// phosphor green, chunky, blooming into the picture. HP is a continuous bar, oxygen a segmented
+// one that drops a whole segment at a time. An empty tank takes the O2 bar off the screen and
+// turns the HP bar true red. Hits blink the HP bar, then it settles shorter; drain damage
+// (drowning, pollution, heat) just shortens it.
+const OSD_G='#6bff72', OSD_R='#ff2424', OSD_DIM='rgba(107,255,114,0.16)', OSD_DIMR='rgba(255,36,36,0.2)';
+const OSD_ICON={
+  heart:['0110110','1111111','1111111','0111110','0011100','0001000'],
+  air:  ['0011100','0100010','1000101','1000001','1000001','0100010','0011100'],
+  cell: ['0011100','1111111','1000001','1011101','1011101','1000001','1111111'],
+  city: ['0000010','0010010','0010111','1011101','1010111','1111101','1011111','1111111'],                    // skyline, antenna, lit windows
+  clip: ['0011100','0100010','1111111','1000001','1011101','1000001','1011001','1000001','1111111']};  // the clip ring gripping the page
+let osdC=null,osdX=null,osdB=null,osdBX=null,osdS=null,osdSX=null,osdPrompt=null,osdBtn=null;
+// font pixel size in world px: 1 where a world px is already >= 1.6 CSS px, else 2 (8px cap floor)
+function osdScale(){return UIPX*((typeof TH!=='undefined'&&TH)?0.94:1)>=1.6?1:2;}
+function osdTextW(str,s){let w=0;for(const ch of str)w+=(glyphW(ch)+1)*s;return Math.max(0,w-s);}
+function osdText(c,str,x,y,s,col){c.fillStyle=col;let cx=x;
+  for(const ch of str){const g=FONT3[ch],gw=g?g[0].length:3;
+    if(g)for(let r=0;r<5;r++)for(let i=0;i<gw;i++)if(g[r][i]==='1')c.fillRect(cx+i*s,y+r*s,s,s);cx+=(gw+1)*s;}}
+function osdIcon(c,rows,x,y,s,col){c.fillStyle=col;y-=((rows.length-7)*s)>>1;   // icons centre on a 7-row line
+  for(let r=0;r<rows.length;r++)for(let i=0;i<rows[r].length;i++)if(rows[r][i]==='1')c.fillRect(x+i*s,y+r*s,s,s);}
+function osdBegin(){
+  if(!osdC){osdC=document.createElement('canvas');osdB=document.createElement('canvas');osdS=document.createElement('canvas');
+    osdX=osdC.getContext('2d');osdBX=osdB.getContext('2d');osdSX=osdS.getContext('2d');}
+  const bw=Math.ceil(VW/3),bh=Math.ceil(VH/3);
+  if(osdC.width!==VW||osdC.height!==VH){osdC.width=osdS.width=VW;osdC.height=osdS.height=VH;}
+  if(osdB.width!==bw||osdB.height!==bh){osdB.width=bw;osdB.height=bh;}
+  osdX.clearRect(0,0,VW,VH);return osdX;}
+// composite the OSD onto the screen: dark drop edge, phosphor bloom, a cheap tube's sideways bleed, crisp glyphs
+function osdFlush(dst){
+  const bw=osdB.width,bh=osdB.height;
+  osdSX.clearRect(0,0,VW,VH);osdSX.globalCompositeOperation='source-over';osdSX.drawImage(osdC,0,0);
+  osdSX.globalCompositeOperation='source-in';osdSX.fillStyle='rgba(0,0,0,0.7)';osdSX.fillRect(0,0,VW,VH);osdSX.globalCompositeOperation='source-over';
+  osdBX.clearRect(0,0,bw,bh);osdBX.imageSmoothingEnabled=true;osdBX.drawImage(osdC,0,0,bw,bh);
+  dst.save();dst.globalCompositeOperation='source-over';dst.globalAlpha=1;dst.drawImage(osdS,1,1);
+  dst.imageSmoothingEnabled=true;dst.globalCompositeOperation='lighter';dst.globalAlpha=0.95;dst.drawImage(osdB,0,0,bw,bh,0,0,VW,VH);
+  dst.imageSmoothingEnabled=false;dst.globalCompositeOperation='source-over';
+  dst.globalAlpha=0.3;dst.drawImage(osdC,1,0);dst.globalAlpha=1;dst.drawImage(osdC,0,0);dst.restore();}
+// the action buttons' own 16x16 pixel icons, halved to 8x8, so the prompt shows which button to press
+function osdBtnIcon(kind){
+  if(!osdBtn)osdBtn={};if(osdBtn[kind]!==undefined)return osdBtn[kind];
+  const el=document.getElementById(IP_SRC[kind]),svg=el&&el.querySelector('svg');if(!svg)return osdBtn[kind]=null;
+  const g=[];for(let i=0;i<64;i++)g.push(0);
+  for(const r of svg.querySelectorAll('rect')){const x=+r.getAttribute('x'),y=+r.getAttribute('y'),w=+r.getAttribute('width'),h=+r.getAttribute('height');
+    for(let yy=y;yy<y+h;yy++)for(let xx=x;xx<x+w;xx++)if(xx>=0&&xx<16&&yy>=0&&yy<16)g[(yy>>1)*8+(xx>>1)]=1;}
+  const rows=[];for(let r=0;r<8;r++){let t='';for(let i=0;i<8;i++)t+=g[r*8+i]?'1':'0';rows.push(t);}
+  return osdBtn[kind]=rows;}
+// view px -> OSD px (the 3D build maps the point through the bulb's optics)
+function osdAt(x,y){return [x,y];}
 function drawHUD(tier){
-  // ===== HP BAR (continuous, like oxygen) with damage flash =====
-  pxText(ctx,'HP',6,4,'#ff9aa6');
-  const hbx=6,hby=11,hbw=118,hbh=8;
-  px(ctx,hbx-1,hby-1,hbw+2,hbh+2,'#081019');px(ctx,hbx,hby,hbw,hbh,'#1c0e12');
-  const hf=clamp(player.hearts/player.maxHearts,0,1),lowHP=player.hearts<=2;
-  const hpcol=lowHP?'#ff4d5e':'#46e06a';
-  const hpW=Math.round(hbw*hf);
-  px(ctx,hbx,hby,hpW,hbh,hpcol);px(ctx,hbx,hby,hpW,1,'rgba(255,255,255,0.22)');px(ctx,hbx,hby+hbh-1,hpW,1,'rgba(0,0,0,0.25)');
-  if(lowHP&&player.hearts>0&&(state.tick>>3)%2===0)px(ctx,hbx,hby,hpW,hbh,'rgba(255,255,255,0.18)');
-  // damage flash: the points about to vanish glow radioactive, drain off the end of the bar, then ☢ appears
-  if(player.dmgFx){const D=player.dmgFx,x0=hbx+hpW,fullW=Math.max(2,Math.round(hbw*D.chunk/player.maxHearts));
-    if(D.t<0.35){const blink=(state.tick>>1)&1;const col=D.env?(blink?'#d9ff35':'#7dff4a'):(blink?'#ff7a7a':'#ff4040');
-      px(ctx,x0,hby,fullW,hbh,col);px(ctx,x0,hby,fullW,1,'rgba(255,255,255,0.5)');}
-    else if(D.t<0.7){const k=1-(D.t-0.35)/0.35,w=Math.round(fullW*k);const col=D.env?'#9be03a':'#d65a5a';
-      if(w>0){px(ctx,x0,hby,w,hbh,col);px(ctx,x0,hby,w,1,'rgba(255,255,255,0.35)');}}
-    else if(D.env){const st=D.t-0.7,a=st<0.18?st/0.18:clamp(1-(st-0.55)/0.35,0,1);drawRadSymbol(hbx+hbw+10,hby+4,5.5,a);}}
-  // (no segment dividers — HP reads as one continuous bar)
-  // ===== OXYGEN BAR =====
-  pxText(ctx,'OXYGEN',6,23,'#7fd0ee');
-  const bx=6,by=30,bw=118,bh=8;
-  px(ctx,bx-1,by-1,bw+2,bh+2,'#081019');px(ctx,bx,by,bw,bh,'#0e1d28');
-  const f=clamp(player.oxygen/player.maxOxygen,0,1);
-  px(ctx,bx,by,Math.round(bw*f),bh,f>0.5?'#46d0ff':f>0.25?'#ffcc2e':'#ff4d5e');
-  px(ctx,bx,by,Math.round(bw*f),1,'rgba(255,255,255,0.25)');
-  const sealed=!!(mech&&mech.piloted);   // sealed cockpit: the tank is held, so no low-air panic blink
-  if(!sealed&&player.oxygen<=player.maxOxygen*0.2&&(state.tick>>3)%2===0)px(ctx,bx,by,bw,bh,'rgba(255,77,94,0.25)');
-  if(sealed)px(ctx,bx,by,Math.round(bw*f),bh,'rgba(127,230,255,0.20)');   // frosted: the bar is frozen, not draining
-  // ===== MECH BATTERY + BOOST (only while piloting the MULE) =====
-  if(mech&&mech.piloted){
-    pxText(ctx,'BATTERY',6,42,'#ffd23c');
-    const mbx=6,mby=49,mbw=118,mbh=8,bf=clamp(mech.battery/mechBatMax(),0,1);
-    px(ctx,mbx-1,mby-1,mbw+2,mbh+2,'#081019');px(ctx,mbx,mby,mbw,mbh,'#241d08');
-    px(ctx,mbx,mby,Math.round(mbw*bf),mbh,bf>0.5?'#ffd23c':bf>0.25?'#ff9a3c':'#ff4d5e');
-    px(ctx,mbx,mby,Math.round(mbw*bf),1,'rgba(255,255,255,0.25)');
-    if(bf<=0.25&&(state.tick>>3)%2===0)px(ctx,mbx,mby,mbw,mbh,'rgba(255,77,94,0.25)');
-    // boost coil: thin strip under the battery — recharges whenever it isn't firing,
-    // amber and blinking while burnt out so a dead thruster is never a surprise
-    const bof=clamp((mech.boostT||0)/mechBoostMax(),0,1),bout=!!mech.boostOut;
-    px(ctx,mbx-1,mby+mbh+1,mbw+2,4,'#081019');px(ctx,mbx,mby+mbh+2,mbw,2,'#0e1d28');
-    px(ctx,mbx,mby+mbh+2,Math.round(mbw*bof),2,bout?((state.tick>>2)%2?'#ff9a3c':'#7a3a10'):'#7fe6ff');
-  }
-  // air-line status chip beside the oxygen bar — the sealed cockpit reads as "breathing" too
-  const onLine=player.attached||sealed;
-  px(ctx,bx+bw+5,by-1,9,8,'#081019');px(ctx,bx+bw+6,by,7,6,onLine?'#0e3a4a':'#3a2e0e');
-  px(ctx,bx+bw+7,by+1,3,3,onLine?'#46d0ff':'#ffcc2e');px(ctx,bx+bw+11,by+1,1,4,onLine?'#7fe6ff':'#ffe27a');
-  const show=(state.mode==='play'||state.mode==='craft'||state.mode==='inv');
-  readout.style.display=show?'block':'none';
-  if(show){const poll=(!player.attached&&ambientAt(tier)>0);
-    readout.innerHTML='<div style="color:#ffd23c;font-size:13px;letter-spacing:2px;font-weight:bold;text-shadow:0 0 6px rgba(255,210,60,.4)">'+depthM(player.y)+'M</div>'+
-    '<div style="color:#9fe8c0;font-size:8px;letter-spacing:1.5px;text-transform:uppercase;text-shadow:0 0 5px rgba(125,255,192,.35)">'+CITY_NAME+' · CITY '+CITY+'</div>'+
-    '<div style="color:#7fd0ee;font-size:8px;letter-spacing:2px;text-transform:uppercase">L'+(tier+1)+'/'+SCHED.length+' · '+TIERS[tier].name+'</div>'+
-    (function(){const mm=missionFor(tier);if(!mm)return'';
-      if(mm.complete){const lv=missionObjs.find(q=>q.type==='gate'&&q.tier===tier&&!q.done);
-        return lv?'<div style="color:#ffd23c;font-size:8px;letter-spacing:1px;text-transform:uppercase;margin-top:1px;text-shadow:0 0 5px rgba(255,210,60,.4)">◆ '+mm.exit.title+' — control unit by the bulkhead</div>':'';}
-      const st=mm.steps[mm.progress];if(!st)return'';
-      const done=missionStepDone(tier,mm.progress),verb={term:'HACK',pod:'BURN',valve:'CRANK'}[st.kind]||'';
-      return '<div style="color:#ff9ad0;font-size:8px;letter-spacing:1px;text-transform:uppercase;margin-top:1px;text-shadow:0 0 5px rgba(255,154,208,.4)">◆ '+st.title+' '+done+'/'+st.count+' · '+verb+'</div>';})()+
-    '<div style="color:#ffd23c;font-size:10px;letter-spacing:1px;margin-top:1px">◎ '+coins+(((player.medkits||0)>0)?'   <span style="color:#5dff8a">✚'+player.medkits+'</span>':'')+(((player.mechBattery||0)>0)?'   <span style="color:#ffd23c">▮CELL</span>':'')+'</div>'+
-    ((mech&&mech.piloted)?'<div style="color:#7fe6ff;font-size:8px;letter-spacing:1px;text-transform:uppercase;text-shadow:0 0 5px rgba(127,230,255,.4)">◈ MULE · F drill · space hook · ↑ boost · X out</div>':'')+
-    (tierInfested[tier]?'<div style="color:#ff7a5a;font-size:8px;letter-spacing:1px;text-transform:uppercase;text-shadow:0 0 5px rgba(255,122,90,.5)">⚠ infested layer</div>':'')+
-    (poll?'<div style="color:#7dff4a;font-size:8px;letter-spacing:1px;text-transform:uppercase;text-shadow:0 0 5px rgba(125,255,74,.5)">⚠ pollution</div>':'');}
-  // ===== MINIMAP (only after it's bought at the shop) =====
   if(player.hasMap&&state.mode==='play')drawMinimap(tier);
+  const c=osdBegin(),s=osdScale(),G=OSD_G;
+  const sealed=!!(mech&&mech.piloted);                // sealed cockpit: the tank is held
+  const noAir=!sealed&&player.oxygen<=0;               // tank empty: the O2 bar is gone, HP turns red
+  const rowH=7*s,gap=2*s,bh=Math.max(4,3*s),ix=4,bx=ix+7*s+gap,top=4;
+  // ---- right column: city + layer, clipboard + tasks done in this layer
+  const lyr=(tier+1)+'/'+SCHED.length, lt=layerTasks(tier), tks=lt?lt[0]+'/'+lt[1]:'';
+  const rw=7*s+gap+Math.max(osdTextW(lyr,s),osdTextW(tks,s)), rx=VW-4-rw;
+  osdIcon(c,OSD_ICON.city,rx,top,s,G);osdText(c,lyr,VW-4-osdTextW(lyr,s),top+s,s,G);
+  if(lt){const y2=top+rowH+gap+s;osdIcon(c,OSD_ICON.clip,rx,y2,s,G);osdText(c,tks,VW-4-osdTextW(tks,s),y2+s,s,G);}
+  const bw=Math.max(30,Math.min(118,rx-bx-6*s-2*gap));
+  // ---- HP: one continuous bar
+  let y=top;
+  {const by=y+((rowH-bh)>>1),col=noAir?OSD_R:G,D=player.dmgFx;
+   const f=clamp(player.hearts/player.maxHearts,0,1);let w=Math.round(bw*f);
+   if(D&&D.t<0.5){const pre=clamp((player.hearts+D.chunk)/player.maxHearts,0,1);w=((state.tick>>2)&1)?0:Math.round(bw*pre);}   // a hit: blink, then settle shorter
+   osdIcon(c,OSD_ICON.heart,ix,y+(s>>1),s,col);
+   c.fillStyle=noAir?OSD_DIMR:OSD_DIM;c.fillRect(bx,by,bw,bh);c.fillStyle=col;c.fillRect(bx,by,w,bh);}
+  y+=rowH+gap;
+  // ---- O2: segmented, one segment per 10 units of tank (bigger tanks add segments); gone when empty
+  if(!noAir){const by=y+((rowH-bh)>>1),sg=s,N=clamp(Math.round(player.maxOxygen/10),4,Math.max(4,Math.floor((bw+sg)/(2*s+sg))));
+   const segW=Math.floor((bw+sg)/N)-sg,lit=Math.ceil(clamp(player.oxygen/player.maxOxygen,0,1)*N-1e-6);
+   osdIcon(c,OSD_ICON.air,ix,y,s,G);
+   for(let i=0;i<N;i++){c.fillStyle=i<lit?G:OSD_DIM;c.fillRect(bx+i*(segW+sg),by,segW,bh);}
+   osdText(c,'⚓',bx+N*(segW+sg)-sg+gap,y+s,s,(player.attached||sealed)?G:OSD_DIM);}   // on the air line
+  y+=rowH+gap;
+  // ---- MULE battery (segmented, like any tank) + the boost coil strip under it
+  if(sealed){const by=y+((rowH-bh)>>1),N=10,sg=s,segW=Math.floor((bw+sg)/N)-sg,bf=clamp(mech.battery/mechBatMax(),0,1),lit=Math.ceil(bf*N-1e-6);
+   osdIcon(c,OSD_ICON.cell,ix,y,s,G);
+   for(let i=0;i<N;i++){c.fillStyle=i<lit?G:OSD_DIM;c.fillRect(bx+i*(segW+sg),by,segW,bh);}
+   const cf=clamp((mech.boostT||0)/mechBoostMax(),0,1),cy=by+bh+s,cw=N*(segW+sg)-sg;
+   c.fillStyle=OSD_DIM;c.fillRect(bx,cy,cw,s);
+   if(!mech.boostOut||((state.tick>>2)&1)){c.fillStyle=G;c.fillRect(bx,cy,Math.round(cw*cf),s);}   // burnt out: the strip blinks
+   y+=rowH+gap;}
+  // ---- context prompt: the button to press + the verb, over the thing it acts on
+  if(osdPrompt){const q=osdAt(osdPrompt.x,osdPrompt.y),k=osdPrompt.kind,t=osdPrompt.text;
+   const key=(k&&pcMode)?((pcSrc==='pad'?IP_PAD:IP_KEY)[k]||''):'',ic=(k&&!pcMode)?osdBtnIcon(k):null;
+   const lead=ic?8*s+gap:key?osdTextW(key,s)+gap*2:0,w=lead+osdTextW(t,s);
+   const px0=Math.round(clamp(q[0]-w/2,2,VW-2-w)),py0=Math.round(clamp(q[1]-8*s,2,VH-10*s));
+   if(ic)osdIcon(c,ic,px0,py0,s,G);else if(key)osdText(c,key,px0,py0+(s>>1)+s,s,G);
+   osdText(c,t,px0+lead,py0+(s>>1)+s,s,G);}
+  // ---- toast: one short line under the readouts, fading out at the end
+  if(osdToast){const age=performance.now()-osdToast.t0;
+   if(age>2200)osdToast=null;
+   else{let ts=s;if(osdTextW(osdToast.text,ts)>VW-8&&ts>1)ts--;
+    const w=osdTextW(osdToast.text,ts),ty=Math.max(y,top+2*(rowH+gap)+s)+s;
+    c.globalAlpha=age>1900?(2200-age)/300:1;osdText(c,osdToast.text,Math.round((VW-w)/2),ty,ts,G);c.globalAlpha=1;}}
+  osdFlush(ctx);
 }
 
 // Sector-nav minimap: a sliding window of nearby tiers (infinite descent), bases and your blip.
@@ -6409,7 +6449,6 @@ function drawMinimap(tier){
   const mapX=wx=>mmx+clamp(wx/(MW*TS),0,1)*mmw;
   // frame + label
   px(ctx,mmx-3,mmy-3,mmw+6,mmh+6,'#091018');px(ctx,mmx-2,mmy-2,mmw+4,mmh+4,'#1b2b37');px(ctx,mmx-1,mmy-1,mmw+2,mmh+2,'#0a141c');
-  pxText(ctx,'NAV',mmx,mmy-9,'#46d0ff');
   // tier bands in their water colours; current tier brightened
   for(let t=t0;t<=t1;t++){const y0=mapY(tierTop[t]*TS),y1=mapY(tierBot[t]*TS),wc=TIERS[t].water;
     px(ctx,mmx,y0|0,mmw,Math.max(1,(y1-y0))|0,shade(wc[1],t===tier?1.35:0.85));
@@ -6446,6 +6485,7 @@ function drawMinimap(tier){
 // close to an edge (e.g. the sub's hull pips). Shrink the rendered canvas by that much on
 // every side so the frame always has bare glass under it, never live HUD.
 const STAGE_FRAME_PAD=8;
+let UIPX=1;                                            // CSS px per world px (sizes the OSD text, see osdScale)
 function resize(){const stage=document.getElementById('stage'),w=stage.clientWidth-STAGE_FRAME_PAD*2,h=stage.clientHeight-STAGE_FRAME_PAD*2;
   if(!w||!h)return;                                   // no layout yet (e.g. headless) — keep defaults
   const gba=window.matchMedia('(orientation:landscape) and (max-height:600px)').matches;
@@ -6457,7 +6497,7 @@ function resize(){const stage=document.getElementById('stage'),w=stage.clientWid
     VH=Math.max(240,Math.round(h/scale)); if(VH&1)VH++;
     if(canvas.width!==VW||canvas.height!==VH){canvas.width=VW;canvas.height=VH;murk.width=VW;murk.height=VH;ctx.imageSmoothingEnabled=false;mctx.imageSmoothingEnabled=false;}
     canvas.style.width=(VW*scale)+'px';canvas.style.height=(VH*scale)+'px';   // exact multiple — square pixels, at most a few px of bezel
-    return;
+    UIPX=scale;return;
   }
   if(gba){
     // LANDSCAPE: lock the on-screen tile size so the diver renders at the same scale as portrait (zoom in).
@@ -6471,7 +6511,7 @@ function resize(){const stage=document.getElementById('stage'),w=stage.clientWid
     VW=Math.max(176,Math.min(460,Math.round(VH*w/h))); if(VW&1)VW++;
   }
   if(canvas.width!==VW||canvas.height!==VH){canvas.width=VW;canvas.height=VH;murk.width=VW;murk.height=VH;ctx.imageSmoothingEnabled=false;mctx.imageSmoothingEnabled=false;}
-  canvas.style.width=w+'px';canvas.style.height=h+'px';}
+  canvas.style.width=w+'px';canvas.style.height=h+'px';UIPX=h/VH;}
 window.addEventListener('resize',resize);window.addEventListener('orientationchange',()=>setTimeout(resize,200));
 
 let acc=0,last=performance.now(),frameAcc=0;

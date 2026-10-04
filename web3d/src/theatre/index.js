@@ -7,7 +7,7 @@
 // URL switches:  ?flat      the original 2D game, no theatre
 //                ?webgl     force the WebGL2 backend      ?quality=ultra|high|mobile|low
 //                ?offscreen render to a target (headless test snapshots)   ?debug  stats overlay
-import { PlateAtlas, MARGIN, PLATES, NPLATES, P_CARD, P_ACT, P_BACK } from './sheets.js';
+import { PlateAtlas, MARGIN, HUD_INSET, PLATES, NPLATES, P_CARD, P_ACT, P_BACK } from './sheets.js';
 import { TheatreScene } from './scene.js';
 import { Quality } from './quality.js';
 import { WaterDirector } from './water.js';
@@ -36,6 +36,12 @@ const TH = {
   clientToCard(cx, cy) { return mapClientToPlate(cx, cy, P_CARD); },
   // plate k view px -> #stage-relative css px (for DOM prompts that float over the theatre)
   viewToStage(k, vx, vy) { return mapPlateToStage(k, vx, vy); },
+  // plate k view px -> HUD px (the game's on-screen display prints prompts over what they act on)
+  viewToHud(k, vx, vy) {
+    const q = mapPlateToStage(k, vx, vy);
+    return [((q[0] - cssView.x) / cssView.w - HUD_INSET.x) / (1 - 2 * HUD_INSET.x) * scene.vw,
+            ((q[1] - cssView.y) / cssView.h - HUD_INSET.y) / (1 - 2 * HUD_INSET.y) * scene.vh];
+  },
 };
 window.SD_THEATRE = TH;
 
