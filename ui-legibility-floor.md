@@ -64,12 +64,17 @@ every phone tested. At 2× they would pass everywhere, but the size would range 
 9 px (iPhone SE) to 16 px (Pixel 7). The cause is that text is locked to the world-pixel
 grid, and the world-pixel size changes with the device.
 
-### HTML overlays: 101 CSS rules and 43 inline styles below 14px
+### HTML overlays: 95 CSS rules and 43 inline styles below 14px
 
-The most common sizes are 9px (cap 5.1) and 10px (cap 5.7). The worst offenders are
-`.jhint` and `.ab .lbl` (7px), plus `.mnav`, `.msens .msl`, the tutorial and briefing
-`.t2` headers, and `.ip-key` (8px). Run the script for the full list. The refinery panel
-(9px) and inventory sub-labels (9px) are the densest offenders.
+The most common sizes are 9px (cap 5.1) and 10px (cap 5.7). The smallest visible text is
+8px: `.mnav`, `.msens .msl`, the tutorial and briefing `.t2` headers, `#oreprompt`'s
+`.ip-key`, and most lines of the HUD readout (inline styles). Run the script for the full
+list. The resource chips (9px) and the pack's sub-labels (9px) are the densest offenders.
+The control captions (`.lbl`, `.jhint`, `.kbdhint`) are hidden on every layout, so the
+audit skips them.
+
+Which of these texts should exist at all is triaged in
+[ui-text-inventory.md](ui-text-inventory.md).
 
 ## Implications for the next step
 

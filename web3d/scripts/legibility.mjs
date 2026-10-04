@@ -47,10 +47,11 @@ for (const [name, w, h, dpr] of VIEWPORTS) {
 await browser.close();
 
 // ---- 2. CSS / inline font sizes that can't reach the floor -------------------------------
-// Bezel prints (brand plate, screen label) are hardware decoration, not information, and the
-// #dev* panel is developer tooling, not player UI: both exempt.
-const EXEMPT = new Set(['.bm-name', '.bm-mk', '.scr-label']);
-const exempt = (sel) => EXEMPT.has(sel) || /^#dev/.test(sel);
+// Bezel prints (brand plate, screen label) are hardware decoration, not information; the
+// #dev* panel is developer tooling, not player UI; the control captions (.lbl, .jhint,
+// .kbdhint) are hidden on every layout by the "strip control descriptions" block. All exempt.
+const EXEMPT = new Set(['.bm-name', '.bm-mk', '.scr-label', '.jhint', '.kbdhint']);
+const exempt = (sel) => EXEMPT.has(sel) || /^#dev/.test(sel) || /(^|\s)\.lbl$/.test(sel);
 const html = readFileSync(src, 'utf8');
 const rules = [];
 for (const m of html.matchAll(/([.#][\w\s.#>:,-]*?)\{([^{}]*?font(?:-size)?:[^;{}]*)/g)) {
