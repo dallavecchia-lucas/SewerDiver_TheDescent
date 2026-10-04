@@ -149,6 +149,11 @@ patch('sub: close murk branch + HUD on glass',
   "  ctx.fillStyle=vg;ctx.fillRect(0,T,VW,B-T);\n  ctx.globalCompositeOperation='source-over';\n",
   "  ctx.fillStyle=vg;ctx.fillRect(0,T,VW,B-T);\n  ctx.globalCompositeOperation='source-over';\n  }\n  if(TH){TH.atlas.end();ctx=TH.atlas.beginHud();}\n");
 
+// a node-only validation path the bundler would try to resolve (ARCH_ORDER always exists in-game)
+patch('node-only require',
+  "return require('./archetypes-60.js').ARCH_ORDER;",
+  "throw new Error('ARCH_ORDER missing');   // (node-only validation path removed in the 3D build)");
+
 // ---- pointer input goes back through the glass
 patch('mine taps through optics',
   'const r=canvas.getBoundingClientRect();mineTapPx((e.clientX-r.left)/r.width*VW,(e.clientY-r.top)/r.height*VH);',

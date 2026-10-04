@@ -127,7 +127,7 @@ export class TheatreScene {
     const L = [];
     // room key light: far above the viewer's shoulder, shining down through the faceplate.
     // Big angular size -> soft, distance-true penumbrae. Warm-white, attenuated by the water.
-    L.push({ p: [-38, 120, 235], r: 26, c: [1.0 * 4.4, 0.95 * 4.4, 0.86 * 4.4], range: -1, dir: null, k: -1 });
+    L.push({ p: [-46, 82, 235], r: 26, c: [1.0 * 4.4, 0.95 * 4.4, 0.86 * 4.4], range: -1, dir: null, k: -1 });
     const lan = info.lantern;
     if (lan) {
       // the helmet lamp hangs just in front of the actors plate and throws its cone back into

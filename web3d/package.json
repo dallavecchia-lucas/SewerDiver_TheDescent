@@ -6,12 +6,15 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build && node scripts/publish.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "smoke": "node scripts/smoke.mjs",
+    "sync": "node scripts/sync-legacy.mjs"
   },
   "dependencies": {
     "three": "0.184.0"
   },
   "devDependencies": {
+    "playwright": "^1.56.1",
     "vite": "^8.0.0",
     "vite-plugin-singlefile": "^2.3.3"
   }

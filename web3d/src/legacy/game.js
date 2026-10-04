@@ -1203,7 +1203,7 @@ const BASE_ORDER=['cybersewer','swamp','radioactive','datacentre','filtration'];
 
 function _archOrder(){ // same <script> in-game; module scope under node validation
   if(typeof ARCH_ORDER!=='undefined')return ARCH_ORDER;
-  return require('./archetypes-60.js').ARCH_ORDER;
+  throw new Error('ARCH_ORDER missing');   // (node-only validation path removed in the 3D build)
 }
 function introOrder(){
   if(!CITY_INTRO_SEEDED)return _archOrder();

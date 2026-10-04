@@ -58,7 +58,8 @@ export function makeIrradiance(G, T, uScroll, uIrrAlpha, uIrrReset, uKeySamples)
         const ns = select(i.lessThan(2), uKeySamples, int(1));
         const nsF = select(i.lessThan(2), float(uKeySamples), float(1)).toVar();
         const wS = float(1).div(nsF);
-        const rot = hash2(screenCoordinate.xy.add(vec2(float(i).mul(19.19), G.uFrameIdx.mul(7.31))));
+        const rot = vec2(ign(screenCoordinate.xy.add(vec2(float(i).mul(17.0), 3.0)), G.uFrameIdx),
+          ign(screenCoordinate.xy.add(vec2(5.0, float(i).mul(29.0))), G.uFrameIdx.add(1013.0)));
         loop(ns, 'irs', (si) => {
           // stratified point on the light's disc (golden-angle spiral, rotated per texel/frame):
           // soft, distance-true penumbrae
@@ -94,7 +95,7 @@ export function makeIrradiance(G, T, uScroll, uIrrAlpha, uIrrReset, uKeySamples)
         });
       });
       const E = Ef.add(Eb.mul(tr).mul(alb.rgb.mul(0.8).add(0.2))).add(G.uAmbient);
-      const cur = vec4(E, sv.div(max(sd, 1e-4)));
+      const cur = vec4(E, sv.div(max(sd, 1e-4)).mul(0.5).add(0.5));   // a > 0 marks a computed texel
       // exact reprojection: plate k's content slid by (dx,dy) world px since last frame
       const sc = uScroll.element(k);
       const pvx = vx.add(sc.x), pvy = vy.add(sc.y);
@@ -230,7 +231,16 @@ export function makeCompose(G, T, U) {
         const k = hitK;
         const uv = G.atlasUV(k, hvx, hvy);
         const alb = texture(T.albedo, uv).level(0);
-        const irr = texture(T.irr, uv).level(0);
+        // edge-aware 5-tap filter of the traced irradiance (only texels that were computed)
+        const ip = vec2(A.x.add(A.z.mul(2)), A.y.add(A.z.mul(2)).mul(A.w)).div(U.uIrrDiv);
+        const io = vec2(1).div(ip);
+        const i0 = texture(T.irr, uv).level(0);
+        const iS = i0.mul(2.0).toVar();
+        const iW = float(2.0).toVar();
+        const tap = (o) => { const t = texture(T.irr, uv.add(o)).level(0); const w = select(t.a.greaterThan(0.25), float(1), float(0)); iS.addAssign(t.mul(w)); iW.addAssign(w); };
+        tap(vec2(io.x, 0)); tap(vec2(io.x.negate(), 0)); tap(vec2(0, io.y)); tap(vec2(0, io.y.negate()));
+        const irrF = iS.div(iW);
+        const irr = vec4(irrF.rgb, saturate(irrF.a.sub(0.5).mul(2.0)));
         const emi = texture(T.emissive, uv).level(0);
         const P = o.add(d.mul(tHit)).toVar();
         const Ua = G.uPU.element(k).xyz, Va = G.uPV.element(k).xyz, N0 = G.uPN.element(k).xyz;
@@ -468,5 +478,6 @@ export function passUniforms() {
     uManualSRGB: uniform(0),
     uCardGlow: uniform(0),
     uDebugView: uniform(0, 'int'),
+    uIrrDiv: uniform(2),
   };
 }

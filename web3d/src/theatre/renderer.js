@@ -57,6 +57,7 @@ export class TheatreRenderer {
     this.uKeySamples = uniform(Q.keySamples || 3, 'int');
     this.mIrr = makeIrradiance(this.G, this.T, this.uScroll, this.uIrrAlpha, this.uIrrReset, this.uKeySamples);
     this.mVol = makeVolume(this.G, this.T, this.uVolAlpha, Q.volSteps);
+    this.U.uIrrDiv.value = Q.irrDiv;
     this.mCompose = makeCompose(this.G, this.T, this.U);
     this.mTile = makeCocTile(this.G, this.T, this.U);
     this.mDof = makeDof(this.G, this.T, this.U, Q.dofTaps);
@@ -85,6 +86,7 @@ export class TheatreRenderer {
     for (const rt of this.irrRT || []) rt.dispose();
     this.irrRT = [0, 1].map(() => { const t = new THREE.RenderTarget(iw, ih, { type: HF, depthBuffer: false }); t.texture.minFilter = t.texture.magFilter = THREE.LinearFilter; return t; });
     this.atlasVersion = a.version;
+    if (this.U) this.U.uIrrDiv.value = IR;
     this.reset = true;
   }
 
@@ -142,7 +144,7 @@ export class TheatreRenderer {
     for (let k = 0; k < NPLATES; k++) {
       const sc = f.scroll ? f.scroll[k] : null;
       const moving = sc && (Math.abs(sc[0]) + Math.abs(sc[1]) > 0.01);
-      this.uScroll.array[k].set(sc ? sc[0] : 0, sc ? sc[1] : 0, moving ? 0.3 : 0.16, sc ? 1 : 0);
+      this.uScroll.array[k].set(sc ? sc[0] : 0, sc ? sc[1] : 0, moving ? 0.28 : 0.1, sc ? 1 : 0);
     }
     this.uIrrReset.value = this.reset ? 1 : 0;
 
