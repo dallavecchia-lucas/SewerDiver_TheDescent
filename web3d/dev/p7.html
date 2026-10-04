@@ -1,0 +1,18 @@
+<!doctype html><html><body><canvas id="cv" width="64" height="64"></canvas><script type="module">
+import * as THREE from 'three/webgpu';
+import { Fn, texture, vec4, screenUV } from 'three/tsl';
+const log = (s) => (window.__log = (window.__log||'') + s + ';');
+const r = new THREE.WebGPURenderer({ canvas: document.getElementById('cv') });
+await r.init(); r.backend.device.lost.then(i => log('lost:' + i.message));
+const v = location.hash.slice(1);
+const src = document.createElement('canvas'); src.width = 8; src.height = 8; const c = src.getContext('2d'); c.fillStyle = '#f80'; c.fillRect(0,0,8,8);
+const tex = v.includes('data') ? new THREE.DataTexture(new Uint8Array(c.getImageData(0,0,8,8).data.buffer), 8, 8) : new THREE.CanvasTexture(src);
+tex.needsUpdate = true;
+const rt = new THREE.RenderTarget(4, 4, { depthBuffer: false });
+const m = new THREE.NodeMaterial(); m.fragmentNode = Fn(() => texture(tex, screenUV).level(0))();
+const q = new THREE.QuadMesh(m);
+for (let i = 0; i < 3; i++) { if (v.includes('re')) { c.fillRect(0,0,8,8); tex.needsUpdate = true; } r.setRenderTarget(rt); q.render(r); await new Promise(res => setTimeout(res, 50)); }
+log('rendered');
+try { const px = await r.readRenderTargetPixelsAsync(rt, 0, 0, 4, 4); log('px ' + Array.from(px.slice(0,4))); } catch (e) { log('rderr ' + e); }
+window.__done = 1;
+</script></body></html>

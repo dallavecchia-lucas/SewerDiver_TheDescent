@@ -1,0 +1,8533 @@
+// AUTO-SYNCED from the legacy build by scripts/sync-legacy.mjs — edit the seams there, not here.
+"use strict";
+(function(){
+// ============ CONSTANTS ============
+let VW=220, VH=352; const TS=16, STEP=1/60;
+const EMPTY=0, WALL=1, ROCK=2, ORE=3, SLUDGE=4, BULK=5, THERMAL=6;
+const ACC=0.34, DRAG=0.86, GRAV=0.03, SLDRAG=0.72;
+const OXY_RATE=0.075, AIR_FILL=1.3;
+const INVULN=64, DASH=3.2, DASHCD=30, DROWN=90;
+const PRESSURE=[1.0,1.5,2.1,2.8];
+function pressureAt(t){return t<4?PRESSURE[t]:2.8+(t-3)*0.5;}   // keeps climbing past the base 4 tiers
+const BASE_POLL=0.5, BASE_THERM=0.62, RES_SCALE=14;
+// ambient pollution is keyed on the ENVIRONMENT, not the layer: the whole first
+// environment (env 0) is pollution-free; damage begins at the 2nd environment and
+// steps up once more with every environment descended after that.
+const AMBIENT_BASE=2.5, AMBIENT_STEP=2.0;
+function envOfTier(t){const d=(typeof SCHED!=='undefined'&&SCHED&&SCHED[t]);return (d&&d.env!=null)?d.env:Math.max(0,Math.floor(t/4));}
+function ambientAt(t){const e=envOfTier(t);return e<=0?0:AMBIENT_BASE+(e-1)*AMBIENT_STEP;}
+const ROPE_DEF=96, ROPE_STEP=36, ROPE_MAX=264, REGEN_T=2.4, DOCK_R=36;
+const GRAB_R=26, MINE_PAD=7;
+const SCRAP=[
+  {id:'cog',  name:'Brass Cog',    col:'#c9a14a', coin:3},
+  {id:'coil', name:'Copper Coil',  col:'#d98b4a', coin:6},
+  {id:'plate',name:'Silver Plate', col:'#ccd6df', coin:11},
+  {id:'idol', name:'Gilded Idol',  col:'#ffd23c', coin:20}];
+const SCRAPBYID={};for(const s of SCRAP)SCRAPBYID[s.id]=s;
+const TANK_STEP=18, TANK_MAX=108, FILT_STEP=0.6, FILT_MAX=3.0;
+const SEAL_R=2.4;
+const SELF_R=24, LANT_HALF=0.62;  // self-pool radius + lantern cone half-angle (rad)
+const PARTS=[
+  {id:'bolt', name:'Bolt Pack',   coin:5},
+  {id:'frame',name:'Steel Frame', coin:12},
+  {id:'core', name:'Power Core',  coin:26}];
+const PARTBYID={};for(const p of PARTS)PARTBYID[p.id]=p;
+const MACHINES=[
+  {id:'robot',     name:'Scrappy Robot', desc:'a drone that tags along and auto-grabs nearby loot', cost:{bolt:4,frame:2,core:1}},
+  {id:'floodlight',name:'Floodlight Rig', desc:'permanent +light, the dark pulls back',              cost:{bolt:3,frame:3,core:1}},
+  {id:'thruster',  name:'Thruster Pack',  desc:'permanent +swim speed',                              cost:{bolt:5,frame:2,core:2}},
+  {id:'mech',      name:'DV-8 “MULE” Mech', desc:'pilotable heavy frame — insta-drill, kill-saw, boost & hook · runs on crafted battery cells', cost:{bolt:6,frame:4,core:3}}];
+const MACHBYID={};for(const m of MACHINES)MACHBYID[m.id]=m;
+const ORE_YIELD=2, MG_N=9, MGC=14;
+const ABORT_FUSE=2.5, BLAST_R=16, BLAST_DMG=2;   // aborting a dig destabilises the vein: ~2.5s fuse, blast ≈ player hitbox around the ore
+const MAP_COST=60;   // coin price of the sector-nav minimap (bought at the shop)
+// ===== MECH — the DV-8 "MULE" pilotable heavy frame =====
+// Overpowered on purpose, rationed by the battery: the cell only drains when the mech WORKS
+// (drill / saw / boost / hook) — walking and hanging are free. One cell carried, no refunds.
+const MECH_BAT_BASE=10, MECH_BAT_STEP=2;            // seconds of work per cell; +2s per environment upgrade
+const MECH_BOOST_BASE=2.0, MECH_BOOST_STEP=0.2;     // CAPACITY branch: continuous boost the coil holds; +0.2s per fitting
+const MECH_HOOK_BASE=96, MECH_HOOK_STEP=36, MECH_HOOK_MAX=264;  // hook reach scales like the air line
+const MECH_DRILL_COST=1.0, MECH_SAW_COST=1.5, MECH_HOOK_COST=0.8; // battery seconds per action
+const MECH_BAT_QTY=4;                               // battery recipe: 4× each of the layer's 3 ores + 3 floats
+const MECH_CALL_COST=10;                            // quick-spawn: 10× one floating kind of the layer
+const MECH_DROP_CHANCE=0.35;                        // saw-killed deceivers spill sellable salvage this often
+const MECH_W=13, MECH_H=14, MECH_R=18;              // hitbox + board/interact radius
+const MECH_GRAV=0.12, MECH_ACC=0.5, MECH_MAXV=1.7, MECH_JUMP=2.9;
+const MECH_BOOST_ACC=0.24, MECH_BOOST_MAXUP=2.3, MECH_REEL=4.2;
+const MECH_BOOST_REGEN=0.6, MECH_REGEN_STEP=0.15;   // RECHARGE branch: coil seconds recovered per second
+                              // whenever the thruster ISN'T firing — mid-air, hanging on the hook, standing
+                              // still; +0.15/s per fitting. Touchdown still snaps the coil straight to full.
+const MECH_BOOST_RESET=1.0;   // burn the coil to empty and the thruster CUTS OUT: it stays dead until the coil
+                              // has rebuilt to this fraction of full (1.0 = all of it). No stutter-hovering.
+const INFEST_CHANCE=0.22, INFEST_MUL=3;             // infested layers: swarm density the saw was made for
+/* ===== CITY TRANSVERSAL — the U-552 boat that runs the pipe between cities =====
+ * The stream sets the pace and never lets go: SUB_FWD is not a top speed the player
+ * reaches, it is the speed they are ALREADY doing. Boost buys a burst of it out of a
+ * coil that cuts out when it runs dry, exactly like the MULE's thruster, so the one
+ * answer to a predator at the stern is a resource and not a button you can lean on. */
+const SUB_W=36, SUB_H=11;                           // hull box, nose right
+const SUB_FWD=64;                                   // px/s the current carries the boat at cruise
+const SUB_BOOST_MUL=2.25;                           // forward multiplier while the coil fires
+const SUB_LIFT=210, SUB_VDRAG=0.90, SUB_VMAX=78;    // plane authority / water drag / terminal climb
+const SUB_BOOST_MAX=2.6;                            // seconds of continuous boost the coil holds
+const SUB_BOOST_REGEN=0.22, SUB_REGEN_STEP=0.09;    // coil-seconds recovered per second; +0.09 per fitting — a full burn costs a long wait back
+const SUB_TORP_SPD=170, SUB_TORP_STEP=22, SUB_TORP_DMG=2;
+const SUB_RELOAD=1.8, SUB_RELOAD_MUL=0.87, SUB_RELOAD_MIN=0.84;
+const SUB_SPLASH_R=14, SUB_SPLASH_STEP=7, SUB_SPLASH_DMG=1, SUB_SPLASH_DSTEP=0.25;
+const SUB_MINE_R=18, SUB_MINE_RSTEP=6, SUB_MINE_DMG=2, SUB_MINE_DSTEP=0.5;
+const SUB_MINE_BASE=1, SUB_MINE_STEP=1;             // the bay is fitted from the first run — with ONE charge
+const SUB_HULL_BASE=4, SUB_HULL_STEP=1;
+const SUB_UPG_MAX={torpSpd:5,torpSplash:4,torpRl:5,boostRegen:4,mineDef:4,mineAmmo:4,hull:5};
+
+const canvas=document.getElementById('c'), flatCtx=canvas.getContext('2d'); let ctx=flatCtx;
+// ===== THEATRE SEAM (3D build) =====================================================
+// The 3D build swaps `ctx` between the plastic plates of the flooded theatre (see
+// web3d/src/theatre). Every draw function below is untouched: sw(k) just points the
+// global ctx at plate k's region of the plate atlas. With no theatre, TH is null and
+// every seam below is a no-op, so this file still runs as the flat game.
+const TH=(typeof window!=='undefined'&&window.SD_THEATRE&&window.SD_THEATRE.enabled)?window.SD_THEATRE:null;
+let GLK=3, TM=0;                  // plate the next glow belongs to · plate bleed in world px (0 = flat)
+function sw(k){if(TH){ctx=TH.atlas.use(k);GLK=k;}}
+function canvasPt(e){                 // pointer -> game-view px, through the bulb's optics when 3D
+  if(TH&&TH.ready)return TH.clientToCard(e.clientX,e.clientY);
+  const r=canvas.getBoundingClientRect();return [(e.clientX-r.left)/r.width*VW,(e.clientY-r.top)/r.height*VH];}
+ctx.imageSmoothingEnabled=false;
+const murk=document.createElement('canvas'); murk.width=VW; murk.height=VH;
+const mctx=murk.getContext('2d');
+
+// ============ UTIL ============
+function px(c,x,y,w,h,col){c.fillStyle=col;c.fillRect(x|0,y|0,w|0,h|0);}
+function hash(x,y){let n=(x*374761393+y*668265263)>>>0;n=((n^(n>>13))*1274126177)>>>0;return ((n^(n>>16))>>>0)/4294967296;}
+function clamp(v,a,b){return v<a?a:v>b?b:v;}
+function radial(c,x,y,r,c0,c1){if(r<=0)return;if(c.__em&&c.globalCompositeOperation==='lighter')c=c.__em;const g=c.createRadialGradient(x,y,0,x,y,r);g.addColorStop(0,c0);g.addColorStop(1,c1);c.fillStyle=g;c.fillRect(x-r,y-r,r*2,r*2);}
+// destination-out cone: carves a soft forward wedge out of the murk (the lantern beam)
+function cutCone(c,x,y,lx,ly,R,half){const ang=Math.atan2(ly,lx);
+  c.save();c.beginPath();c.moveTo(x,y);c.arc(x,y,R,ang-half,ang+half);c.closePath();c.clip();
+  const g=c.createRadialGradient(x,y,0,x,y,R);g.addColorStop(0,'rgba(0,0,0,1)');g.addColorStop(0.62,'rgba(0,0,0,0.9)');g.addColorStop(1,'rgba(0,0,0,0)');
+  c.fillStyle=g;c.fillRect(x-R,y-R,R*2,R*2);c.restore();}
+// additive light shaft for the lantern look
+function beamCone(c,x,y,lx,ly,R,half,col,a){const ang=Math.atan2(ly,lx);
+  c.save();c.beginPath();c.moveTo(x,y);c.arc(x,y,R,ang-half,ang+half);c.closePath();c.clip();
+  const g=c.createRadialGradient(x,y,0,x,y,R);g.addColorStop(0,'rgba('+col+','+a+')');g.addColorStop(0.5,'rgba('+col+','+(a*0.5)+')');g.addColorStop(1,'rgba('+col+',0)');
+  c.fillStyle=g;c.fillRect(x-R,y-R,R*2,R*2);c.restore();}
+function ri(a,b){return a+Math.random()*(b-a);}
+function hex2rgb(h){h=h.replace('#','');return h.length===3?[parseInt(h[0]+h[0],16),parseInt(h[1]+h[1],16),parseInt(h[2]+h[2],16)]:[parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)];}
+function shade(h,f){const c=hex2rgb(h);return `rgb(${clamp(c[0]*f|0,0,255)},${clamp(c[1]*f|0,0,255)},${clamp(c[2]*f|0,0,255)})`;}
+// HSL -> #rrggbb (used by the per-play procedural ore/item palette generator)
+function hsl2hex(h,s,l){h=((h%360)+360)%360;s=clamp(s,0,1);l=clamp(l,0,1);
+  const c=(1-Math.abs(2*l-1))*s,x=c*(1-Math.abs((h/60)%2-1)),m=l-c/2;let r,g,b;
+  if(h<60){r=c;g=x;b=0;}else if(h<120){r=x;g=c;b=0;}else if(h<180){r=0;g=c;b=x;}
+  else if(h<240){r=0;g=x;b=c;}else if(h<300){r=x;g=0;b=c;}else{r=c;g=0;b=x;}
+  const to=v=>{const n=clamp(Math.round((v+m)*255),0,255).toString(16);return n.length<2?'0'+n:n;};
+  return '#'+to(r)+to(g)+to(b);}
+/*! ============================================================================
+ *  SEWER DIVER — PROCEDURAL ORE ENGINE  ·  v2  (portable, commented)
+ *  ----------------------------------------------------------------------------
+ *  Generates every "raw" ore from a per-id seed into a SOLID chunky pixel mass
+ *  (no thin sticks). One generator feeds BOTH the menu/inventory icons (SVG)
+ *  and the in-world ore tiles (pre-rendered to a 16x16 offscreen canvas, then
+ *  blitted with one drawImage per frame). Each ore *instance* in the world
+ *  picks one of ORE_VARIANTS shapes by its position hash.
+ *  HOST DEPS (already in scope): ctx, px, shade, clamp, hex2rgb, RES{col,kind},
+ *  TS, RCX/RCY/VW/VH, state.tick, gl, nearOre, ABORT_FUSE.
+ *  TUNING LEVERS: ORE_VARIANTS, ORE_ARCH, GW/GH, SHMUL, the genXxx params, and
+ *  the plotShimmer perp/par positions in drawOre's overlays.
+ * ============================================================================ */
+
+/* ---------- 0. CONFIG / TUNING LEVERS ---------- */
+const GW = 16, GH = 14;          // ore-mass grid: 16 wide, 14 tall (fits a 16px tile with a rock base)
+const ORE_VARIANTS = 1;          // one sprite per ore (no per-instance shape variation)
+const ORE_ARCH = {               // default fallback shapes (overridden per play by the theme system)
+  t1ra:'chunk',  t1rb:'crystal', t1rc:'glob',
+  t2ra:'chunk',  t2rb:'crystal', t2rc:'glob',
+  t3ra:'chunk',  t3rb:'crystal', t3rc:'slab',
+  t4ra:'chunk',  t4rb:'crystal', t4rc:'slab'
+};
+// ----- per-play procedural-theme state (set by genTheme(), read across the renderer) -----
+let RUN_SEED = 1;     // mixed into the ore RNG so masses differ every play
+let THEME = [];       // THEME[tier] = {key,bg,tile,scenery,kelp,pal,oreShapes}
+let ICONSHAPE = {};   // id -> 'a'|'b'|'c' : which hand-drawn icon shape a mix/ref item uses this play
+// Shade level -> brightness multiplier applied to the resource colour.
+// 1 dark edge · 2 base · 3 lit edge · 4 specular corner · 5 grime speck.
+const SHMUL = { 1:0.42, 2:1.0, 3:1.28, 4:1.75, 5:0.26 };
+
+/* ---------- 1. DETERMINISTIC RNG (so a given id always yields the same ore) ---------- */
+function _seedStr(s){ let h=2166136261>>>0; for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619); } return h>>>0; }
+function _rng(seed){ let s=(seed>>>0)||1; return function(){ s=(Math.imul(s,1664525)+1013904223)>>>0; return s/4294967296; }; }
+
+/* ---------- 2. OCCUPANCY GRID HELPERS ---------- */
+function _occ(){ return new Uint8Array(GW*GH); }
+function _set(o,x,y){ x|=0;y|=0; if(x>=0&&x<GW&&y>=0&&y<GH) o[y*GW+x]=1; }
+function _get(o,x,y){ return (x>=0&&x<GW&&y>=0&&y<GH)?o[y*GW+x]:0; }
+function pointInPoly(px,py,pts){ let inside=false; for(let i=0,j=pts.length-1;i<pts.length;j=i++){ const xi=pts[i][0],yi=pts[i][1],xj=pts[j][0],yj=pts[j][1]; if(((yi>py)!=(yj>py))&&(px<(xj-xi)*(py-yi)/(yj-yi)+xi))inside=!inside; } return inside; }
+
+/* ---------- 3. ARCHETYPE MASS GENERATORS  (each returns an occupancy grid) ---------- */
+// chunk: random convex-ish polygon (7-9 verts, jittered angle/radius) rasterized into the grid,
+// then flood-filled straight down from each column's topmost hit so the mass reads as solid rock, not a blob outline
+function genChunk(r){
+  const o=_occ(), cx=8, cyc=8, verts=7+(r()*3|0), pts=[];
+  for(let i=0;i<verts;i++){ const a=(i/verts)*Math.PI*2+(r()*0.5-0.25), rad=3.8+r()*2.6; pts.push([cx+Math.cos(a)*rad, cyc+Math.sin(a)*rad*0.96]); }
+  for(let y=0;y<GH;y++)for(let x=0;x<GW;x++) if(pointInPoly(x+0.5,y+0.5,pts)) _set(o,x,y);
+  let maxy=0; for(let i=0;i<o.length;i++) if(o[i]) maxy=Math.max(maxy,(i/GW)|0);
+  for(let x=0;x<GW;x++){ let top=-1; for(let y=0;y<GH;y++) if(_get(o,x,y)){ top=y; break; } if(top>=0) for(let y=top;y<=maxy;y++) _set(o,x,y); }
+  return o;
+}
+// crystal: a squat rock base plus 3-4 tapered vertical "shards" (linear width falloff toward the tip,
+// each with its own random lean/height) planted at jittered x-offsets along the base
+function genCrystal(r){
+  const o=_occ(), bw=5+(r()*3|0);
+  for(let y=GH-3;y<GH;y++)for(let x=8-(bw>>1);x<=8+(bw>>1);x++) _set(o,x,y);
+  const sh=3+(r()*2|0);
+  for(let s=0;s<sh;s++){
+    const bx=8+(r()*7-3.5), lean=(r()*1.0-0.5), hgt=6+r()*7;
+    for(let i=0;i<hgt;i++){
+      const t=i/hgt, cx=bx+lean*i, hw=0.6+1.7*(1-t);
+      const x0=Math.round(cx-hw), x1=Math.round(cx+hw), yy=(GH-2)-i;
+      for(let x=x0;x<=x1;x++) _set(o,x,yy);
+    }
+  }
+  return o;
+}
+// glob: one filled ellipse (soft-body mass) with 1-2 downward "drip" tails of shrinking radius
+// hanging off its lower edge, evoking a viscous/organic deposit rather than hard rock
+function genGlob(r){
+  const o=_occ(), cx=8+(r()*2-1), cy=7+(r()*1.4), rx=4.8+r()*1.4, ry=4.4+r()*1.2;
+  for(let y=0;y<GH;y++)for(let x=0;x<GW;x++){ const dx=(x-cx)/rx, dy=(y-cy)/ry; if(dx*dx+dy*dy<=1) _set(o,x,y); }
+  const drips=1+(r()*2|0);
+  for(let d=0;d<drips;d++){
+    const dx0=cx+(r()*6-3), dyp=cy+ry-0.5, dr=1.6+r()*1.4;
+    for(let i=0;i<4;i++){ const yy=Math.round(dyp+i), rr=Math.max(1,dr-i*0.5); for(let x=Math.round(dx0-rr);x<=Math.round(dx0+rr);x++) _set(o,x,yy); }
+  }
+  return o;
+}
+// slab: stacked horizontal strata built bottom-up — each layer gets a random thickness/width/x-offset,
+// giving a sedimentary/layered-rock silhouette instead of a single mass
+function genSlab(r){
+  const o=_occ(); let y=GH-1, layers=3+(r()*2|0);
+  while(y>1 && layers-->0){
+    const th=2+(r()*2|0), w=8+(r()*5|0), off=(r()*5-2.5)|0;
+    let x0=clamp(8-(w>>1)+off,0,GW-1), x1=clamp(x0+w,1,GW);
+    for(let yy=y-th+1;yy<=y;yy++)for(let x=x0;x<x1;x++) _set(o,x,yy);
+    y-=th;
+  }
+  return o;
+}
+
+/* ---------- 4. SHADING + PER-ARCHETYPE DETAIL  (occupancy -> shade levels 1..5) ---------- */
+// Light is treated as coming from the top-left: a filled cell with an empty up/left neighbor is "lit"
+// (shade 3, or 4 at a convex corner with no up/left/up-left neighbor at all); one with an empty
+// down/right neighbor is "shaded" (1); everything else is flat mid-tone (2). A few random interior
+// cells are then promoted to 5 (grime specks) for texture, plus an archetype-specific tweak pass below.
+function shadeMass(o,r,arch){
+  const out=new Uint8Array(GW*GH);
+  for(let y=0;y<GH;y++)for(let x=0;x<GW;x++){
+    if(!_get(o,x,y))continue;
+    const up=_get(o,x,y-1),lf=_get(o,x-1,y),dn=_get(o,x,y+1),rt=_get(o,x+1,y),ul=_get(o,x-1,y-1);
+    const litN=(up?0:1)+(lf?0:1), shdN=(dn?0:1)+(rt?0:1);
+    let s;
+    if(litN>=1&&shdN===0) s=(!up&&!lf&&!ul)?4:3;
+    else if(shdN>=1&&litN===0) s=1;
+    else s=2;
+    out[y*GW+x]=s;
+  }
+  const inner=[]; for(let i=0;i<out.length;i++) if(out[i]===2) inner.push(i);
+  const g=1+(r()*2|0);
+  for(let k=0;k<g&&inner.length;k++){ const j=(r()*inner.length)|0; out[inner[j]]=5; inner.splice(j,1); }
+  // archetype-specific extra detail: chunk gets a stray dark facet, glob gets a single bright highlight
+  // "seam" following its first solid row, slab gets darkened bedding lines every 3rd occupied row
+  if(arch==='chunk'){
+    const cand=[]; for(let y=4;y<GH-2;y++)for(let x=3;x<GW-3;x++){ const i=y*GW+x; if(out[i]>=2&&_get(o,x+1,y)&&_get(o,x,y+1)&&_get(o,x-1,y)) cand.push([x,y]); }
+    if(cand.length){ const c=cand[(r()*cand.length)|0]; out[c[1]*GW+c[0]]=1; if(out[(c[1]-1)*GW+c[0]-1]>0)out[(c[1]-1)*GW+c[0]-1]=4; if(out[c[1]*GW+c[0]+1]>0)out[c[1]*GW+c[0]+1]=3; }
+  } else if(arch==='glob'){
+    for(let y=0;y<GH;y++){ let done=false; for(let x=0;x<GW;x++){ const i=y*GW+x; if(out[i]>=2){ out[i]=4; if(out[i+1]>=2)out[i+1]=3; if(out[(y+1)*GW+x]>=2)out[(y+1)*GW+x]=3; done=true; break; } } if(done)break; }
+  } else if(arch==='slab'){
+    for(let y=2;y<GH;y++){ let rowHas=false; for(let x=0;x<GW;x++) if(_get(o,x,y)) rowHas=true; if(rowHas&&(y%3===0)){ for(let x=0;x<GW;x++){ const i=y*GW+x; if(out[i]>=2)out[i]=1; } } }
+  }
+  return out;
+}
+
+/* ---------- 5. PUBLIC: shade-level grid for an (id, variant), memoized ---------- */
+// resource ids are t{N}{kind}{slot} with N possibly multi-digit (deep tiers) → parse robustly
+function idTier(id){ return parseInt(id.slice(1,-2))||1; }   // 1-based tier number
+function idSlot(id){ return id[id.length-1]; }               // a | b | c
+// shape archetype for an ore id — per-play theme override, falling back to the static defaults
+function oreShapeFor(id){ const tier=idTier(id)-1, s=idSlot(id);
+  return (THEME[tier]&&THEME[tier].oreShapes&&THEME[tier].oreShapes[s])||ORE_ARCH[id]||'chunk'; }
+function genOreLevels(id,variant){
+  const arch=oreShapeFor(id);
+  const r=_rng((_seedStr(id)^Math.imul(variant+1,0x9E3779B1)^RUN_SEED)>>>0);
+  let o;
+  switch(arch){ case 'crystal':o=genCrystal(r);break; case 'glob':o=genGlob(r);break; case 'slab':o=genSlab(r);break; default:o=genChunk(r); }
+  return shadeMass(o,r,arch);
+}
+let _oreLv={};
+function oreLevels(id,variant){ const k=id+'|'+variant; return _oreLv[k]||(_oreLv[k]=genOreLevels(id,variant)); }
+// drop cache entries (keyed "id|...") for ids whose tier is far from the diver — safe because both
+// caches are pure functions of (id, variant[, face]) and rebuild identically from RUN_SEED on revisit
+function evictFarCache(cache,pti){for(const k in cache){const t=idTier(k.slice(0,k.indexOf('|')))-1;if(t<pti-2||t>pti+2)delete cache[k];}}
+
+/* ---------- 6. RENDERER A — SVG icon (menus / inventory / reward popup) ---------- */
+function oreGridSVG(id,sz){
+  const c=RES[id].col, lv=oreLevels(id,0), tier=idTier(id)-1, l=shade(c,1.6);
+  let rects='';
+  for(let gy=0;gy<GH;gy++)for(let gx=0;gx<GW;gx++){ const s=lv[gy*GW+gx]; if(!s)continue; rects+='<rect x="'+gx+'" y="'+(2+gy)+'" width="1" height="1" fill="'+shade(c,SHMUL[s])+'"/>'; }
+  let acc='';
+  if(tier>=1) acc+='<circle cx="13.4" cy="2.6" r="1" fill="'+l+'"/><path d="M13.4 1.3 V3.9 M12.1 2.6 H14.7" stroke="'+l+'" stroke-width="0.5"/>';
+  if(tier>=3) acc='<circle cx="8" cy="9" r="7.6" fill="'+c+'" opacity="0.12"/>'+acc+'<path d="M2.6 6 L3.4 6.6 M13 12.4 L12.2 13" stroke="#fff" stroke-width="0.5" opacity="0.7"/>';
+  return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16">'+acc+rects+'</svg>';
+}
+
+/* ---------- 7. RENDERER B — in-world ore (face-aware, baked rock base, cached) ---------- */
+// shared face-aware (perp,par) -> tile-local (rx,ry) transform — used by both the offscreen ore-canvas
+// baker (plotPxC) and the live shimmer overlay (plotShimmer), which previously duplicated this branch
+function faceXY(face,perp,par){
+  if(face==='up')return [8+par,15-perp];
+  if(face==='down')return [8+par,perp];
+  if(face==='left')return [15-perp,8+par];
+  return [perp,8+par];
+}
+function plotPxC(cc,face,perp,par,col){
+  const [rx,ry]=faceXY(face,perp,par);
+  if(rx<0||rx>15||ry<0||ry>15)return;
+  cc.fillStyle=col; cc.fillRect(rx,ry,1,1);
+}
+function buildOreCanvas(id,variant,face){
+  const c=RES[id].col, lv=oreLevels(id,variant), cv=document.createElement('canvas');
+  cv.width=16; cv.height=16; const cc=cv.getContext('2d'); cc.imageSmoothingEnabled=false;
+  for(let perp=0;perp<3;perp++)for(let par=-8;par<8;par++) plotPxC(cc,face,perp,par,perp===0?'#37464f':'#28333d');
+  for(let perp=1;perp<3;perp++){ plotPxC(cc,face,perp,-7,'#313f49'); plotPxC(cc,face,perp,-6,'#313f49'); plotPxC(cc,face,perp,5,'#313f49'); plotPxC(cc,face,perp,6,'#313f49'); }
+  for(let gy=0;gy<GH;gy++)for(let gx=0;gx<GW;gx++){ const s=lv[gy*GW+gx]; if(!s)continue; plotPxC(cc,face,15-gy,gx-8,shade(c,SHMUL[s])); }
+  return cv;
+}
+let _oreCanv={};
+function getOreCanvas(id,variant,face){ const k=id+'|'+variant+'|'+face; return _oreCanv[k]||(_oreCanv[k]=buildOreCanvas(id,variant,face)); }
+// which hand-drawn icon shape (a/b/c) a mix/ref item uses this play
+function iconVar(id){ return ICONSHAPE[id]||id[id.length-1]; }
+function plotShimmer(X,Y,face,perp,par,col){
+  const [rx,ry]=faceXY(face,perp,par);
+  px(ctx,X+rx,Y+ry,1,1,col);
+}
+
+function iconSVG(id,sz){if(RES[id].kind==='raw')return oreGridSVG(id,sz);   // raw-ore icons come from the procedural ore engine
+  const r=RES[id],c=r.col,d=shade(c,0.45),l=shade(c,1.6),m=shade(c,1.15),deep=shade(c,0.28),k=r.kind;
+  const tier=idTier(id)-1, va=iconVar(id);
+  let inner='';
+  if(k==='raw'){
+    if(va==='a') inner='<polygon points="7,1 11,7 8.5,15 6,15 4,7" fill="'+c+'"/><polygon points="7,1 11,7 7,7.5" fill="'+l+'"/><polygon points="7,7.5 8.5,15 6,15" fill="'+d+'"/><polygon points="4,7 7,7.5 6,15" fill="'+m+'"/><polygon points="11,4 13.5,8 12,12 10.5,8" fill="'+m+'"/><polygon points="11,4 13.5,8 11,8.4" fill="'+l+'"/>';
+    else if(va==='b') inner='<path d="M3 9 L5 4 L9 3 L13 6 L12 12 L6 13 Z" fill="'+c+'"/><path d="M3 9 L5 4 L9 3 L8 8 Z" fill="'+l+'"/><path d="M8 8 L13 6 L12 12 Z" fill="'+d+'"/><circle cx="6.5" cy="9" r="1.2" fill="'+l+'" opacity="0.6"/><path d="M8 8 L6 13 L12 12 Z" fill="'+deep+'" opacity="0.5"/>';
+    else inner='<polygon points="8,0.5 11,5 10,15 6,15 5,5" fill="'+c+'"/><polygon points="8,0.5 11,5 8,5.5" fill="'+l+'"/><polygon points="5,5 8,5.5 8,15 6,15" fill="'+m+'"/><polygon points="8,5.5 11,5 10,15 8,15" fill="'+d+'"/><line x1="8" y1="2" x2="8" y2="14" stroke="'+l+'" stroke-width="0.5" opacity="0.5"/>';
+  } else if(k==='mix'){
+    if(va==='a') inner='<rect x="6.3" y="1" width="3.4" height="3" rx="0.5" fill="'+d+'"/><rect x="6.8" y="1.4" width="2.4" height="0.7" fill="'+l+'"/><path d="M5 4 H11 L13 11 a5 5 0 0 1 -10 0 Z" fill="'+c+'"/><path d="M3.4 9.5 a5 5 0 0 0 9.2 0 Z" fill="'+d+'" opacity="0.6"/><ellipse cx="6.5" cy="7.5" rx="1" ry="1.8" fill="'+l+'" opacity="0.55"/><circle cx="9" cy="11" r="0.8" fill="'+l+'" opacity="0.8"/><circle cx="7" cy="12" r="0.6" fill="'+l+'" opacity="0.6"/>';
+    else if(va==='b') inner='<rect x="4.5" y="2.5" width="7" height="11" rx="1.5" fill="'+c+'"/><rect x="4.5" y="2.5" width="2" height="11" rx="1" fill="'+l+'" opacity="0.5"/><rect x="6.5" y="1.2" width="3" height="1.8" rx="0.5" fill="'+d+'"/><rect x="5.5" y="5" width="5" height="1.3" fill="'+l+'" opacity="0.7"/><rect x="5.5" y="7.5" width="5" height="1.3" fill="'+d+'"/><rect x="5.5" y="10" width="5" height="1.3" fill="'+l+'" opacity="0.5"/>';
+    else inner='<circle cx="8" cy="8" r="5.5" fill="none" stroke="'+d+'" stroke-width="1.4"/><circle cx="8" cy="8" r="3.6" fill="'+c+'"/><circle cx="6.6" cy="6.6" r="1.3" fill="'+l+'" opacity="0.7"/><path d="M8 2.5 A5.5 5.5 0 0 1 13.5 8" stroke="'+l+'" stroke-width="0.8" fill="none" opacity="0.6"/><circle cx="13" cy="5.5" r="0.9" fill="'+m+'"/>';
+  } else {
+    if(va==='a') inner='<polygon points="8,1.2 14,4.6 14,11.4 8,14.8 2,11.4 2,4.6" fill="'+c+'"/><polygon points="8,1.2 14,4.6 8,8" fill="'+l+'"/><polygon points="8,8 14,11.4 8,14.8" fill="'+d+'"/><polygon points="8,1.2 2,4.6 8,8" fill="'+m+'"/><circle cx="8" cy="8" r="2.4" fill="'+deep+'"/><circle cx="8" cy="8" r="1.1" fill="'+l+'"/>';
+    else if(va==='b'){let pts='';for(let i=0;i<10;i++){const a=-Math.PI/2+i*Math.PI/5,rr=i%2?2.6:6.2,x=8+Math.cos(a)*rr,y=8+Math.sin(a)*rr;pts+=x.toFixed(1)+','+y.toFixed(1)+' ';}
+      inner='<circle cx="8" cy="8" r="6.4" fill="'+d+'"/><polygon points="'+pts+'" fill="'+c+'"/><circle cx="8" cy="8" r="2" fill="'+l+'"/><circle cx="8" cy="8" r="0.9" fill="'+deep+'"/>';}
+    else inner='<path d="M3 10 L5 7 H11 L13 10 L11 13 H5 Z" fill="'+c+'"/><path d="M5 7 H11 L13 10 H3 Z" fill="'+l+'"/><path d="M3 10 H13 L11 13 H5 Z" fill="'+d+'"/><rect x="6" y="8" width="4" height="1" fill="'+m+'" opacity="0.6"/><path d="M4.5 5 H10 L11.5 7 H6 Z" fill="'+m+'"/><path d="M4.5 5 H10 L11.5 7 H6 Z" fill="'+l+'" opacity="0.4"/>';
+  }
+  let acc='';
+  if(tier>=1)acc+='<circle cx="13.2" cy="2.8" r="1" fill="'+l+'"/><path d="M13.2 1.4 V4.2 M11.8 2.8 H14.6" stroke="'+l+'" stroke-width="0.5"/>';
+  if(tier>=2)acc+='<circle cx="2.8" cy="13.2" r="0.8" fill="#ffffff" opacity="0.85"/>';
+  if(tier>=3)acc='<circle cx="8" cy="8" r="7.5" fill="'+c+'" opacity="0.13"/>'+acc+'<path d="M2.5 5 L3.4 5.6 M13 12 L12.1 12.6 M5 2.6 L5.6 3.4" stroke="#fff" stroke-width="0.5" opacity="0.7"/>';
+  return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16">'+acc+inner+'</svg>';
+}
+function gearIcon(sz){const g='#ffd23c',d='#8f7016';let teeth='';
+  for(let i=0;i<8;i++){const a=i/8*Math.PI*2,x=8+Math.cos(a)*6.3,y=8+Math.sin(a)*6.3;teeth+='<circle cx="'+x.toFixed(2)+'" cy="'+y.toFixed(2)+'" r="1.7" fill="'+g+'"/>';}
+  return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16">'+teeth+'<circle cx="8" cy="8" r="5" fill="'+g+'"/><circle cx="8" cy="8" r="3.4" fill="'+d+'"/><circle cx="8" cy="8" r="1.6" fill="#0b1822"/><path d="M8 3.2 A4.8 4.8 0 0 1 12.8 8" stroke="#fff0b0" stroke-width="0.7" fill="none"/></svg>';
+}
+
+// ============ AUDIO ============
+let actx=null;
+function audioInit(){try{if(!actx)actx=new (window.AudioContext||window.webkitAudioContext)();if(actx.state==='suspended')actx.resume();}catch(e){}}
+function beep(f,d,type,vol,to){if(!actx)return;const t=actx.currentTime,o=actx.createOscillator(),g=actx.createGain();
+  o.type=type||'square';o.frequency.setValueAtTime(f,t);if(to)o.frequency.exponentialRampToValueAtTime(to,t+d);
+  g.gain.setValueAtTime(vol||0.05,t);g.gain.exponentialRampToValueAtTime(0.0001,t+d);o.connect(g).connect(actx.destination);o.start(t);o.stop(t+d+0.02);}
+function noise(d,vol){if(!actx)return;const t=actx.currentTime,len=Math.max(1,(actx.sampleRate*d)|0),b=actx.createBuffer(1,len,actx.sampleRate),dt=b.getChannelData(0);
+  for(let i=0;i<len;i++)dt[i]=(Math.random()*2-1)*Math.pow(1-i/len,2);
+  const s=actx.createBufferSource();s.buffer=b;const g=actx.createGain();g.gain.value=vol||0.05;const f=actx.createBiquadFilter();f.type='lowpass';f.frequency.value=1500;s.connect(f).connect(g).connect(actx.destination);s.start(t);}
+const sfx={
+  mine(){beep(200+Math.random()*60,0.05,'square',0.03);},
+  pop(){beep(620,0.07,'square',0.05,1100);},
+  nav(){beep(360+Math.random()*40,0.03,'square',0.022,540);},
+  select(){beep(660,0.05,'square',0.045,990);setTimeout(()=>beep(988,0.06,'square',0.04),42);},
+  back(){beep(480,0.05,'square',0.035,250);},
+  deny(){beep(150,0.1,'square',0.05,92);setTimeout(()=>beep(108,0.12,'square',0.05,80),64);},
+  uiopen(){beep(300,0.05,'sine',0.03,720);setTimeout(()=>beep(540,0.06,'sine',0.03,780),48);},
+  boom(){noise(0.32,0.09);beep(90,0.34,'sawtooth',0.08,38);setTimeout(()=>noise(0.18,0.05),40);},
+  fuse(){beep(680,0.04,'square',0.025,520);},
+  mix(){beep(740,0.06,'triangle',0.04,520);},
+  craft(){beep(523,0.08,'square',0.04);setTimeout(()=>beep(784,0.1,'square',0.04),70);},
+  build(){[392,523,659,880].forEach((f,i)=>setTimeout(()=>beep(f,0.16,'square',0.05),i*90));},
+  air(){beep(900,0.05,'sine',0.03,1200);},
+  hurt(){beep(130,0.2,'sawtooth',0.08,55);noise(0.18,0.05);},
+  dash(){noise(0.16,0.05);beep(280,0.12,'sine',0.03,640);},
+  zap(){noise(0.1,0.06);beep(1500,0.06,'square',0.03,300);},
+  win(){[523,659,784,1046,1318].forEach((f,i)=>setTimeout(()=>beep(f,0.2,'square',0.05),i*120));},
+  lose(){[400,300,220,160].forEach((f,i)=>setTimeout(()=>beep(f,0.22,'sawtooth',0.06),i*120));},
+  start(){beep(330,0.08,'square',0.04,660);}
+};
+
+// ============ RESOURCE + RECIPE DATA ============
+const RES={};
+// .tier and .rgb are cached once instead of being re-derived (string-parsed / hex-parsed) on every
+// frame from inside hot draw paths (drawOre/drawMixer/drawScrap call this dozens of times a frame)
+function R(id,name,col,kind,inp){RES[id]={id,name,col,kind,in:inp||null,tier:idTier(id),rgb:hex2rgb(col).join(',')};}
+function setResCol(id,col){const r=RES[id];r.col=col;r.rgb=hex2rgb(col).join(',');}
+// Tier 1
+R('t1ra','Scrap Iron','#8a94a0','raw'); R('t1rb','Silt Crystal','#46d0ff','raw'); R('t1rc','Rubber Cord','#a07a4a','raw');
+R('t1ma','Brine','#5dd6c8','mix'); R('t1mb','Solvent','#c8e85d','mix'); R('t1mc','Flux','#e85dc8','mix');
+R('t1fa','Sealed Plate','#c2ccd6','ref',{t1ra:2,t1ma:1}); R('t1fb','Lens Array','#7fe6ff','ref',{t1rb:2,t1mb:1}); R('t1fc','Flex Seal','#d8a868','ref',{t1rc:2,t1mc:1});
+// Tier 2
+R('t2ra','Copper Coil','#d98a3c','raw'); R('t2rb','Pressure Glass','#9fe8ff','raw'); R('t2rc','Bio-Resin','#7fbf5d','raw');
+R('t2ma','Coolant','#5d9fe8','mix'); R('t2mb','Acid','#b6ff3c','mix'); R('t2mc','Catalyst','#ff6a3c','mix');
+R('t2fa','Coil Cell','#ffaa5c','ref',{t2ra:2,t2ma:1}); R('t2fb','Pane','#c2f3ff','ref',{t2rb:2,t2mb:1}); R('t2fc','Resin Mesh','#a6e88a','ref',{t2rc:2,t2mc:1});
+// Tier 3
+R('t3ra','Cobalt Ore','#4a6ad9','raw'); R('t3rb','Plasma Shard','#ff3cf0','raw'); R('t3rc','Graphene Flake','#7a8694','raw');
+R('t3ma','Neutralizer','#3cffb6','mix'); R('t3mb','Plasma Gel','#ff3c8a','mix'); R('t3mc','Nanofluid','#3cd0ff','mix');
+R('t3fa','Cobalt Frame','#6f8aff','ref',{t3ra:2,t3ma:1}); R('t3fb','Plasma Core','#ff7adb','ref',{t3rb:2,t3mb:1}); R('t3fc','Nanoweave','#aab6c4','ref',{t3rc:2,t3mc:1});
+// Tier 4
+R('t4ra','Uranium Slug','#9fff3c','raw'); R('t4rb','Fusion Crystal','#ffd23c','raw'); R('t4rc','Titanium Plate','#c0ccd8','raw');
+R('t4ma','Heavy Water','#3ca0ff','mix'); R('t4mb','Antimatter Dust','#c03cff','mix'); R('t4mc','Servo Oil','#ff8a3c','mix');
+R('t4fa','Reactor Cell','#c6ff7a','ref',{t4ra:2,t4ma:1}); R('t4fb','Fusion Drive','#ffe27a','ref',{t4rb:2,t4mb:1}); R('t4fc','Servo Limb','#dce6f0','ref',{t4rc:2,t4mc:1});
+
+let TIERS=[
+ {name:'STORM DRAINS', water:['#11313f','#0c2531','#071b25'], rock:'#3a4452',
+  raw:['t1ra','t1rb','t1rc'], mix:['t1ma','t1mb','t1mc'], ref:['t1fa','t1fb','t1fc'],
+  gear:{name:'REINFORCED WETSUIT', in:{t1fa:2,t1fb:1,t1fc:2},
+        stats:{oxy:140,hp:5,acc:1.12,mv:1.12,lr:92,th:0,po:1}},
+  haz:{elec:1,blob:1,sl:8}},
+ {name:'FLOODED WORKS', water:['#0d2c33','#0a2128','#06181f'], rock:'#33414a',
+  raw:['t2ra','t2rb','t2rc'], mix:['t2ma','t2mb','t2mc'], ref:['t2fa','t2fb','t2fc'],
+  gear:{name:'PRESSURE RIG', in:{t2fa:2,t2fb:2,t1fc:1}, carry:'t1fc',
+        stats:{oxy:185,hp:6,acc:1.16,mv:1.16,lr:104,th:1,po:2}},
+  haz:{elec:2,blob:1,sl:11}},
+ {name:'TOXIC SUMP', water:['#16331c','#0e2614','#081a0d'], rock:'#37443a',
+  raw:['t3ra','t3rb','t3rc'], mix:['t3ma','t3mb','t3mc'], ref:['t3fa','t3fb','t3fc'],
+  gear:{name:'EXOSUIT FRAME', in:{t3fa:2,t3fb:1,t2fa:1}, carry:'t2fa',
+        stats:{oxy:245,hp:7,acc:1.26,mv:1.26,lr:118,th:3,po:3}},
+  haz:{elec:2,blob:2,sl:14}},
+ {name:'THE CORE', water:['#2a1230','#1d0c26','#120818'], rock:'#42384a',
+  raw:['t4ra','t4rb','t4rc'], mix:['t4ma','t4mb','t4mc'], ref:['t4fa','t4fb','t4fc'],
+  gear:{name:'DIVE MECH', in:{t4fc:2,t4fb:1,t4fa:1,t3fb:1}, carry:'t3fb',
+        stats:{oxy:320,hp:8,acc:1.4,mv:1.4,lr:135,th:5,po:5}},
+  haz:{elec:3,blob:2,sl:16}}
+];
+// Pristine base hazard values for the 4 static tiers, snapshotted ONCE at parse time. applyCityVariant
+// applies each city's environment modifier on top of THIS, never on top of the last city's already-
+// modified numbers — otherwise sl/elec/blob accumulate every dive and the acid basin eventually swallows
+// the whole floor (and forces the bulkhead control unit to spawn inside it).
+const BASE_HAZ0=TIERS.map(t=>({elec:t.haz.elec,blob:t.haz.blob,sl:t.haz.sl}));
+
+// tier vertical bands (tile rows) — base game is 4; the arrays grow as the diver descends
+let tierTop=[3,37,71,105], tierBot=[34,68,102,136];
+function tierAtY(y){const ty=y/TS;for(let i=tierTop.length-1;i>=0;i--)if(ty>=tierTop[i])return i;return 0;}
+function tAt(y){return clamp(tierAtY(y),0,tierTop.length-1);}   // tier index clamped to what currently exists
+function depthM(y){return Math.max(0,Math.round((y/TS-3)*1.6));}
+// oreCells/mixers/nodes/blobs/creatures/kelp/scenery accumulate one tier's worth of entries for every
+// tier ever generated and are never pruned (entities can't be safely discarded — the diver can swim
+// back up). What CAN be bounded is how many of them update/draw each frame: only tiers within this
+// window of the diver are ever in play, so hot loops filter on `.tier` to stay flat cost regardless of
+// how deep the run has gone, instead of rescanning the whole run's worth of entities every frame.
+function entTierLo(){return tAt(player.y)-1;}
+function entTierHi(){return tAt(player.y)+2;}   // +2 covers ensureDepth's one-tier lookahead
+// scan `list` (tier-tagged entities, e.g. mixers/scraps) for anything within radius r of (x,y) inside
+// the live tier window; on a hit, splice it out and call onHit(item). Shared between the diver's own
+// pickups and the companion drone's auto-collect, which previously hand-rolled the same scan twice.
+function collectNear(list,x,y,r,onHit){
+  const elo=entTierLo(),ehi=entTierHi();
+  for(let i=list.length-1;i>=0;i--){const it=list[i];if(it.tier<elo||it.tier>ehi)continue;
+    if(Math.hypot(x-it.x,y-it.y)<r){onHit(it);list.splice(i,1);}}
+}
+
+/* ============================================================================
+ *  PROCEDURAL THEME ENGINE — picks a level archetype per tier each play and
+ *  re-skins every ore/item (name + colour + shape) and every tier's wall,
+ *  platform, scenery and water palette. Recipes / ids / kinds / prices are
+ *  untouched; only RES[id].name, RES[id].col and the visual look change.
+ * ========================================================================== */
+// 5 archetypes. bg/tile pick a renderer style; palHues seed the ore/item colours;
+// raw/mix/ref are thematic name pools (≥6 each → 3 distinct picked per play).
+const ARCHETYPES={
+  cybersewer:{
+    name:'CITY SEWERS', suit:'CHROME DIVE-RIG', bg:'ducts', tile:'metal',
+    water:['#11313f','#0c2531','#071b25'], rock:'#3a4452',
+    scenery:['pipe','neon','girder','pipe'], kelp:['#2e7d4f','#5fe39a'],
+    shapes:['chunk','crystal'], palHues:[320,190,32],
+    pal:{base:'#0f2129',seam:'#0a1820',hi:'#163240',rivet:'#21424e',pipe:'#27434e',pipeL:'#3a5e6a',moss:'#2c5e3c',accent:'#2fd0e0',acc2:'66,220,235'},
+    raw:['Scrap Iron','Neon Glass','Rubber Cord','Chrome Stud','Circuit Slag','Wire Bundle','Alloy Chip','Ferro Crystal'],
+    mix:['Solvent','Flux','Synth Oil','Acid Wash','Glow Ink','Degreaser','Brine'],
+    ref:['Sealed Plate','Lens Array','Flex Seal','Servo Mount','Patch Panel','Drone Core','Spark Cell']},
+  swamp:{
+    name:'BIOCYBER SWAMP', suit:'BIO-MEMBRANE SUIT', bg:'core', tile:'bio',
+    water:['#13301c','#0d2414','#07180d'], rock:'#37443a',
+    scenery:['vat','tower','vat','rustpipe'], kelp:['#4f8a2e','#9cf04f'],
+    shapes:['glob','crystal'], palHues:[140,95,278],
+    pal:{base:'#112318',seam:'#0a1810',hi:'#1c3a26',rivet:'#26492f',pipe:'#2c4a36',pipeL:'#3f6a4a',moss:'#3a7d2e',accent:'#5fe07a',acc2:'90,230,110'},
+    raw:['Bio-Resin','Spore Cluster','Nerve Coral','Chitin Plate','Myco Crystal','Synap Bulb','Vine Sinew','Gene Pod'],
+    mix:['Enzyme','Bioslime','Plasma Sap','Neural Fluid','Mutagen','Culture Broth','Spore Wash'],
+    ref:['Tissue Mesh','Synth Organ','Bio-Circuit','Graft Plate','Membrane Cell','Splice Core','Nerve Weave']},
+  radioactive:{
+    name:'RADIOACTIVE WASTE', suit:'LEAD-LINED RIG', bg:'reactor', tile:'toxic',
+    water:['#1d3310','#142609','#0b1705'], rock:'#3c4030',
+    scenery:['rustpipe','valve','vat','tower'], kelp:['#7a8a1e','#d6ff4f'],
+    shapes:['glob','chunk'], palHues:[88,66,46],
+    pal:{base:'#1c2410',seam:'#121908',hi:'#2c3a16',rivet:'#3a4a1e',pipe:'#3e4a22',pipeL:'#5e6a32',moss:'#6a7a1e',accent:'#c6ff3c',acc2:'180,255,60'},
+    raw:['Uranium Slug','Cesium Rod','Cobalt Pellet','Plutonium Bead','Strontium Ore','Tritium Shard','Radium Clump','Thorium Lump'],
+    mix:['Heavy Water','Coolant Sludge','Isotope Gel','Boron Wash','Neutron Brine','Decay Acid','Tritium Vapor'],
+    ref:['Fuel Cell','Lead Shielding','Reactor Plate','Control Rod','Containment Pane','Hot Cell Core','Damper Mesh']},
+  datacentre:{
+    name:'DEAD DATA CENTRE', suit:'SERVER-SHELL MECH', bg:'racks', tile:'tech',
+    water:['#10203a','#0b1730','#070f20'], rock:'#2c3340',
+    scenery:['circuit','server','gear','circuit'], kelp:['#3a4a8a','#7f9cff'],
+    shapes:['crystal','slab'], palHues:[205,190,45],
+    pal:{base:'#101626',seam:'#0a0e1a',hi:'#1a2238',rivet:'#283450',pipe:'#27374c',pipeL:'#3a4f6a',moss:'#3a3a6a',accent:'#46d0ff',acc2:'90,180,255'},
+    raw:['Server Shard','Silicon Wafer','Fiber Coil','Memristor Ore','Sapphire Die','Capacitor Bud','Gold Contact','Quartz Die'],
+    mix:['Coolant','Solder Flux','Thermal Paste','Dielectric Gel','Ionized Mist','Etchant','Cryo Fluid'],
+    ref:['Logic Board','Heat Sink','Optic Bus','Cache Cell','Bus Array','Shielded Core','Riser Card']},
+  filtration:{
+    name:'FILTRATION STATION', suit:'OSMOSIS HARDSUIT', bg:'tanks', tile:'concrete',
+    water:['#123036','#0c2329','#07181d'], rock:'#3a4750',
+    scenery:['rustpipe','valve','tower','pipe'], kelp:['#2b6d6a','#52e0d2'],
+    shapes:['slab','chunk'], palHues:[184,200,34],
+    pal:{base:'#13262b',seam:'#0c191d',hi:'#1d3a40',rivet:'#2a4a50',pipe:'#2c4a50',pipeL:'#436a70',moss:'#2c6e6a',accent:'#46e0d0',acc2:'70,224,208'},
+    raw:['Lime Scale','Carbon Pellet','Sand Crystal','Brine Salt','Rust Flake','Ceramic Bead','Resin Bead','Sediment Lump'],
+    mix:['Chlorine','Floc Gel','Brine','Reagent','Slurry','Ozone Wash','Backwash'],
+    ref:['Filter Membrane','Settling Plate','Sluice Valve','Intake Lens','Osmosis Cell','Clarifier Core','Weir Plate']}
+};
+/* ============================================================================
+ * ARCHETYPES_EXT — 60 additional cyberpunk city-sewer archetypes for
+ * SEWER DIVER: THE DESCENT  (sewerdiverdescent-pause1.html)
+ *
+ * Schema is a strict superset of the game's ARCHETYPES entries (line 1555):
+ *   name, suit, bg, tile, water[3], rock, scenery[4], kelp[2],
+ *   shapes[], palHues[3], pal{base,seam,hi,rivet,pipe,pipeL,moss,accent,acc2},
+ *   raw[8], mix[7], ref[7]
+ * plus NEW fields (ignored by existing code, consumed by the city engine):
+ *   bgx   — preferred EXTENDED background renderer (see plan doc §8.4);
+ *           `bg` always holds a valid existing renderer (ducts/core/reactor/
+ *           racks/tanks) so this file is drop-in TODAY with zero art work.
+ *   tilex — preferred EXTENDED tile painter (doc §8.5); `tile` likewise
+ *           always holds an existing painter (metal/bio/toxic/tech/concrete).
+ *   float — floating-resource form for this archetype's 3 mixer pickups:
+ *           canister | bulb | jelly | pod   (drawMixer branch, doc §8.3)
+ *   plat  — 3 platform-motif tags overlaid by drawTile (doc §8.2)
+ *   shapes — 3 entries (was 2) from this build's 4 ore forms:
+ *           chunk | crystal | glob | slab   (genOreLevels, line ~1369)
+ *
+ * INSTALL (1 line, after the ARCHETYPES literal closes at ~line 1601):
+ *   Object.assign(ARCHETYPES, ARCHETYPES_EXT);
+ * ========================================================================== */
+const ARCHETYPES_EXT={
+  stormdrain:{
+    name:'STORM DRAIN NETWORK', suit:'TEMPEST SHELL', bg:'tanks', tile:'concrete', bgx:'channels', tilex:'brick',
+    water:['#14303c','#0d2430','#081a24'], rock:'#41505c',
+    scenery:['rustpipe','valve','pipe','girder'], kelp:['#3a6d5a','#6fe0b0'],
+    shapes:['chunk','slab','crystal'], float:'canister', plat:['drip','stain','grate'], palHues:[204,158,36],
+    pal:{base:'#122630',seam:'#0b1a22',hi:'#1c3a48',rivet:'#2a4a58',pipe:'#2c4854',pipeL:'#44687a',moss:'#2e6a52',accent:'#4fc8e8',acc2:'79,200,232'},
+    raw:['Gutter Iron','Storm Glass','Grit Nugget','Curb Alloy','Runoff Quartz','Manhole Shard','Gravel Core','Flow Crystal'],
+    mix:['Rainwash','Silt Slurry','Road Salt','Petrol Sheen','Foam Runoff','Grit Suspension','Overflow Brine'],
+    ref:['Culvert Ring','Grate Panel','Baffle Plate','Surge Gate','Weep Valve','Catch Basin Core','Splash Guard']},
+  metro:{
+    name:'FLOODED METRO LINE', suit:'TRANSIT EXO-FRAME', bg:'racks', tile:'metal', bgx:'platform', tilex:'ceramic',
+    water:['#182636','#111c2a','#0a121d'], rock:'#3a4250',
+    scenery:['girder','neon','pipe','server'], kelp:['#3a5a7a','#7fb6ff'],
+    shapes:['slab','chunk','crystal'], float:'canister', plat:['sign','tread','rivet'], palHues:[214,42,352],
+    pal:{base:'#141c2a',seam:'#0c121c',hi:'#20304a',rivet:'#2c3c56',pipe:'#2a3a50',pipeL:'#42587a',moss:'#3a4a6a',accent:'#5a9aff',acc2:'90,154,255'},
+    raw:['Rail Steel','Ticket Alloy','Third-Rail Ore','Turnstile Gear','Ballast Stone','Signal Lens','Brake Filing','Platform Tile'],
+    mix:['Brake Fluid','Track Grease','Ozone Wash','Diesel Bloom','Sand Dispense','Coupler Oil','Tunnel Damp'],
+    ref:['Bogie Frame','Signal Block','Door Actuator','Pantograph Arm','Route Board','Traction Core','Coupler Head']},
+  foundry:{
+    name:'SUNKEN FOUNDRY RUN', suit:'SLAG-PROOF FURNACE RIG', bg:'reactor', tile:'metal', bgx:'furnace', tilex:'slag',
+    water:['#301c10','#241408','#170c04'], rock:'#4a3c30',
+    scenery:['rustpipe','gear','tower','valve'], kelp:['#7a4a1e','#ffb04f'],
+    shapes:['chunk','glob','slab'], float:'pod', plat:['weld','crack','chevron'], palHues:[24,44,4],
+    pal:{base:'#241610',seam:'#170d08',hi:'#3a2418',rivet:'#4a3020',pipe:'#463022',pipeL:'#6a4a34',moss:'#5e3a1a',accent:'#ff8a3c',acc2:'255,138,60'},
+    raw:['Pig Iron','Slag Glass','Crucible Chip','Mold Sand Ore','Tap Nugget','Anvil Scrap','Cinder Chunk','Billet Stub'],
+    mix:['Quench Oil','Flux Melt','Casting Slip','Slag Wash','Furnace Tar','Tempering Brine','Ash Slurry'],
+    ref:['Cast Plate','Tuyere Nozzle','Ladle Shell','Ingot Rack','Firebrick Core','Tap Valve','Anvil Cap']},
+  cryostack:{
+    name:'CRYO STORAGE STACKS', suit:'THERMAL LINER SUIT', bg:'tanks', tile:'tech', bgx:'coldstore', tilex:'frost',
+    water:['#16303e','#0e2532','#081b26'], rock:'#3c4a56',
+    scenery:['pipe','server','valve','tower'], kelp:['#3a7a8a','#9fe8ff'],
+    shapes:['crystal','slab','chunk'], float:'bulb', plat:['frost','vent','led'], palHues:[192,220,300],
+    pal:{base:'#10222c',seam:'#0a1721',hi:'#1a3644',rivet:'#274a5a',pipe:'#284856',pipeL:'#3f6a7c',moss:'#2c5a6a',accent:'#7fe6ff',acc2:'127,230,255'},
+    raw:['Frost Alloy','Cryo Crystal','Rime Chunk','Glacier Glass','Cold-Weld Stub','Hoar Nugget','Dewar Shard','Icebound Ore'],
+    mix:['Liquid Nitro','Glycol Chill','Frost Retardant','Defrost Acid','Vapor Trap','Sub-Zero Gel','Brine Chiller'],
+    ref:['Dewar Shell','Insulation Panel','Chill Coil','Freezer Seal','Thermal Gasket','Cryo Valve','Cold Plate']},
+  geothermal:{
+    name:'GEOTHERMAL EXCHANGE', suit:'HEAT-SINK CARAPACE', bg:'reactor', tile:'toxic', bgx:'furnace', tilex:'slag',
+    water:['#2e1c14','#22140c','#150c06'], rock:'#4a3a2e',
+    scenery:['valve','rustpipe','tower','pipe'], kelp:['#8a4a2e','#ff9a5f'],
+    shapes:['glob','chunk','crystal'], float:'pod', plat:['crack','drip','weld'], palHues:[16,36,350],
+    pal:{base:'#221410',seam:'#160c08',hi:'#362016',rivet:'#462c1e',pipe:'#422c20',pipeL:'#644434',moss:'#5e2e1a',accent:'#ff6a3c',acc2:'255,106,60'},
+    raw:['Basalt Chunk','Sulfur Bloom','Vent Crystal','Magma Glass','Scald Nugget','Pumice Core','Brimstone Clod','Thermo Shard'],
+    mix:['Scalding Brine','Sulfur Slick','Steam Bleed','Mineral Boil','Vent Condensate','Mud Boil','Flash Steam'],
+    ref:['Heat Exchanger','Vent Cap','Bore Casing','Steam Trap','Manifold Plate','Scald Shield','Thermo Cell']},
+  medbay:{
+    name:'DROWNED MED-BAY', suit:'STERILE ISOPOD SUIT', bg:'tanks', tile:'concrete', bgx:'coldstore', tilex:'ceramic',
+    water:['#183436','#112628','#0a1a1c'], rock:'#3e4a4e',
+    scenery:['vat','server','pipe','valve'], kelp:['#3a8a6a','#8fffd0'],
+    shapes:['crystal','glob','slab'], float:'bulb', plat:['stain','led','scale'], palHues:[168,196,340],
+    pal:{base:'#122624',seam:'#0b1a19',hi:'#1c3a38',rivet:'#2a4a46',pipe:'#2a4844',pipeL:'#427068',moss:'#2c6a52',accent:'#4fe8c0',acc2:'79,232,192'},
+    raw:['Surgical Steel','Vial Glass','Titanium Pin','Ampoule Bead','Scalpel Shard','Ceramic Crown','Suture Wire','Iso Crystal'],
+    mix:['Saline','Anesthetic','Antiseptic Wash','Plasma Bag','Contrast Dye','Coolant Drip','Sterilant'],
+    ref:['Autoclave Core','Monitor Bezel','Drip Manifold','Splint Frame','Lens Scope','Vitals Board','Iso Chamber Seal']},
+  brewery:{
+    name:'VAT BREWERY RUNOFF', suit:'FERMENT-SEAL SUIT', bg:'core', tile:'bio', bgx:'canopy', tilex:'brick',
+    water:['#2a2410','#1e1a0a','#121005'], rock:'#46402c',
+    scenery:['vat','rustpipe','valve','tower'], kelp:['#6a6a1e','#e8d04f'],
+    shapes:['glob','chunk','slab'], float:'jelly', plat:['foam','drip','stain'], palHues:[46,84,20],
+    pal:{base:'#221c0e',seam:'#161208',hi:'#362e16',rivet:'#463c1e',pipe:'#423a20',pipeL:'#645832',moss:'#5e5a1e',accent:'#ffd23c',acc2:'255,210,60'},
+    raw:['Copper Kettle','Malt Cake','Barm Crystal','Hop Resin','Keg Steel','Tartrate Crust','Grain Husk Ore','Amber Glass'],
+    mix:['Wort','Yeast Slurry','Krausen Foam','Caustic Rinse','Trub Sludge','Priming Syrup','Sour Mash'],
+    ref:['Bung Valve','Coil Chiller','Rack Arm','Mash Paddle Core','Keg Coupler','Fermenter Lid','Tap Manifold']},
+  fueldepot:{
+    name:'FUEL DEPOT INTERCEPTOR', suit:'ANTI-STATIC TANKER RIG', bg:'tanks', tile:'metal', bgx:'gallery', tilex:'grate',
+    water:['#28221a','#1c1810','#100e08'], rock:'#443e32',
+    scenery:['pipe','valve','tower','rustpipe'], kelp:['#6a5a2e','#e0c05f'],
+    shapes:['slab','chunk','glob'], float:'canister', plat:['chevron','stain','bolt'], palHues:[38,60,200],
+    pal:{base:'#1e1a12',seam:'#13100a',hi:'#302a1c',rivet:'#403826',pipe:'#3c3624',pipeL:'#5c5238',moss:'#54481e',accent:'#ffbf3c',acc2:'255,191,60'},
+    raw:['Drum Steel','Octane Crystal','Gasket Rubber','Paraffin Lump','Nozzle Brass','Sump Iron','Sludge Coke','Vapor Bead'],
+    mix:['Kerosene Cut','Diesel Bleed','Anti-Knock Dose','Static Wash','Sump Slurry','Vapor Recovery','Tank Bottoms'],
+    ref:['Bund Wall Plate','Flame Arrestor','Fill Coupler','Gauge Float','Vapor Seal','Pump Skid Core','Earth Strap']},
+  cryptomine:{
+    name:'ABANDONED CRYPTO MINE', suit:'HASH-HEAT EXO', bg:'racks', tile:'tech', bgx:'gallery', tilex:'grate',
+    water:['#141e34','#0e1628','#080e1a'], rock:'#323a4a',
+    scenery:['server','circuit','gear','neon'], kelp:['#4a3a8a','#9f7fff'],
+    shapes:['slab','crystal','chunk'], float:'canister', plat:['led','cable','vent'], palHues:[262,196,44],
+    pal:{base:'#141428',seam:'#0d0d1c',hi:'#20203e',rivet:'#2c2c54',pipe:'#2a2c4c',pipeL:'#42447a',moss:'#3a3a7a',accent:'#8f6aff',acc2:'143,106,255'},
+    raw:['ASIC Husk','GPU Shroud','Heatpipe Stub','Solder Bead','Rig Frame Ore','Fan Bearing','Hash Crystal','PSU Coil'],
+    mix:['Immersion Oil','Thermal Grease','Flux Residue','Dust Bloom','Capacitor Gel','Undervolt Serum','Coil Whine Damp'],
+    ref:['Hash Board','Riser Spine','Fan Wall Panel','Immersion Tank Core','Nonce Cell','Rack Rail','Firmware Vault']},
+  neonrunoff:{
+    name:'NEON DISTRICT RUNOFF', suit:'GLOWPROOF SLICKER', bg:'ducts', tile:'metal', bgx:'channels', tilex:'ceramic',
+    water:['#241430','#1a0e24','#0e0816'], rock:'#3e3448',
+    scenery:['neon','pipe','circuit','girder'], kelp:['#7a2e6a','#ff5fd0'],
+    shapes:['crystal','glob','chunk'], float:'bulb', plat:['led','sign','trace'], palHues:[312,186,52],
+    pal:{base:'#1c1226',seam:'#120b1a',hi:'#2e1e3e',rivet:'#3e2a52',pipe:'#3a284a',pipeL:'#5c4276',moss:'#4a2e5e',accent:'#ff4fd8',acc2:'255,79,216'},
+    raw:['Neon Tube Shard','Argon Bead','Sign Frame Alloy','Phosphor Chip','Ballast Core','Diode Cluster','Chrome Trim','Glow Crystal'],
+    mix:['Noble Gas Bleed','Phosphor Slurry','Sign Wash','Electro Ink','Solvent Glow','Pigment Bloom','Tube Vacuum Draw'],
+    ref:['Sign Ballast','Tube Bender Jig','Letter Channel','Flasher Relay','Dimmer Core','Facade Clip','Halo Mount']},
+  arcology:{
+    name:'ARCOLOGY GREYWATER CORE', suit:'ARCO-CIRCULATOR SUIT', bg:'tanks', tile:'concrete', bgx:'gallery', tilex:'ceramic',
+    water:['#16323a','#0f252c','#091a1f'], rock:'#3c4a52',
+    scenery:['tower','pipe','valve','server'], kelp:['#3a7a5a','#7fe8b0'],
+    shapes:['slab','crystal','glob'], float:'canister', plat:['scale','vent','stain'], palHues:[176,208,64],
+    pal:{base:'#12262a',seam:'#0b1a1e',hi:'#1c3a42',rivet:'#2a4a54',pipe:'#2a4850',pipeL:'#427078',moss:'#2e6a56',accent:'#4fe0c8',acc2:'79,224,200'},
+    raw:['Habitat Alloy','Greywater Pearl','Filter Frit','Balcony Steel','Atrium Glass','Solar Film Chip','Duct Segment','Scale Crystal'],
+    mix:['Grey Reclaim','Soap Bloom','Nutrient Loop','Ph Balancer','Lint Slurry','Rain Capture','Detergent Cut'],
+    ref:['Recirc Pump Core','Grey Manifold','Terrace Drain','Atrium Louver','Loop Filter','Habitat Seal','Cistern Cap']},
+  chopshop:{
+    name:'CHOP-SHOP UNDERDRAIN', suit:'SCRAPPER FRAME', bg:'ducts', tile:'metal', bgx:'furnace', tilex:'grate',
+    water:['#241e1a','#1a1512','#0f0c0a'], rock:'#443c36',
+    scenery:['gear','girder','rustpipe','neon'], kelp:['#6a4a2e','#e09f5f'],
+    shapes:['chunk','slab','glob'], float:'pod', plat:['weld','bolt','crack'], palHues:[28,208,352],
+    pal:{base:'#1e1812',seam:'#130f0b',hi:'#30261c',rivet:'#403426',pipe:'#3c3224',pipeL:'#5c4e3a',moss:'#54401e',accent:'#ff9a3c',acc2:'255,154,60'},
+    raw:['Chassis Steel','VIN Plate','Axle Stub','Chrome Bumper','Catalytic Bead','Window Cube','Piston Slug','Harness Copper'],
+    mix:['Motor Oil','Brake Bleed','Degreaser Bath','Paint Stripper','Coolant Drain','Grinder Sparkdust','Filler Resin'],
+    ref:['Panel Skin','Bearing Race','Torque Plate','Camshaft Core','Salvage Clamp','Airbag Cell','Immobilizer Chip']},
+  vatfarm:{
+    name:'PROTEIN VAT FARM', suit:'NUTRIENT-PROOF SKIN', bg:'core', tile:'bio', bgx:'canopy', tilex:'ceramic',
+    water:['#26240e','#1b1a08','#0f0e04'], rock:'#44422c',
+    scenery:['vat','tower','pipe','valve'], kelp:['#7a7a1e','#e8e84f'],
+    shapes:['glob','slab','crystal'], float:'jelly', plat:['foam','scale','drip'], palHues:[64,110,24],
+    pal:{base:'#1e1e0e',seam:'#131306',hi:'#303016',rivet:'#40401e',pipe:'#3c3c20',pipeL:'#5c5c32',moss:'#5e6a1e',accent:'#d8e83c',acc2:'216,232,60'},
+    raw:['Textured Cake','Culture Crystal','Mycel Brick','Casein Curd','Agar Slab Ore','Growth Frame','Protein Pearl','Broth Salt'],
+    mix:['Nutrient Broth','Growth Serum','Enzyme Rinse','Amino Slick','Sterile Feed','Harvest Slurry','Peptide Wash'],
+    ref:['Bioreactor Ring','Harvest Screw','Sparger Head','Culture Rack','Sieve Basket','Feed Manifold','Yield Cell']},
+  dyeworks:{
+    name:'TEXTILE DYE WORKS', suit:'PIGMENT-SEAL SUIT', bg:'tanks', tile:'concrete', bgx:'channels', tilex:'brick',
+    water:['#2a1430','#1e0e24','#120816'], rock:'#463a4a',
+    scenery:['vat','rustpipe','valve','pipe'], kelp:['#7a2e5a','#ff6fb0'],
+    shapes:['glob','crystal','slab'], float:'jelly', plat:['stain','drip','foam'], palHues:[292,214,42],
+    pal:{base:'#221226',seam:'#160b1a',hi:'#361e3e',rivet:'#462a52',pipe:'#42284a',pipeL:'#644276',moss:'#5e2e56',accent:'#e05fff',acc2:'224,95,255'},
+    raw:['Mordant Salt','Indigo Cake','Loom Steel','Bobbin Brass','Aniline Crystal','Fiber Bale Ore','Shuttle Wood','Pigment Clod'],
+    mix:['Dye Liquor','Fixative Bath','Bleach Cut','Mordant Wash','Rinse Effluent','Sizing Paste','Vat Reduction'],
+    ref:['Roller Mangle','Print Screen','Tenter Clip','Dye Beck Core','Padder Roll','Steam Ager Cell','Winch Reel']},
+  printworks:{
+    name:'OLD PRINT WORKS', suit:'INKPROOF PLATE RIG', bg:'racks', tile:'metal', bgx:'vaults', tilex:'brick',
+    water:['#1c2228','#14181e','#0c0f13'], rock:'#3a4048',
+    scenery:['gear','girder','pipe','circuit'], kelp:['#4a5a6a','#9fc2d8'],
+    shapes:['slab','chunk','crystal'], float:'canister', plat:['sign','rivet','stain'], palHues:[210,32,0],
+    pal:{base:'#181c22',seam:'#0f1216',hi:'#262e38',rivet:'#343e4a',pipe:'#323a46',pipeL:'#4e5a6a',moss:'#3e4a56',accent:'#8fb6d8',acc2:'143,182,216'},
+    raw:['Type Metal','Litho Stone','Roller Rubber','Galley Brass','Slug Lead','Platen Iron','Font Sort','Halftone Screen'],
+    mix:['Press Ink','Blanket Wash','Fountain Etch','Dampener Mix','Solvent Rag Bleed','Varnish Cut','Drier Paste'],
+    ref:['Chase Frame','Impression Cylinder','Quoin Key','Folder Blade','Register Pin','Web Tensioner','Plate Clamp']},
+  ewaste:{
+    name:'E-WASTE CRUSH PIT', suit:'SHRED-GUARD EXO', bg:'racks', tile:'tech', bgx:'furnace', tilex:'slag',
+    water:['#1e2418','#161b10','#0d1008'], rock:'#3c4234',
+    scenery:['circuit','gear','server','rustpipe'], kelp:['#5a7a2e','#bfe85f'],
+    shapes:['chunk','crystal','slab'], float:'canister', plat:['cable','crack','led'], palHues:[92,152,32],
+    pal:{base:'#181e12',seam:'#0f130a',hi:'#28301c',rivet:'#364026',pipe:'#343c24',pipeL:'#525e3a',moss:'#4a6a2e',accent:'#9fe83c',acc2:'159,232,60'},
+    raw:['Board Confetti','Tantalum Bead','Gold Finger','Ferrite Slug','Shred Alloy','Palladium Fleck','Copper Braid','Rare-Earth Grit'],
+    mix:['Leach Acid','Solder Reflow','Flux Sludge','Cyanide Rinse','Magnet Slurry','Pyro Off-Gas','Etch Bath'],
+    ref:['Recovery Cell','Magnet Drum','Eddy Splitter','Ingot Mold','Trommel Screen','Optical Sorter Eye','Bale Strap Core']},
+  batteryfarm:{
+    name:'LEAKING BATTERY FARM', suit:'ACID-CELL HARDSUIT', bg:'racks', tile:'toxic', bgx:'coldstore', tilex:'grate',
+    water:['#242610','#1a1c0a','#0f1005'], rock:'#42442e',
+    scenery:['server','valve','circuit','vat'], kelp:['#7a7a2e','#e8e05f'],
+    shapes:['slab','glob','chunk'], float:'bulb', plat:['led','stain','vent'], palHues:[58,142,192],
+    pal:{base:'#1e2010',seam:'#131408',hi:'#303418',rivet:'#404420',pipe:'#3c4022',pipeL:'#5c6236',moss:'#5e661e',accent:'#e8e03c',acc2:'232,224,60'},
+    raw:['Lithium Foil','Lead Plate','Nickel Button','Cadmium Stick','Cell Casing','Terminal Stud','Cobalt Cathode','Zinc Pellet'],
+    mix:['Electrolyte','Acid Weep','Thermal Runaway Foam','Separator Gel','Vent Gas Trap','Neutralizer Bath','Dendrite Slurry'],
+    ref:['Bus Bar','Cell Cradle','BMS Board','Contactor Block','Fuse Link','Cooling Plate','Charge Bollard Core']},
+  desal:{
+    name:'DESALINATION GALLERIES', suit:'BRINE-LOCK SUIT', bg:'tanks', tile:'concrete', bgx:'gallery', tilex:'frost',
+    water:['#123438','#0c282c','#081c1f'], rock:'#3c4c50',
+    scenery:['pipe','valve','tower','rustpipe'], kelp:['#2e7a7a','#6fe8e0'],
+    shapes:['crystal','slab','chunk'], float:'canister', plat:['scale','frost','drip'], palHues:[188,172,40],
+    pal:{base:'#10282b',seam:'#0a1c1f',hi:'#1a3e42',rivet:'#274e54',pipe:'#284c50',pipeL:'#3f7278',moss:'#2c6e66',accent:'#4fe8e0',acc2:'79,232,224'},
+    raw:['Halite Crystal','Membrane Frame','Titanium Anode','Scale Crust','Brine Pearl','Gypsum Clod','Magnesium Nub','Intake Screen'],
+    mix:['Reject Brine','Anti-Scalant','Permeate','Flush Cycle','Chlorine Dose','Pre-Filter Sludge','Osmotic Draw'],
+    ref:['RO Cartridge','Pressure Vessel','Energy Recovery Rotor','Intake Louver','Brine Diffuser','Membrane Housing','Permeate Header']},
+  algaefarm:{
+    name:'ALGAE BIOREACTOR FARM', suit:'PHOTOSYNTH SLICK', bg:'core', tile:'bio', bgx:'canopy', tilex:'ceramic',
+    water:['#0e2e18','#092210','#051608'], rock:'#324236',
+    scenery:['vat','tower','pipe','circuit'], kelp:['#2e8a3e','#6fff8f'],
+    shapes:['glob','crystal','slab'], float:'jelly', plat:['foam','moss','scale'], palHues:[132,88,182],
+    pal:{base:'#0e2214',seam:'#08170d',hi:'#183822',rivet:'#22482c',pipe:'#264832',pipeL:'#3a6c48',moss:'#2e7a3e',accent:'#4fff8f',acc2:'79,255,143'},
+    raw:['Chlorella Cake','Diatom Frit','Spirulina Mat','Biofilm Sheet','Cellulose Wad','Carotene Bead','Lipid Pearl','Silica Shell'],
+    mix:['Culture Medium','CO2 Sparge','Harvest Foam','Lipid Extract','Chlorophyll Draw','Dewater Slurry','Nutrient Dose'],
+    ref:['Raceway Paddle','Photobio Tube','Harvest Sieve','LED Grow Bar','Centrifuge Bowl','Sparge Ring','Biofilm Scraper']},
+  fungal:{
+    name:'MYCO-CELLAR WARREN', suit:'SPORE-FILTER SUIT', bg:'core', tile:'bio', bgx:'vaults', tilex:'brick',
+    water:['#1e2412','#15190c','#0c0f06'], rock:'#3c4232',
+    scenery:['vat','rustpipe','tower','girder'], kelp:['#5a6a2e','#c2d85f'],
+    shapes:['glob','chunk','crystal'], float:'jelly', plat:['moss','crack','drip'], palHues:[74,32,282],
+    pal:{base:'#1a1e10',seam:'#101308',hi:'#2a3018',rivet:'#384020',pipe:'#363c22',pipeL:'#545e36',moss:'#5e6e2e',accent:'#c2e83c',acc2:'194,232,60'},
+    raw:['Mycelium Brick','Spore Print','Chitin Ore','Truffle Nub','Hypha Wire','Cap Leather','Stipe Core','Conk Shelf'],
+    mix:['Spawn Slurry','Substrate Tea','Enzyme Rot','Humid Mist','Casing Mix','Fruiting Trigger','Sterile Rinse'],
+    ref:['Fruiting Rack','Flow Hood Panel','Substrate Block','Humidity Coil','Harvest Knife Core','Spawn Jar Lid','Mist Nozzle']},
+  rendering:{
+    name:'RENDERING PLANT OUTFALL', suit:'TALLOW-PROOF RIG', bg:'core', tile:'bio', bgx:'furnace', tilex:'slag',
+    water:['#262014','#1b160d','#0f0c06'], rock:'#443e30',
+    scenery:['vat','rustpipe','valve','tower'], kelp:['#6a5a2e','#d8bf5f'],
+    shapes:['glob','slab','chunk'], float:'jelly', plat:['foam','stain','drip'], palHues:[42,20,88],
+    pal:{base:'#201a10',seam:'#141008',hi:'#322a18',rivet:'#423820',pipe:'#3e3422',pipeL:'#5e5236',moss:'#5e501e',accent:'#e8bf3c',acc2:'232,191,60'},
+    raw:['Bone Char','Tallow Cake','Gel Sheet','Hide Salt','Grease Pearl','Keratin Wad','Marrow Stone','Chitin Grit'],
+    mix:['Render Stock','Fat Skim','Protein Broth','Caustic Boil','Bleach Rinse','Stick Water','Press Liquor'],
+    ref:['Cooker Auger','Press Plate','Skimmer Blade','Grease Trap Core','Meal Sifter','Condenser Coil','Tallow Mold']},
+  chemlab:{
+    name:'CLANDESTINE CHEM-LAB SUMP', suit:'REAGENT SHELL', bg:'reactor', tile:'toxic', bgx:'vaults', tilex:'ceramic',
+    water:['#20142e','#170e22','#0d0814'], rock:'#3e3448',
+    scenery:['vat','circuit','valve','rustpipe'], kelp:['#6a2e7a','#d05fff'],
+    shapes:['crystal','glob','slab'], float:'bulb', plat:['stain','trace','crack'], palHues:[276,150,52],
+    pal:{base:'#1a1226',seam:'#100b1a',hi:'#2c1e3e',rivet:'#3a2a52',pipe:'#38284a',pipeL:'#584276',moss:'#4e2e6a',accent:'#bf5fff',acc2:'191,95,255'},
+    raw:['Reagent Crystal','Pyrex Shard','Precursor Salt','Catalyst Bead','Litmus Cake','Stir Bar','Retort Glass','Filter Frit'],
+    mix:['Mother Liquor','Azeotrope','Quench Bath','Reflux Bleed','Titrant','Waste Stream','Recrystal Wash'],
+    ref:['Condenser Column','Sep Funnel Core','Heating Mantle','Fume Scrubber','Vacuum Trap','Buchner Disc','Glove Port Ring']},
+  pigment:{
+    name:'PIGMENT REFINERY', suit:'CHROMA-SEAL SUIT', bg:'tanks', tile:'concrete', bgx:'channels', tilex:'ceramic',
+    water:['#2e1a10','#22130a','#140b05'], rock:'#4a3c30',
+    scenery:['vat','pipe','valve','tower'], kelp:['#8a3a2e','#ff7f5f'],
+    shapes:['glob','crystal','chunk'], float:'jelly', plat:['stain','drip','scale'], palHues:[8,204,52],
+    pal:{base:'#26140e',seam:'#180d08',hi:'#3c2016',rivet:'#4e2c1e',pipe:'#482c20',pipeL:'#6e4634',moss:'#6a301e',accent:'#ff5f4f',acc2:'255,95,79'},
+    raw:['Ochre Clod','Cobalt Frit','Cadmium Cake','Titanium White','Lake Crystal','Umber Lump','Verdigris Crust','Carbon Black'],
+    mix:['Binder Slip','Mill Base','Dispersant','Grind Paste','Wash Fastness Bath','Toner Bleed','Flush Color'],
+    ref:['Ball Mill Shell','Filter Press Leaf','Kiln Sagger','Muller Stone','Sieve Deck','Drying Tray','Batch Hopper']},
+  glassworks:{
+    name:'DROWNED GLASSWORKS', suit:'VITRIC FURNACE RIG', bg:'reactor', tile:'metal', bgx:'furnace', tilex:'slag',
+    water:['#2a2014','#1e170d','#110d06'], rock:'#463e30',
+    scenery:['tower','rustpipe','gear','valve'], kelp:['#8a6a2e','#ffd45f'],
+    shapes:['crystal','glob','slab'], float:'bulb', plat:['crack','weld','stain'], palHues:[36,190,300],
+    pal:{base:'#221a10',seam:'#161008',hi:'#362818',rivet:'#463620',pipe:'#423422',pipeL:'#645236',moss:'#5e4a1e',accent:'#ffb43c',acc2:'255,180,60'},
+    raw:['Cullet Chunk','Frit Sand','Borax Cake','Blowpipe Brass','Annealed Slab','Prunt Bead','Silica Lump','Lehr Roller'],
+    mix:['Melt Batch','Polish Rouge','Etch Cream','Devitrifier','Mold Release','Quench Mist','Flux Dose'],
+    ref:['Crucible Pot','Marver Plate','Punty Rod Core','Lehr Belt Link','Gob Shear','Blow Mold Half','Annealer Coil']},
+  polymer:{
+    name:'POLYMER EXTRUSION HALLS', suit:'MONOMER-PROOF SKIN', bg:'racks', tile:'metal', bgx:'gallery', tilex:'grate',
+    water:['#141e2c','#0e1620','#080e14'], rock:'#343e4a',
+    scenery:['pipe','gear','server','valve'], kelp:['#3a6a8a','#7fd0ff'],
+    shapes:['slab','glob','crystal'], float:'pod', plat:['tread','bolt','led'], palHues:[198,332,64],
+    pal:{base:'#121a24',seam:'#0b1118',hi:'#1e2c3c',rivet:'#2a3c50',pipe:'#283a4c',pipeL:'#405a74',moss:'#3a5a74',accent:'#4fb6ff',acc2:'79,182,255'},
+    raw:['Nurdle Cache','Regrind Flake','Die Steel','Masterbatch Puck','Barrel Liner','Screw Flight','Purge Blob','Gel Spot Crystal'],
+    mix:['Monomer Bleed','Plasticizer','Purge Compound','Cooling Bath','Antistat Spray','Melt Fracture Slick','Regrind Slurry'],
+    ref:['Extruder Die','Pelletizer Hub','Calibration Sleeve','Haul-Off Belt','Screen Changer','Hopper Dryer Core','Nip Roller']},
+  cablevault:{
+    name:'CABLE TRUNK VAULTS', suit:'INSULATOR FRAME', bg:'racks', tile:'tech', bgx:'vaults', tilex:'brick',
+    water:['#181c2a','#11141f','#0a0c13'], rock:'#383c48',
+    scenery:['circuit','pipe','girder','server'], kelp:['#4a4a7a','#9f9fe8'],
+    shapes:['chunk','slab','crystal'], float:'canister', plat:['cable','rivet','trace'], palHues:[228,36,180],
+    pal:{base:'#14162a',seam:'#0d0e1c',hi:'#20243e',rivet:'#2c3254',pipe:'#2a304c',pipeL:'#424a7a',moss:'#3a4276',accent:'#6f7fff',acc2:'111,127,255'},
+    raw:['Copper Trunk','Lead Sheath','Paper Insulation','Splice Sleeve','Armor Wire','Duct Bank Clay','Pilot Core','Jelly-Filled Pair'],
+    mix:['Cable Jelly','Pulling Lube','Dielectric Oil','Corrosion Weep','Duct Seal Foam','Tracer Dye','Bond Paste'],
+    ref:['Splice Case','Manhole Ring','Pothead Terminal','Racking Arm','Bonding Braid','Fault Locator Coil','Duct Plug']},
+  pneumatic:{
+    name:'PNEUMATIC POST TUBES', suit:'PRESSURE COURIER RIG', bg:'ducts', tile:'metal', bgx:'platform', tilex:'brick',
+    water:['#1e2220','#151816','#0c0e0d'], rock:'#3c423e',
+    scenery:['pipe','valve','gear','girder'], kelp:['#4a6a4a','#9fd89f'],
+    shapes:['chunk','crystal','glob'], float:'pod', plat:['rivet','sign','vent'], palHues:[152,36,210],
+    pal:{base:'#161e1a',seam:'#0e1310',hi:'#24322a',rivet:'#324238',pipe:'#304034',pipeL:'#4c6452',moss:'#3e6a4a',accent:'#5fe8a0',acc2:'95,232,160'},
+    raw:['Carrier Shell','Felt Ring','Diverter Brass','Station Bell','Tube Bore Steel','Gasket Leather','Vacuum Vane','Sorting Cam'],
+    mix:['Compressor Oil','Vacuum Draw','Gasket Dope','Felt Wax','Line Purge','Condensate Trap','Leak Soap'],
+    ref:['Carrier Capsule','Diverter Gate','Terminal Hood','Blower Impeller','Air Lock Collar','Dispatch Timer','Receiver Basket']},
+  catacomb:{
+    name:'OLD-CITY CATACOMB GRID', suit:'OSSUARY HARDSUIT', bg:'ducts', tile:'concrete', bgx:'vaults', tilex:'brick',
+    water:['#1e1c16','#15130f','#0c0b08'], rock:'#423e34',
+    scenery:['girder','rustpipe','tower','valve'], kelp:['#5a5a3a','#bfbf8f'],
+    shapes:['chunk','slab','crystal'], float:'canister', plat:['crack','brick','stain'], palHues:[44,26,196],
+    pal:{base:'#1c1810',seam:'#121008',hi:'#2e2818',rivet:'#3e3620',pipe:'#3a3222',pipeL:'#5a5036',moss:'#54501e',accent:'#d8bf6f',acc2:'216,191,111'},
+    raw:['Vault Brick','Bone Lime','Niche Marble','Iron Lantern','Candle Brass','Mortar Clod','Reliquary Tin','Etched Slate'],
+    mix:['Lime Wash','Grave Damp','Tallow Melt','Incense Resin Cut','Seep Mineral','Mortar Slake','Dust Suspension'],
+    ref:['Niche Lintel','Gate Grille','Lantern Bracket','Keystone Core','Plaque Frame','Stair Tread','Vault Rib']},
+  mallruin:{
+    name:'FLOODED MEGAMALL SUBLEVEL', suit:'RETAIL SALVAGE EXO', bg:'racks', tile:'concrete', bgx:'platform', tilex:'ceramic',
+    water:['#1a2030','#121724','#0a0e16'], rock:'#3a404c',
+    scenery:['neon','girder','server','pipe'], kelp:['#4a5a8a','#9fbfff'],
+    shapes:['slab','crystal','chunk'], float:'canister', plat:['sign','led','tread'], palHues:[224,340,52],
+    pal:{base:'#161a26',seam:'#0e111a',hi:'#242c3e',rivet:'#303c54',pipe:'#2e384c',pipeL:'#485878',moss:'#3e4a74',accent:'#7f9fff',acc2:'127,159,255'},
+    raw:['Escalator Tread','Mannequin Shell','Register Chrome','Skylight Pane','Kiosk Frame','Coin Fountain Ore','Tile Terrazzo','Rebar Stub'],
+    mix:['Fountain Water','Fryer Grease','Cleaner Concentrate','Perfume Bleed','Soft Drink Syrup','Wax Stripper','Fire Suppressant'],
+    ref:['Storefront Shutter','Escalator Comb','Directory Board','Turnstile Core','Planter Ring','PA Horn','Gift Card Vault']},
+  parkade:{
+    name:'SUNKEN PARKADE HELIX', suit:'MONOXIDE FILTER RIG', bg:'ducts', tile:'concrete', bgx:'platform', tilex:'grate',
+    water:['#1c1e22','#131519','#0b0c0f'], rock:'#3e424a',
+    scenery:['girder','pipe','neon','valve'], kelp:['#4a5a5a','#9fc2bf'],
+    shapes:['slab','chunk','glob'], float:'canister', plat:['chevron','sign','crack'], palHues:[204,52,352],
+    pal:{base:'#181a1e',seam:'#0f1114',hi:'#262a30',rivet:'#343a42',pipe:'#32383e',pipeL:'#4e565e',moss:'#3e4e56',accent:'#6fbfd8',acc2:'111,191,216'},
+    raw:['Ramp Rebar','Bollard Steel','Ticket Spool','Lamp Housing','Wheel Clamp','Paint Stripe Chip','Barrier Arm','Oil-Stain Agate'],
+    mix:['Sump Oil','De-Icer Melt','Exhaust Soot Wash','Tire Shine','Line Paint','Antifreeze Weep','Power Wash Runoff'],
+    ref:['Barrier Motor','Pay Station Core','Convex Mirror','Speed Hump Segment','Vent Fan Ring','Stair Nosing','Lot Camera Pod']},
+  substation:{
+    name:'DROWNED SUBSTATION', suit:'FARADAY DIVE CAGE', bg:'racks', tile:'tech', bgx:'gallery', tilex:'grate',
+    water:['#141c2e','#0e1522','#080d15'], rock:'#343c4c',
+    scenery:['circuit','girder','valve','tower'], kelp:['#3a5a9a','#7fa8ff'],
+    shapes:['crystal','chunk','slab'], float:'bulb', plat:['led','cable','chevron'], palHues:[218,56,190],
+    pal:{base:'#121828',seam:'#0b0f1a',hi:'#1e2840',rivet:'#2a3856',pipe:'#28344e',pipeL:'#40527c',moss:'#3a4a80',accent:'#5f8fff',acc2:'95,143,255'},
+    raw:['Bus Copper','Porcelain Bushing','Transformer Lam','Arc Bead','Breaker Contact','Grounding Rod','Relay Coil','Mica Sheet'],
+    mix:['Transformer Oil','SF6 Bleed','Arc Quench Foam','Insulator Wash','Ozone Trace','Gasket Weep','Silica Gel Purge'],
+    ref:['Bushing Turret','Disconnect Blade','CT Ring','Relay Rack Panel','Surge Arrester','Bus Support','Tap Changer Core']},
+  tramdepot:{
+    name:'TRAM DEPOT UNDERCROFT', suit:'RAIL-GREASE SLICKER', bg:'ducts', tile:'metal', bgx:'platform', tilex:'brick',
+    water:['#20201a','#171710','#0d0d09'], rock:'#40403a',
+    scenery:['girder','gear','pipe','neon'], kelp:['#5a6a3a','#bfd87f'],
+    shapes:['chunk','slab','glob'], float:'canister', plat:['tread','sign','weld'], palHues:[80,32,208],
+    pal:{base:'#1c1c12',seam:'#12120a',hi:'#2e2e1c',rivet:'#3e3e26',pipe:'#3a3a26',pipeL:'#5a5a3c',moss:'#546a2e',accent:'#bfd83c',acc2:'191,216,60'},
+    raw:['Rail Head','Overhead Wire','Sanding Quartz','Wheel Flange','Bell Bronze','Destination Blind','Truck Bolster','Trolley Shoe'],
+    mix:['Rail Grease','Sand Dose','Flange Lube','Rheostat Dust Wash','Varnish Bleed','Journal Oil','Wash Rack Runoff'],
+    ref:['Pit Jack Head','Trolley Pole Base','Point Lever','Depot Door Roller','Controller Drum','Resistor Bank','Lifting Beam']},
+  gasworks:{
+    name:'LEGACY GASWORKS', suit:'VAPOR-LOCK SUIT', bg:'reactor', tile:'toxic', bgx:'furnace', tilex:'brick',
+    water:['#26220e','#1b1809','#0f0d05'], rock:'#443f2c',
+    scenery:['tower','rustpipe','valve','gear'], kelp:['#7a6a1e','#e8d04f'],
+    shapes:['glob','chunk','slab'], float:'pod', plat:['stain','crack','vent'], palHues:[52,96,16],
+    pal:{base:'#201c0e',seam:'#141206',hi:'#322c16',rivet:'#423a1e',pipe:'#3e3820',pipeL:'#5e5632',moss:'#5e561e',accent:'#e8c83c',acc2:'232,200,60'},
+    raw:['Coal Tar Nugget','Coke Breeze','Retort Brick','Ammonia Salt','Naphtha Crystal','Purifier Oxide','Gas Holder Plate','Benzole Bead'],
+    mix:['Tar Liquor','Ammoniacal Wash','Naphthalene Melt','Scrubber Bleed','Foul Condensate','Lime Purge','Spent Oxide Slurry'],
+    ref:['Retort Door','Holder Guide Roller','Exhauster Vane','Purifier Grid','Condenser Stack','Valve Bonnet','Governor Bell']},
+  oiltrap:{
+    name:'OIL INTERCEPTOR MAZE', suit:'SLICK-SHED CARAPACE', bg:'tanks', tile:'concrete', bgx:'channels', tilex:'grate',
+    water:['#221c10','#18140a','#0d0b05'], rock:'#423c2e',
+    scenery:['pipe','valve','rustpipe','girder'], kelp:['#6a5a1e','#d8bf3c'],
+    shapes:['glob','slab','chunk'], float:'jelly', plat:['stain','foam','drip'], palHues:[46,26,190],
+    pal:{base:'#1e180e',seam:'#131006',hi:'#302816',rivet:'#40361e',pipe:'#3c3420',pipeL:'#5c5034',moss:'#5a4c1a',accent:'#e8bf2c',acc2:'232,191,44'},
+    raw:['Skimmer Steel','Paraffin Slab','Weir Bronze','Sorbent Boom','Sheen Crystal','Baffle Plate Ore','Coalescer Media','Sludge Coke'],
+    mix:['Free Product','Emulsion Break','Sorbent Wring','Sheen Skim','Interceptor Sludge','Surfactant Dose','Decant Water'],
+    ref:['Coalescer Pack','Skimmer Belt','Weir Gate','Sludge Auger','Level Probe','Baffle Hanger','Decant Valve']},
+  overflow:{
+    name:'COMBINED OVERFLOW CHAMBERS', suit:'SURGE HARNESS', bg:'tanks', tile:'concrete', bgx:'channels', tilex:'brick',
+    water:['#182e2a','#112320','#0a1815'], rock:'#3c4a46',
+    scenery:['valve','pipe','rustpipe','tower'], kelp:['#3a7a4e','#7fe89f'],
+    shapes:['chunk','glob','slab'], float:'canister', plat:['drip','grate','stain'], palHues:[164,196,44],
+    pal:{base:'#12241f',seam:'#0b1815',hi:'#1c3a32',rivet:'#2a4a40',pipe:'#2a483e',pipeL:'#42705e',moss:'#2e6a4a',accent:'#4fe89f',acc2:'79,232,159'},
+    raw:['Screen Rake Tooth','First-Flush Grit','Weir Crest Steel','Float Ball','Storm King Vane','Detention Rebar','Scum Board','Vortex Cone'],
+    mix:['First Flush','Screenings Wash','Scum Skim','Detention Release','Storm Split','Grit Slurry','Bypass Bleed'],
+    ref:['Tipping Bucket','Bar Screen Panel','Vortex Separator','Penstock Gate','Flap Valve','Level Sensor Stem','Chamber Baffle']},
+  greasetrap:{
+    name:'FATBERG WARREN', suit:'LIPID-CUTTER RIG', bg:'core', tile:'bio', bgx:'vaults', tilex:'slag',
+    water:['#26220f','#1b1809','#0f0d05'], rock:'#454031',
+    scenery:['rustpipe','vat','valve','pipe'], kelp:['#7a6a2e','#e8cf6f'],
+    shapes:['glob','slab','chunk'], float:'jelly', plat:['foam','drip','crack'], palHues:[48,32,110],
+    pal:{base:'#221e0e',seam:'#161306',hi:'#363016',rivet:'#46401e',pipe:'#423c20',pipeL:'#645c34',moss:'#5e561a',accent:'#e8cf3c',acc2:'232,207,60'},
+    raw:['Calcified Fat','Wet Wipe Bale','Grease Amber','Bone Fragment','Congealed Core','Hair Rope','Soap Stone','Wax Stratum'],
+    mix:['Hot Caustic','Emulsifier','Jet Wash','Enzyme Digest','Fog Effluent','Steam Lance Melt','Solvent Soak'],
+    ref:['Cutter Head','Jetter Nozzle','Vac Hose Coupler','Auger Flight','Trap Baffle','Extraction Drum','Access Collar']},
+  incinerator:{
+    name:'INCINERATOR ASH SLUICE', suit:'CINDER-PROOF SHELL', bg:'reactor', tile:'toxic', bgx:'furnace', tilex:'slag',
+    water:['#241c16','#1a140e','#0e0b08'], rock:'#443b34',
+    scenery:['tower','rustpipe','gear','valve'], kelp:['#6a4a3a','#d8977f'],
+    shapes:['chunk','glob','crystal'], float:'pod', plat:['crack','vent','stain'], palHues:[18,40,0],
+    pal:{base:'#20160f',seam:'#140d08',hi:'#342217',rivet:'#442e1f',pipe:'#402c20',pipeL:'#624634',moss:'#5e341e',accent:'#ff7f3c',acc2:'255,127,60'},
+    raw:['Bottom Ash Clinker','Fly Ash Cake','Grate Bar Stub','Refractory Chip','Metal Melt Bead','Char Lump','Slag Prill','Filter Cake'],
+    mix:['Quench Water','Lime Scrub','Ash Slurry','Dioxin Trap Carbon','Acid Gas Wash','Boiler Blowdown','Soot Bleed'],
+    ref:['Grate Segment','Baghouse Sock Ring','Quench Ram','Ash Conveyor Link','Refractory Panel','ID Fan Blade','Feed Chute Liner']},
+  isotope:{
+    name:'MED-ISOTOPE DISPOSAL', suit:'DOSIMETER HARDSUIT', bg:'reactor', tile:'tech', bgx:'coldstore', tilex:'ceramic',
+    water:['#1a2e16','#132310','#0b1709'], rock:'#3a4636',
+    scenery:['server','vat','valve','circuit'], kelp:['#5a8a2e','#bfff5f'],
+    shapes:['crystal','slab','glob'], float:'bulb', plat:['led','stain','frost'], palHues:[104,180,296],
+    pal:{base:'#14220f',seam:'#0d1708',hi:'#203818',rivet:'#2c4820',pipe:'#2c4424',pipeL:'#446838',moss:'#4a7a2e',accent:'#8fff4f',acc2:'143,255,79'},
+    raw:['Technetium Vial','Iodine Seed','Gallium Bead','Syringe Shield','Lead Pig','Molybdenum Cow','Barium Cake','Xenon Trap Frit'],
+    mix:['Eluate','Decay Bath','Contrast Flush','Chelation Dose','Hot Sink Drain','Survey Swab Rinse','Half-Life Buffer'],
+    ref:['Hot Cell Window','Elution Column','Dose Calibrator Well','Waste Decay Drum','L-Block Shield','Manipulator Claw','Wipe Test Tray']},
+  clonevats:{
+    name:'DECOMMISSIONED CLONE VATS', suit:'AMNIO-SEAL SUIT', bg:'core', tile:'bio', bgx:'coldstore', tilex:'ceramic',
+    water:['#16262e','#102028','#0a161c'], rock:'#3a464e',
+    scenery:['vat','server','pipe','circuit'], kelp:['#3a7a7a','#7fe8e0'],
+    shapes:['glob','crystal','slab'], float:'jelly', plat:['scale','led','foam'], palHues:[178,140,320],
+    pal:{base:'#10222a',seam:'#0a171e',hi:'#1a3842',rivet:'#264854',pipe:'#284650',pipeL:'#3e6a78',moss:'#2e6a66',accent:'#4fe0e8',acc2:'79,224,232'},
+    raw:['Vat Acrylic','Umbilical Coupler','Gene Slate','Scaffold Lattice','Sensor Halo','Nutrient Crystal','Cradle Alloy','Blank Tissue Wafer'],
+    mix:['Amniotic Analog','Growth Factor','Stasis Gel','Flush Saline','Telomere Serum','Waste Perfusate','Cryoprotectant'],
+    ref:['Vat Dome','Perfusion Pump','Gene Printer Head','Cradle Gimbal','Bio-Monitor Slab','Decant Sluice','Imprint Coil']},
+  cryonics:{
+    name:'FAILED CRYONICS BANK', suit:'DEFROST SALVAGE RIG', bg:'tanks', tile:'tech', bgx:'coldstore', tilex:'frost',
+    water:['#142a36','#0e202a','#08161d'], rock:'#38464e',
+    scenery:['tower','server','pipe','valve'], kelp:['#3a6a9a','#8fc2ff'],
+    shapes:['crystal','slab','chunk'], float:'bulb', plat:['frost','led','crack'], palHues:[206,236,180],
+    pal:{base:'#0f2029',seam:'#09151c',hi:'#193440',rivet:'#254452',pipe:'#26424e',pipeL:'#3c6476',moss:'#2e5a72',accent:'#6fd0ff',acc2:'111,208,255'},
+    raw:['Dewar Steel','Perfusate Crystal','Neuro Canister','Vitrified Shard','Sensor Lace','LN2 Line Stub','Memorial Plate','Frost Pearl'],
+    mix:['Boil-Off Gas','Vitrification Mix','Thaw Gradient Bath','Antifreeze Protein','Nucleation Blocker','Top-Up LN2','Condensate Sweat'],
+    ref:['Dewar Neck Plug','Patient Cradle','Fill Manifold','Level Sight Glass','Vacuum Jacket Ring','Thermal Probe','Suspension Gantry']},
+  neurofarm:{
+    name:'NEURAL LACE FARM', suit:'SYNAPSE-SHIELD HOOD', bg:'core', tile:'tech', bgx:'canopy', tilex:'ceramic',
+    water:['#1c1630','#141024','#0c0a16'], rock:'#3c3650',
+    scenery:['circuit','vat','server','neon'], kelp:['#5a3a8a','#bf8fff'],
+    shapes:['crystal','glob','slab'], float:'jelly', plat:['trace','led','foam'], palHues:[268,318,168],
+    pal:{base:'#181228',seam:'#0f0b1c',hi:'#281e40',rivet:'#362a56',pipe:'#34284e',pipeL:'#52427a',moss:'#4a3a7a',accent:'#a86fff',acc2:'168,111,255'},
+    raw:['Lace Filament','Dendrite Gold','Electrode Bead','Myelin Wrap','Cortex Wafer','Ganglion Node','Axon Wire','Synapse Crystal'],
+    mix:['Neuro Gel','Signal Buffer','Growth Cone Serum','Impulse Dampener','Glial Broth','Spike Train Trace','Wash Perfusion'],
+    ref:['Lace Loom','Probe Array','Stim Driver','Cranial Port Ring','Signal Router','Culture Cap','Impulse Cell']},
+  holograve:{
+    name:'HOLO-BILLBOARD GRAVEYARD', suit:'PHOTON-BAFFLE SUIT', bg:'racks', tile:'tech', bgx:'platform', tilex:'grate',
+    water:['#14202e','#0e1822','#080f16'], rock:'#343e4a',
+    scenery:['neon','circuit','girder','server'], kelp:['#3a5a8a','#8fbfff'],
+    shapes:['crystal','slab','chunk'], float:'bulb', plat:['led','sign','cable'], palHues:[196,286,44],
+    pal:{base:'#111a24',seam:'#0a1118',hi:'#1c2c3c',rivet:'#283c50',pipe:'#26384c',pipeL:'#3e5874',moss:'#3a5274',accent:'#4fd0ff',acc2:'79,208,255'},
+    raw:['Emitter Prism','Diffuser Film','Projector Lens','Gantry Alloy','Pixel Grid Wafer','Beam Splitter','Phosphor Plate','Ad Loop Drive'],
+    mix:['Lens Polish','Fog Medium','Coolant Loop','Photoresist','Dust Repellent','Calibration Bath','Ozone Bleed'],
+    ref:['Emitter Head','Gantry Truss Node','Playback Core','Beam Combiner','Aperture Ring','Anchor Shoe','Content Vault Chip']},
+  dronehive:{
+    name:'DERELICT DRONE HIVE', suit:'SWARM-PLATE ARMOR', bg:'racks', tile:'metal', bgx:'vaults', tilex:'grate',
+    water:['#1c1e26','#14161c','#0c0d11'], rock:'#3a3e46',
+    scenery:['gear','circuit','girder','server'], kelp:['#5a5a4a','#c2c29f'],
+    shapes:['chunk','crystal','slab'], float:'pod', plat:['vent','rivet','led'], palHues:[48,208,296],
+    pal:{base:'#181a20',seam:'#0f1014',hi:'#282c34',rivet:'#363c46',pipe:'#343a42',pipeL:'#525a66',moss:'#4a5266',accent:'#ffcf3c',acc2:'255,207,60'},
+    raw:['Rotor Blade','Airframe Rib','Gimbal Bearing','Landing Skid','Prop Hub','Antenna Whip','Optic Pod Shell','Motor Bell'],
+    mix:['ESC Coolant','Prop Balancer','Lens Cleaner','Battery Weep','Conformal Coat','Hover Wash','Telemetry Trace'],
+    ref:['Docking Cradle','Charge Pad Coil','Flight Controller','Swap Carousel','Beacon Mast','Payload Clamp','Hive Cell Door']},
+  roboline:{
+    name:'ROBOTICS DISASSEMBLY LINE', suit:'ACTUATOR EXO', bg:'racks', tile:'metal', bgx:'gallery', tilex:'grate',
+    water:['#1a1c22','#121418','#0a0b0e'], rock:'#383c44',
+    scenery:['gear','girder','server','circuit'], kelp:['#4a5a5a','#9fc2c2'],
+    shapes:['chunk','slab','crystal'], float:'pod', plat:['bolt','tread','cable'], palHues:[204,36,148],
+    pal:{base:'#161820',seam:'#0e0f14',hi:'#242832',rivet:'#323844',pipe:'#30363e',pipeL:'#4c545e',moss:'#425460',accent:'#5fbfe8',acc2:'95,191,232'},
+    raw:['Servo Housing','Harmonic Ring','Torque Cell','Chassis Spine','Encoder Disc','Gripper Pad','Joint Pin','Carbon Strut'],
+    mix:['Hydraulic Bleed','Joint Grease','Flux Bath','Sensor Cleaner','Cutting Coolant','Demag Wash','Loctite Solvent'],
+    ref:['End Effector','Reducer Core','Spine Segment','Torque Wrench Head','Pinch Roller','Diagnostic Cradle','Wrist Rotator']},
+  railgun:{
+    name:'RAIL-GUN TEST DRAIN', suit:'EM-DAMPER RIG', bg:'reactor', tile:'tech', bgx:'gallery', tilex:'slag',
+    water:['#1c1a2a','#14131f','#0c0b13'], rock:'#3c3a4a',
+    scenery:['girder','circuit','tower','valve'], kelp:['#5a4a8a','#bf9fff'],
+    shapes:['slab','chunk','crystal'], float:'pod', plat:['weld','led','crack'], palHues:[254,200,36],
+    pal:{base:'#161428',seam:'#0e0d1a',hi:'#24203e',rivet:'#302c54',pipe:'#2e2a4c',pipeL:'#48447a',moss:'#42406a',accent:'#8f7fff',acc2:'143,127,255'},
+    raw:['Rail Copper','Armature Slug','Capacitor Brick','Sabot Petal','Ablation Chip','Bore Liner','Pulse Coil','Ferrite Yoke'],
+    mix:['Rail Lubricant','Plasma Residue','Quench Bath','Dielectric Flood','Arc Soot Wash','Recoil Fluid','Ionized Mist'],
+    ref:['Rail Segment','Pulse Former','Breech Clamp','Muzzle Shunt','Cap Bank Cell','Bore Scope','Recoil Buffer']},
+  coolant:{
+    name:'DISTRICT COOLANT EXCHANGE', suit:'GLYCOL-PROOF SKIN', bg:'tanks', tile:'tech', bgx:'gallery', tilex:'frost',
+    water:['#122c30','#0d2226','#08181b'], rock:'#384a4e',
+    scenery:['pipe','valve','server','tower'], kelp:['#2e7a8a','#6fe0ff'],
+    shapes:['slab','crystal','glob'], float:'canister', plat:['frost','scale','vent'], palHues:[190,150,270],
+    pal:{base:'#0f2428',seam:'#09181c',hi:'#193a40',rivet:'#254a52',pipe:'#26484e',pipeL:'#3c6c74',moss:'#2e6a6a',accent:'#4fd8e8',acc2:'79,216,232'},
+    raw:['Chiller Copper','Glycol Crystal','Impeller Bronze','Strainer Mesh','Expansion Bladder','Gauge Brass','Insulation Shell','Header Steel'],
+    mix:['Glycol Loop','Corrosion Inhibitor','Biocide Dose','Makeup Water','Air Purge','Strainer Backflush','Delta-T Bleed'],
+    ref:['Plate Exchanger','Pump Volute','Balancing Valve','Expansion Tank Core','Flow Meter Body','Isolation Flange','BTU Register']},
+  maglev:{
+    name:'MAG-LEV UNDERTRACK', suit:'LEVITATION KEEL SUIT', bg:'racks', tile:'metal', bgx:'platform', tilex:'grate',
+    water:['#141e2e','#0e1622','#080e15'], rock:'#343e4e',
+    scenery:['girder','circuit','pipe','neon'], kelp:['#3a5a9a','#8fb6ff'],
+    shapes:['slab','crystal','chunk'], float:'canister', plat:['chevron','led','weld'], palHues:[212,268,44],
+    pal:{base:'#121a28',seam:'#0b101a',hi:'#1e2c40',rivet:'#2a3c56',pipe:'#28384e',pipeL:'#40587c',moss:'#3a5280',accent:'#5fa8ff',acc2:'95,168,255'},
+    raw:['Guideway Alloy','Levitation Magnet','Stator Pack','Eddy Plate','Cryo Coil Stub','Gap Sensor','Reaction Rail','Halbach Wedge'],
+    mix:['Cryo Coolant','Gap Calibrant','Track Degreaser','Flux Damper Gel','Vibration Fluid','Sensor Wash','Braking Dust Slurry'],
+    ref:['Guideway Girder','Levitation Bogie Frame','Propulsion Segment','Gap Controller','Cryostat Shell','Switch Beam','Eddy Brake Fin']},
+  fibervault:{
+    name:'DARK FIBER VAULT', suit:'LIGHTGUIDE FRAME', bg:'racks', tile:'tech', bgx:'vaults', tilex:'ceramic',
+    water:['#161a2c','#101320','#090b13'], rock:'#363a4c',
+    scenery:['server','circuit','pipe','girder'], kelp:['#4a4a9a','#9f9fff'],
+    shapes:['crystal','slab','glob'], float:'bulb', plat:['cable','trace','led'], palHues:[232,176,340],
+    pal:{base:'#12142a',seam:'#0b0d1c',hi:'#1e2240',rivet:'#2a3056',pipe:'#282e4e',pipeL:'#40487c',moss:'#3a4280',accent:'#7f8fff',acc2:'127,143,255'},
+    raw:['Fiber Spool','Cladding Glass','Splice Tray Alloy','Ferrule Ceramic','Buffer Tube','Kevlar Strand','Connector Boot','Dopant Crystal'],
+    mix:['Index Gel','Splice Alcohol','Cable Gel Flood','Polish Slurry','Dust Blocker','Bend Loss Trace','Cleave Coolant'],
+    ref:['Splice Enclosure','Patch Panel Blade','OTDR Probe Core','Slack Loop Ring','Fanout Kit','Attenuator Plug','Vault Lid Ring']},
+  cistern:{
+    name:'ANCIENT CISTERN GRID', suit:'AQUIFER SHELL', bg:'tanks', tile:'concrete', bgx:'vaults', tilex:'brick',
+    water:['#122a30','#0d2025','#081619'], rock:'#3a484c',
+    scenery:['tower','girder','rustpipe','valve'], kelp:['#2e6a5a','#6fd8bf'],
+    shapes:['slab','chunk','crystal'], float:'canister', plat:['brick','stain','drip'], palHues:[182,42,208],
+    pal:{base:'#102328',seam:'#0a171b',hi:'#1a383e',rivet:'#26484e',pipe:'#26464a',pipeL:'#3c6a70',moss:'#2e6a5e',accent:'#4fd8c8',acc2:'79,216,200'},
+    raw:['Column Capital','Cistern Brick','Bronze Spout','Lime Deposit','Mosaic Tessera','Keystone Chip','Terracotta Pipe','Spring Crystal'],
+    mix:['Spring Feed','Lime Slake','Silt Settle','Moss Steep','Mineral Bloom','Echo Damp','Old-Water Draw'],
+    ref:['Column Drum','Arch Voussoir','Inlet Sluice','Draw Bucket Ring','Overflow Lip','Vault Boss','Gauge Stone']},
+  brinemine:{
+    name:'BRINE MINE GALLERIES', suit:'HALITE HARDSUIT', bg:'ducts', tile:'concrete', bgx:'vaults', tilex:'frost',
+    water:['#20262a','#171c1f','#0e1113'], rock:'#464c50',
+    scenery:['girder','rustpipe','pipe','tower'], kelp:['#5a7a7a','#bfe8e0'],
+    shapes:['crystal','chunk','slab'], float:'bulb', plat:['scale','frost','crack'], palHues:[186,36,300],
+    pal:{base:'#1a2226',seam:'#11171a',hi:'#2a383e',rivet:'#384a52',pipe:'#36484e',pipeL:'#546c74',moss:'#4a6a6a',accent:'#9fe8e0',acc2:'159,232,224'},
+    raw:['Rock Salt Block','Halite Prism','Sylvite Vein','Gypsum Rose','Anhydrite Slab','Brine Pearl','Potash Nugget','Salt Horse Ore'],
+    mix:['Saturated Brine','Solution Mining Draw','Bitterns','Mother Brine','Dissolution Front','Salt Fog','Evaporite Slurry'],
+    ref:['Gallery Prop','Brine Well Head','Evaporator Pan','Salt Conveyor Link','Crusher Jaw','Pillar Anchor','Crystallizer Rake']},
+  digester:{
+    name:'METHANE DIGESTER FIELD', suit:'GAS-SCRUBBER RIG', bg:'core', tile:'bio', bgx:'canopy', tilex:'slag',
+    water:['#1e2610','#161c0a','#0d1005'], rock:'#3e442e',
+    scenery:['vat','tower','valve','rustpipe'], kelp:['#5a7a1e','#bfe84f'],
+    shapes:['glob','slab','crystal'], float:'jelly', plat:['foam','vent','stain'], palHues:[82,52,168],
+    pal:{base:'#181e0c',seam:'#0f1306',hi:'#283214',rivet:'#36421c',pipe:'#343e1e',pipeL:'#525e30',moss:'#546a1e',accent:'#a8e83c',acc2:'168,232,60'},
+    raw:['Digestate Cake','Struvite Crystal','Dome Membrane','Agitator Blade','Biogas Frit','Fiber Mat','Scum Crust','Grit Trap Ore'],
+    mix:['Biogas Condensate','Siloxane Scrub','Feedstock Slurry','Foam Suppressant','Leachate Loop','Sulfide Wash','Digestate Liquor'],
+    ref:['Dome Anchor Ring','Gas Blower Vane','Agitator Hub','Heat Jacket Coil','Flare Tip','Pressure Relief Disc','Feed Macerator']},
+  compost:{
+    name:'COMPOST SLURRY BAYS', suit:'HUMUS-PROOF SLICK', bg:'core', tile:'bio', bgx:'channels', tilex:'brick',
+    water:['#22200e','#181708','#0e0d04'], rock:'#423e2c',
+    scenery:['vat','rustpipe','tower','girder'], kelp:['#6a6a2e','#d8cf6f'],
+    shapes:['glob','chunk','slab'], float:'jelly', plat:['moss','foam','crack'], palHues:[58,96,26],
+    pal:{base:'#1c1a0c',seam:'#121106',hi:'#2e2a14',rivet:'#3e381c',pipe:'#3a341e',pipeL:'#5a5230',moss:'#5e5e1e',accent:'#d8cf3c',acc2:'216,207,60'},
+    raw:['Humus Brick','Windrow Core','Leaf Mold Cake','Worm Casting Ore','Biochar Chunk','Eggshell Grit','Straw Bale Plug','Mulch Fiber'],
+    mix:['Compost Tea','Leachate Draw','Turning Steam','Moisture Dose','Carbon Balance Mix','Anaerobic Pocket Bleed','Maturation Wash'],
+    ref:['Windrow Turner Tine','Screen Trommel Ring','Aeration Pipe','Bay Divider Panel','Temp Probe Stem','Curing Rack','Bagger Chute']},
+  mercury:{
+    name:'MERCURY RECLAIM LINE', suit:'AMALGAM SHELL', bg:'reactor', tile:'metal', bgx:'coldstore', tilex:'ceramic',
+    water:['#1e2226','#15181c','#0c0e11'], rock:'#3e444a',
+    scenery:['valve','pipe','server','vat'], kelp:['#5a6a6a','#bfd8d8'],
+    shapes:['glob','crystal','chunk'], float:'bulb', plat:['stain','led','scale'], palHues:[200,0,48],
+    pal:{base:'#181c20',seam:'#0f1214',hi:'#282e34',rivet:'#363e46',pipe:'#343a40',pipeL:'#525c64',moss:'#4a5860',accent:'#bfd8e0',acc2:'191,216,224'},
+    raw:['Quicksilver Bead','Amalgam Lump','Cinnabar Chip','Retort Iron','Thermometer Glass','Relay Tilt Switch','Dental Scrap','Cathode Pool Ore'],
+    mix:['Mercury Weep','Sulfur Fixative','Retort Distillate','Vapor Trap Draw','Nitric Leach','Amalgamation Bath','Condensed Bead Run'],
+    ref:['Retort Vessel','Vapor Condenser','Sulfur Filter Bed','Spill Tray','Sealed Flask Core','Triple Distiller Coil','Recovery Sump']},
+  plating:{
+    name:'ELECTROPLATING CANALS', suit:'ANODE GUARD SUIT', bg:'tanks', tile:'toxic', bgx:'channels', tilex:'ceramic',
+    water:['#122e26','#0d231d','#081813'], rock:'#3a4a44',
+    scenery:['vat','circuit','valve','pipe'], kelp:['#2e8a5a','#6fffbf'],
+    shapes:['crystal','slab','glob'], float:'bulb', plat:['drip','led','stain'], palHues:[158,196,42],
+    pal:{base:'#0f241e',seam:'#091812',hi:'#193a30',rivet:'#254a3e',pipe:'#26483c',pipeL:'#3c6e5a',moss:'#2e7a52',accent:'#4fffb0',acc2:'79,255,176'},
+    raw:['Anode Nickel','Chrome Flake','Copper Starter Sheet','Zinc Ball','Bus Bar Stub','Rack Tip','Cyanide Salt Cake','Bright Dip Crystal'],
+    mix:['Plating Bath','Acid Pickle','Brightener Dose','Rinse Cascade','Drag-Out','Passivation Seal','Strike Solution'],
+    ref:['Rectifier Fin','Plating Rack Spine','Filter Chamber','Fume Lip Extractor','Barrel Plater Mesh','Anode Basket','Rinse Weir']},
+  smelter:{
+    name:'SMELTER QUENCH PITS', suit:'QUENCH CARAPACE', bg:'reactor', tile:'metal', bgx:'furnace', tilex:'slag',
+    water:['#2c1a12','#20130c','#130b06'], rock:'#4a3a30',
+    scenery:['tower','gear','rustpipe','girder'], kelp:['#8a5a2e','#ffb75f'],
+    shapes:['chunk','glob','slab'], float:'pod', plat:['weld','crack','chevron'], palHues:[22,48,354],
+    pal:{base:'#221408',seam:'#160d05',hi:'#38200e',rivet:'#482c14',pipe:'#442a16',pipeL:'#664426',moss:'#5e3812',accent:'#ff9f2c',acc2:'255,159,44'},
+    raw:['Matte Copper','Blister Ingot','Converter Brick','Anode Slime','Flue Dust Cake','Tuyere Stub','Slag Wool','Dore Bead'],
+    mix:['Quench Plunge','Slag Skim','Flux Charge','Off-Gas Scrub','Granulation Jet','Acid Plant Bleed','Cooling Spray'],
+    ref:['Converter Hood','Launder Channel','Tap Hole Clay Gun','Casting Wheel Mold','Slag Pot Lug','Bag Filter Cage','Anode Hanger']},
+  turbine:{
+    name:'DEAD TURBINE HALL', suit:'ROTOR-GUARD FRAME', bg:'racks', tile:'metal', bgx:'gallery', tilex:'grate',
+    water:['#161e28','#10161e','#0a0e13'], rock:'#363e48',
+    scenery:['gear','girder','tower','pipe'], kelp:['#4a6a7a','#9fd0e0'],
+    shapes:['slab','chunk','crystal'], float:'canister', plat:['bolt','tread','vent'], palHues:[202,44,166],
+    pal:{base:'#141a22',seam:'#0c1016',hi:'#222c38',rivet:'#2e3c4c',pipe:'#2c3846',pipeL:'#465a6c',moss:'#3e5866',accent:'#6fc2e8',acc2:'111,194,232'},
+    raw:['Blade Root','Rotor Journal','Stator Segment','Governor Weight','Babbitt Shell','Nozzle Ring','Shroud Band','Balance Slug'],
+    mix:['Turbine Oil','Gland Steam Bleed','Jacking Oil','Hydrogen Purge','Boiler Carryover','Vibration Damp Fluid','Seal Leak-Off'],
+    ref:['Diaphragm Half','Bearing Pedestal','Coupling Bolt Set','Barring Gear Pinion','Oil Cooler Bundle','Steam Chest Cover','Exciter Brush Rig']},
+  pumpgallery:{
+    name:'GRAND PUMP GALLERY', suit:'IMPELLER RIG', bg:'tanks', tile:'metal', bgx:'gallery', tilex:'brick',
+    water:['#142c34','#0e2228','#08181c'], rock:'#384a50',
+    scenery:['gear','pipe','valve','tower'], kelp:['#2e7a6a','#6fe8cf'],
+    shapes:['chunk','slab','glob'], float:'canister', plat:['rivet','drip','bolt'], palHues:[192,32,212],
+    pal:{base:'#10262c',seam:'#0a1a1f',hi:'#1a3c44',rivet:'#264c56',pipe:'#264a52',pipeL:'#3c7078',moss:'#2e6e62',accent:'#4fdce8',acc2:'79,220,232'},
+    raw:['Impeller Bronze','Volute Iron','Wear Ring','Shaft Sleeve','Packing Braid','Flywheel Segment','Foot Valve Clack','Beam Pivot Brass'],
+    mix:['Priming Charge','Gland Drip','Suction Draw','Cavitation Froth','Bearing Bath','Surge Relief Bleed','Wet Well Skim'],
+    ref:['Volute Casing Half','Beam Engine Link','Check Valve Flap','Stuffing Box','Pump Bedplate','Air Vessel Dome','Rising Main Flange']},
+  aquarium:{
+    name:'RUINED CITY AQUARIUM', suit:'EXHIBIT-GLASS SUIT', bg:'tanks', tile:'concrete', bgx:'coldstore', tilex:'ceramic',
+    water:['#0e2a3e','#092132','#061724'], rock:'#364854',
+    scenery:['vat','neon','pipe','tower'], kelp:['#2e7a9a','#6fd8ff'],
+    shapes:['crystal','glob','chunk'], float:'jelly', plat:['scale','coral','stain'], palHues:[198,152,26],
+    pal:{base:'#0c2230',seam:'#071822',hi:'#153a4c',rivet:'#204a60',pipe:'#22485c',pipeL:'#366e88',moss:'#2c6a7a',accent:'#4fc8ff',acc2:'79,200,255'},
+    raw:['Acrylic Panel','Coral Skeleton','Tank Ballast','Viewing Ring','Filter Sock Frame','Substrate Aragonite','Skimmer Cup','Exhibit Plaque'],
+    mix:['Salt Mix','Kalkwasser','Tank Cycle Bloom','Quarantine Dip','Phyto Feed','Protein Skimmate','Dechlorinator'],
+    ref:['Overflow Weir Box','Return Pump Body','UV Sterilizer Tube','Wave Maker Hub','Sump Baffle','Acrylic Bond Seam','Feeding Hatch Ring']},
+  archive:{
+    name:'SUNKEN PAPER ARCHIVE', suit:'PULP-PROOF SHELL', bg:'racks', tile:'concrete', bgx:'vaults', tilex:'brick',
+    water:['#201e16','#17150f','#0d0c09'], rock:'#403c34',
+    scenery:['girder','server','rustpipe','pipe'], kelp:['#6a5a3a','#d8bf8f'],
+    shapes:['slab','chunk','glob'], float:'canister', plat:['stain','brick','sign'], palHues:[40,204,16],
+    pal:{base:'#1c1810',seam:'#121008',hi:'#2e2818',rivet:'#3e3620',pipe:'#3a3422',pipeL:'#5a5236',moss:'#544c2e',accent:'#e8c87f',acc2:'232,200,127'},
+    raw:['Ledger Spine','Microfiche Sheet','Card Catalog Brass','Vellum Roll','Seal Wax Cake','Filing Rail','Ink Well Glass','Stamp Die'],
+    mix:['Pulp Slurry','Deacidification Bath','Mold Bloom Wash','Iron Gall Bleed','Binding Glue Melt','Fumigant Trace','Humidity Purge'],
+    ref:['Compactor Crank','Map Drawer Slide','Reading Lamp Hood','Docket Press','Conservation Frame','Fiche Reader Core','Vault Dial Ring']},
+  morgue:{
+    name:'CRYO-MORGUE ANNEX', suit:'COLD-CHAIN HARDSUIT', bg:'tanks', tile:'tech', bgx:'coldstore', tilex:'frost',
+    water:['#16242c','#101b22','#0a1216'], rock:'#3a464e',
+    scenery:['server','valve','pipe','girder'], kelp:['#3a6a6a','#8fd0d0'],
+    shapes:['slab','crystal','chunk'], float:'bulb', plat:['frost','stain','led'], palHues:[196,224,120],
+    pal:{base:'#121e24',seam:'#0b1418',hi:'#1c3038',rivet:'#284048',pipe:'#283e46',pipeL:'#3e5e6a',moss:'#365e62',accent:'#8fd8e0',acc2:'143,216,224'},
+    raw:['Drawer Rail Steel','Toe Tag Brass','Gurney Frame','Slab Porcelain','Scale Weight','Chiller Fin','Instrument Tray','Formalin Crystal'],
+    mix:['Formalin','Body Wash','Chiller Loop','Disinfectant Fog','Drain Trap Draw','Embalming Feed','Odor Scrub'],
+    ref:['Drawer Front Panel','Slab Drain Ring','Lift Scissor Arm','Cold Room Latch','Autopsy Lamp Head','Specimen Cabinet','Intake Ledger Core']}
+};
+/* Introduction order for cities 2..61 — city c (c>=2) introduces ARCH_ORDER[c-2],
+ * inserted just above the bottom (finale) environment. Curated so consecutive
+ * cities alternate families: wet/industrial/tech/bio/cold/toxic. Deterministic
+ * across all players; set CITY_INTRO_SEEDED=true in the city engine to shuffle
+ * per world-seed instead. */
+const ARCH_ORDER=[
+ 'stormdrain','metro','foundry','algaefarm','cryostack','neonrunoff','pumpgallery','fungal','ewaste','geothermal',
+ 'cistern','cryptomine','brewery','substation','greasetrap','holograve','desal','chopshop','clonevats','gasworks',
+ 'mallruin','batteryfarm','dyeworks','dronehive','overflow','glassworks','neurofarm','fueldepot','catacomb','plating',
+ 'metro2__unused' /*placeholder guard, replaced below*/
+];
+/* keep ARCH_ORDER honest: fill the remainder programmatically from whatever
+ * keys were not hand-ordered above, so all 60 appear exactly once. */
+(function(){
+  const idx=ARCH_ORDER.indexOf('metro2__unused'); if(idx>=0)ARCH_ORDER.splice(idx,1);
+  const seen=new Set(ARCH_ORDER);
+  for(const k of Object.keys(ARCHETYPES_EXT)) if(!seen.has(k)) ARCH_ORDER.push(k);
+})();
+if(typeof module!=='undefined')module.exports={ARCHETYPES_EXT,ARCH_ORDER};
+
+/* ============================================================================
+ * CITY ENGINE + 60 VARIANT MODIFIERS — Sewer Diver: The Descent
+ * Pairs with archetypes-60.js (ARCHETYPES_EXT, ARCH_ORDER).
+ *
+ * A "variant" of an archetype is NOT hand-authored art. It is one of 60
+ * authored VARIANT_MODS applied deterministically to an archetype's palette,
+ * names, hazards and suit. 65 archetypes x 60 mods = 3,900 addressable,
+ * reproducible environment skins with a hard no-repeat guarantee per
+ * archetype across a 60-city run (see variantFor).
+ *
+ * Every function that touches game globals (THEME, TIERS, RES, skinTier...)
+ * is only called from inside the game; this file also runs standalone under
+ * node for validation and for the plan document's live tables.
+ * ========================================================================== */
+
+/* ---- seeded helpers (cv-prefixed: no collisions with game's clamp/hsl2hex/_seedStr) ---- */
+function cvHash(str){let h=2166136261>>>0;for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
+function cvRng(seed){let s=(seed>>>0)||1;return function(){s^=s<<13;s^=s>>>17;s^=s<<5;s>>>=0;return s/4294967296;};}
+function cvHex2hsl(hex){hex=hex.replace('#','');if(hex.length===3)hex=hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+  const r=parseInt(hex.slice(0,2),16)/255,g=parseInt(hex.slice(2,4),16)/255,b=parseInt(hex.slice(4,6),16)/255;
+  const mx=Math.max(r,g,b),mn=Math.min(r,g,b),l=(mx+mn)/2;let h=0,s=0;
+  if(mx!==mn){const d=mx-mn;s=l>0.5?d/(2-mx-mn):d/(mx+mn);
+    h=mx===r?((g-b)/d+(g<b?6:0)):mx===g?((b-r)/d+2):((r-g)/d+4);h*=60;}
+  return [h,s,l];}
+function cvHsl2hex(h,s,l){h=((h%360)+360)%360;s=Math.min(1,Math.max(0,s));l=Math.min(1,Math.max(0,l));
+  const f=n=>{const k=(n+h/30)%12,a=s*Math.min(l,1-l);const c=l-a*Math.max(-1,Math.min(k-3,Math.min(9-k,1)));
+    return Math.round(c*255).toString(16).padStart(2,'0');};
+  return '#'+f(0)+f(8)+f(4);}
+function cvShift(hex,dh,sMul,dl){const [h,s,l]=cvHex2hsl(hex);return cvHsl2hex(h+dh,s*sMul,l+dl);}
+function blendHex(a,b,w){const A=cvHex2hsl(a),B=cvHex2hsl(b);
+  let dh=B[0]-A[0];if(dh>180)dh-=360;if(dh<-180)dh+=360;              // shortest-arc hue lerp
+  return cvHsl2hex(A[0]+dh*w, A[1]+(B[1]-A[1])*w, A[2]+(B[2]-A[2])*w);}
+function blendPal(pA,pB,w){const out={};for(const k in pA){
+  if(k==='acc2'){const hx=blendHex('#'+pA.acc2.split(',').map(n=>(+n).toString(16).padStart(2,'0')).join(''),
+                                   '#'+pB.acc2.split(',').map(n=>(+n).toString(16).padStart(2,'0')).join(''),w);
+    const r=parseInt(hx.slice(1,3),16),g=parseInt(hx.slice(3,5),16),b=parseInt(hx.slice(5,7),16);out.acc2=r+','+g+','+b;}
+  else out[k]=blendHex(pA[k],pB[k]||pA[k],w);}return out;}
+
+/* ---- 60 VARIANT MODIFIERS ----------------------------------------------------
+ * tag      -> prepended to environment name ("FLOODED STORM DRAIN NETWORK")
+ * suitTag  -> suffixed to suit name ("TEMPEST SHELL MK-7 - FLOOD-SPEC")
+ * hue/sat/lit -> palette transform (rotate deg / saturation mul / lightness add)
+ * glow     -> multiplier for accent glow alpha (pass to gl()/GL() call sites)
+ * haz      -> additive deltas onto TIERS[n].haz {elec,blob,sl} (clamped >= 0)
+ * stat     -> suit stat multipliers {oxy,mv,lr} + additive {hp}
+ * kelp     -> extra hue rotation applied on top of `hue` to kelp colours only
+ * ------------------------------------------------------------------------------ */
+const VARIANT_MODS=[
+ {key:'flooded',     tag:'FLOODED',      suitTag:'FLOOD-SPEC',   hue:-8, sat:0.92,lit:-0.02,glow:0.9, kelp:0,  haz:{elec:-1,blob:1,sl:2},  stat:{oxy:1.10,hp:0,mv:0.95,lr:1.00}, desc:'high water, drowned lighting, extra sludge'},
+ {key:'collapsed',   tag:'COLLAPSED',    suitTag:'RUBBLE-SPEC',  hue:-4, sat:0.85,lit:-0.04,glow:0.8, kelp:0,  haz:{elec:0,blob:0,sl:1},   stat:{oxy:1.00,hp:1,mv:0.95,lr:0.95}, desc:'fallen spans, dense rock, dust-dim glow'},
+ {key:'overgrown',   tag:'OVERGROWN',    suitTag:'THORN-SPEC',   hue:18, sat:1.10,lit:0.00, glow:1.1, kelp:30, haz:{elec:-1,blob:1,sl:0},  stat:{oxy:1.00,hp:0,mv:1.00,lr:0.95}, desc:'kelp choked, moss on every seam'},
+ {key:'frozen',      tag:'FROZEN',       suitTag:'CRYO-SPEC',    hue:150,sat:0.80,lit:0.06, glow:1.0, kelp:-20,haz:{elec:0,blob:-1,sl:-2}, stat:{oxy:0.95,hp:1,mv:0.92,lr:1.05}, desc:'iced surfaces, pale light, sluggish water'},
+ {key:'scalded',     tag:'SCALDED',      suitTag:'HEAT-SPEC',    hue:-140,sat:1.15,lit:0.02,glow:1.3, kelp:-10,haz:{elec:0,blob:0,sl:1},  stat:{oxy:0.95,hp:0,mv:1.05,lr:1.00}, desc:'thermal bloom, orange-shifted haze'},
+ {key:'blackout',    tag:'BLACKOUT',     suitTag:'DARK-SPEC',    hue:0,  sat:0.75,lit:-0.06,glow:0.5, kelp:0,  haz:{elec:1,blob:0,sl:0},   stat:{oxy:1.00,hp:0,mv:1.00,lr:1.20}, desc:'grid down, glow starved, lamps matter'},
+ {key:'irradiated',  tag:'IRRADIATED',   suitTag:'RAD-SPEC',     hue:60, sat:1.25,lit:0.00, glow:1.5, kelp:20, haz:{elec:1,blob:1,sl:2},   stat:{oxy:1.00,hp:1,mv:1.00,lr:1.00}, desc:'hot particles, green-shifted everything'},
+ {key:'rusted',      tag:'RUSTED',       suitTag:'OXIDE-SPEC',   hue:-150,sat:0.95,lit:-0.02,glow:0.85,kelp:0, haz:{elec:0,blob:0,sl:1},   stat:{oxy:1.00,hp:0,mv:1.00,lr:1.00}, desc:'every panel bleeding oxide'},
+ {key:'pristine',    tag:'PRISTINE',     suitTag:'MINT-SPEC',    hue:0,  sat:1.05,lit:0.06, glow:1.2, kelp:0,  haz:{elec:-1,blob:-1,sl:-2},stat:{oxy:1.05,hp:0,mv:1.05,lr:1.05}, desc:'freshly abandoned, still humming'},
+ {key:'condemned',   tag:'CONDEMNED',    suitTag:'DEMO-SPEC',    hue:-10,sat:0.80,lit:-0.05,glow:0.7, kelp:0,  haz:{elec:1,blob:1,sl:1},   stat:{oxy:1.00,hp:1,mv:1.00,lr:1.00}, desc:'demolition-tagged, structurally hostile'},
+ {key:'derelict',    tag:'DERELICT',     suitTag:'HULK-SPEC',    hue:-6, sat:0.82,lit:-0.03,glow:0.75,kelp:0,  haz:{elec:0,blob:1,sl:0},   stat:{oxy:1.00,hp:0,mv:1.00,lr:1.05}, desc:'long dead, silt on everything'},
+ {key:'quarantined', tag:'QUARANTINED',  suitTag:'SEAL-SPEC',    hue:40, sat:1.10,lit:-0.01,glow:1.1, kelp:10, haz:{elec:0,blob:2,sl:0},   stat:{oxy:1.05,hp:0,mv:1.00,lr:1.00}, desc:'biohazard tape, sealed bulkheads'},
+ {key:'looted',      tag:'LOOTED',       suitTag:'SCAV-SPEC',    hue:0,  sat:0.90,lit:-0.02,glow:0.9, kelp:0,  haz:{elec:0,blob:0,sl:0},   stat:{oxy:1.00,hp:0,mv:1.05,lr:1.00}, desc:'stripped bare, scavenger trails'},
+ {key:'fortified',   tag:'FORTIFIED',    suitTag:'BUNKER-SPEC',  hue:-12,sat:0.88,lit:-0.01,glow:0.95,kelp:0,  haz:{elec:1,blob:0,sl:0},   stat:{oxy:1.00,hp:2,mv:0.95,lr:1.00}, desc:'plated over, chokepoint architecture'},
+ {key:'silted',      tag:'SILTED',       suitTag:'MURK-SPEC',    hue:10, sat:0.78,lit:-0.03,glow:0.7, kelp:0,  haz:{elec:0,blob:0,sl:2},   stat:{oxy:1.00,hp:0,mv:0.95,lr:1.15}, desc:'visibility crushed by suspended fines'},
+ {key:'vented',      tag:'VENTED',       suitTag:'PURGE-SPEC',   hue:-20,sat:1.05,lit:0.02, glow:1.15,kelp:0,  haz:{elec:0,blob:0,sl:-1},  stat:{oxy:1.10,hp:0,mv:1.00,lr:1.00}, desc:'live vents, rising bubble columns'},
+ {key:'crystallized',tag:'CRYSTALLIZED', suitTag:'PRISM-SPEC',   hue:35, sat:1.20,lit:0.04, glow:1.3, kelp:15, haz:{elec:0,blob:-1,sl:0},  stat:{oxy:1.00,hp:0,mv:1.00,lr:1.05}, desc:'mineral bloom on every edge'},
+ {key:'fermented',   tag:'FERMENTED',    suitTag:'BREW-SPEC',    hue:25, sat:1.10,lit:-0.01,glow:1.0, kelp:20, haz:{elec:-1,blob:2,sl:1},  stat:{oxy:0.95,hp:0,mv:1.00,lr:1.00}, desc:'gas pockets, sour foam lines'},
+ {key:'calcified',   tag:'CALCIFIED',    suitTag:'LIME-SPEC',    hue:15, sat:0.70,lit:0.05, glow:0.85,kelp:-15,haz:{elec:0,blob:0,sl:0},   stat:{oxy:1.00,hp:1,mv:0.97,lr:1.00}, desc:'stone-white scale entombs the works'},
+ {key:'electrified', tag:'ELECTRIFIED',  suitTag:'ARC-SPEC',     hue:-30,sat:1.20,lit:0.02, glow:1.4, kelp:0,  haz:{elec:2,blob:0,sl:0},   stat:{oxy:1.00,hp:0,mv:1.00,lr:1.05}, desc:'live rails, arc-light strobing'},
+ {key:'fogbound',    tag:'FOGBOUND',     suitTag:'MIST-SPEC',    hue:5,  sat:0.72,lit:0.03, glow:0.65,kelp:0,  haz:{elec:0,blob:1,sl:0},   stat:{oxy:1.00,hp:0,mv:1.00,lr:1.20}, desc:'thermocline haze eats the beam'},
+ {key:'tidal',       tag:'TIDAL',        suitTag:'SURGE-SPEC',   hue:-15,sat:1.00,lit:0.00, glow:1.0, kelp:10, haz:{elec:0,blob:1,sl:1},   stat:{oxy:1.05,hp:0,mv:1.05,lr:1.00}, desc:'pulsing current, debris on the move'},
+ {key:'pressurized', tag:'PRESSURIZED',  suitTag:'DEPTH-SPEC',   hue:-25,sat:1.05,lit:-0.04,glow:1.05,kelp:0,  haz:{elec:0,blob:0,sl:0},   stat:{oxy:0.92,hp:2,mv:0.95,lr:1.00}, desc:'crushing head of water, creaking seams'},
+ {key:'echoing',     tag:'ECHOING',      suitTag:'SONAR-SPEC',   hue:-5, sat:0.85,lit:-0.02,glow:0.9, kelp:0,  haz:{elec:0,blob:0,sl:0},   stat:{oxy:1.00,hp:0,mv:1.00,lr:1.10}, desc:'vast hollow spans, sound as light'},
+ {key:'molten',      tag:'MOLTEN',       suitTag:'SLAG-SPEC',    hue:-160,sat:1.30,lit:0.01,glow:1.5, kelp:-20,haz:{elec:0,blob:0,sl:2},  stat:{oxy:0.92,hp:1,mv:1.00,lr:1.00}, desc:'live melt seams underfoot'},
+ {key:'bleached',    tag:'BLEACHED',     suitTag:'CHLOR-SPEC',   hue:0,  sat:0.55,lit:0.08, glow:0.9, kelp:-30,haz:{elec:0,blob:-1,sl:1},  stat:{oxy:0.97,hp:0,mv:1.00,lr:1.05}, desc:'chemical-white, colour burned out'},
+ {key:'infested',    tag:'INFESTED',     suitTag:'VERMIN-SPEC',  hue:20, sat:1.05,lit:-0.03,glow:0.95,kelp:25, haz:{elec:0,blob:2,sl:1},   stat:{oxy:1.00,hp:0,mv:1.00,lr:1.00}, desc:'something breeds in the dark'},
+ {key:'automated',   tag:'AUTOMATED',    suitTag:'SERVO-SPEC',   hue:-35,sat:1.10,lit:0.01, glow:1.2, kelp:0,  haz:{elec:1,blob:0,sl:-1},  stat:{oxy:1.00,hp:0,mv:1.05,lr:1.00}, desc:'the machines never got the memo'},
+ {key:'salvaged',    tag:'SALVAGED',     suitTag:'RIG-SPEC',     hue:8,  sat:0.95,lit:0.00, glow:1.0, kelp:0,  haz:{elec:0,blob:0,sl:0},   stat:{oxy:1.05,hp:0,mv:1.00,lr:1.00}, desc:'half stripped by a crew that left fast'},
+ {key:'rewired',     tag:'REWIRED',      suitTag:'PATCH-SPEC',   hue:-45,sat:1.15,lit:0.00, glow:1.25,kelp:0,  haz:{elec:2,blob:0,sl:0},   stat:{oxy:1.00,hp:0,mv:1.00,lr:1.05}, desc:'cable spaghetti, improvised power'},
+ {key:'graffitied',  tag:'GRAFFITIED',   suitTag:'TAG-SPEC',     hue:30, sat:1.25,lit:0.02, glow:1.15,kelp:10, haz:{elec:0,blob:0,sl:0},   stat:{oxy:1.00,hp:0,mv:1.02,lr:1.00}, desc:'crew tags glow under the lamp'},
+ {key:'phosphor',    tag:'PHOSPHOR',     suitTag:'GLOW-SPEC',    hue:45, sat:1.20,lit:0.03, glow:1.6, kelp:35, haz:{elec:0,blob:0,sl:0},   stat:{oxy:1.00,hp:0,mv:1.00,lr:0.90}, desc:'the water itself remembers light'},
+ {key:'magnetized',  tag:'MAGNETIZED',   suitTag:'FLUX-SPEC',    hue:-50,sat:1.05,lit:-0.01,glow:1.1, kelp:0,  haz:{elec:1,blob:0,sl:0},   stat:{oxy:1.00,hp:0,mv:0.95,lr:1.00}, desc:'debris drifts wrong, compasses lie'},
+ {key:'brackish',    tag:'BRACKISH',     suitTag:'SALT-SPEC',    hue:12, sat:0.85,lit:-0.02,glow:0.85,kelp:-10,haz:{elec:0,blob:0,sl:1},   stat:{oxy:1.00,hp:0,mv:1.02,lr:1.00}, desc:'salt line creeping up the walls'},
+ {key:'smoldering',  tag:'SMOLDERING',   suitTag:'EMBER-SPEC',   hue:-155,sat:1.10,lit:-0.02,glow:1.25,kelp:-15,haz:{elec:0,blob:0,sl:1}, stat:{oxy:0.95,hp:0,mv:1.00,lr:0.95}, desc:'slow fire that water never killed'},
+ {key:'glacial',     tag:'GLACIAL',      suitTag:'FLOE-SPEC',    hue:160,sat:0.85,lit:0.07, glow:1.05,kelp:-25,haz:{elec:0,blob:-1,sl:-1},stat:{oxy:0.95,hp:1,mv:0.90,lr:1.10}, desc:'pack ice grinding through the dark'},
+ {key:'feral',       tag:'FERAL',        suitTag:'CLAW-SPEC',    hue:22, sat:1.10,lit:-0.02,glow:0.95,kelp:30, haz:{elec:-1,blob:2,sl:0},  stat:{oxy:1.00,hp:1,mv:1.00,lr:1.00}, desc:'the ecosystem won'},
+ {key:'sterile',     tag:'STERILE',      suitTag:'CLEAN-SPEC',   hue:-8, sat:0.65,lit:0.07, glow:1.1, kelp:-35,haz:{elec:0,blob:-2,sl:-1}, stat:{oxy:1.02,hp:0,mv:1.02,lr:1.02}, desc:'scrubbed lifeless, unnervingly bright'},
+ {key:'hypoxic',     tag:'HYPOXIC',      suitTag:'O2-SPEC',      hue:6,  sat:0.80,lit:-0.03,glow:0.8, kelp:-10,haz:{elec:0,blob:0,sl:1},   stat:{oxy:1.20,hp:0,mv:1.00,lr:1.00}, desc:'dead water; the tank does the living'},
+ {key:'turbulent',   tag:'TURBULENT',    suitTag:'EDDY-SPEC',    hue:-18,sat:1.05,lit:0.01, glow:1.0, kelp:15, haz:{elec:0,blob:1,sl:0},   stat:{oxy:1.00,hp:0,mv:1.08,lr:1.00}, desc:'standing eddies throw the beam around'},
+ {key:'stagnant',    tag:'STAGNANT',     suitTag:'STILL-SPEC',   hue:14, sat:0.75,lit:-0.04,glow:0.7, kelp:10, haz:{elec:0,blob:1,sl:2},   stat:{oxy:0.97,hp:0,mv:0.97,lr:1.05}, desc:'nothing moves unless you move it'},
+ {key:'luminous',    tag:'LUMINOUS',     suitTag:'LUMEN-SPEC',   hue:38, sat:1.15,lit:0.05, glow:1.55,kelp:25, haz:{elec:0,blob:0,sl:0},   stat:{oxy:1.00,hp:0,mv:1.00,lr:0.88}, desc:'lamp almost optional, shadows razor-sharp'},
+ {key:'corroded',    tag:'CORRODED',     suitTag:'PIT-SPEC',     hue:-145,sat:0.90,lit:-0.03,glow:0.85,kelp:0, haz:{elec:1,blob:0,sl:1},   stat:{oxy:1.00,hp:0,mv:1.00,lr:1.00}, desc:'acid-pitted metal, lace-thin floors'},
+ {key:'armored',     tag:'ARMORED',      suitTag:'PLATE-SPEC',   hue:-14,sat:0.85,lit:-0.02,glow:0.9, kelp:0,  haz:{elec:0,blob:0,sl:0},   stat:{oxy:1.00,hp:2,mv:0.93,lr:1.00}, desc:'blast plating from a war nobody logged'},
+ {key:'hollowed',    tag:'HOLLOWED',     suitTag:'VOID-SPEC',    hue:-4, sat:0.80,lit:-0.05,glow:0.8, kelp:0,  haz:{elec:0,blob:0,sl:-1},  stat:{oxy:1.00,hp:0,mv:1.05,lr:1.10}, desc:'mined out into cathedral emptiness'},
+ {key:'seismic',     tag:'SEISMIC',      suitTag:'QUAKE-SPEC',   hue:-9, sat:0.95,lit:-0.02,glow:0.95,kelp:0,  haz:{elec:1,blob:0,sl:1},   stat:{oxy:1.00,hp:1,mv:1.00,lr:1.00}, desc:'tremor cracks still settling'},
+ {key:'mirrored',    tag:'MIRRORED',     suitTag:'CHROME-SPEC',  hue:-28,sat:0.70,lit:0.06, glow:1.35,kelp:-15,haz:{elec:0,blob:0,sl:0},  stat:{oxy:1.00,hp:0,mv:1.00,lr:1.05}, desc:'polished surfaces double every glow'},
+ {key:'tarred',      tag:'TARRED',       suitTag:'PITCH-SPEC',   hue:-10,sat:0.70,lit:-0.06,glow:0.7, kelp:-20,haz:{elec:-1,blob:0,sl:2},  stat:{oxy:1.00,hp:0,mv:0.92,lr:1.05}, desc:'black film swallowing edges'},
+ {key:'biolit',      tag:'BIOLIT',       suitTag:'GLEAM-SPEC',   hue:55, sat:1.25,lit:0.02, glow:1.5, kelp:40, haz:{elec:0,blob:1,sl:0},   stat:{oxy:1.00,hp:0,mv:1.00,lr:0.92}, desc:'living light colonised the pipework'},
+ {key:'charged',     tag:'CHARGED',      suitTag:'VOLT-SPEC',    hue:-40,sat:1.20,lit:0.01, glow:1.3, kelp:0,  haz:{elec:2,blob:0,sl:0},   stat:{oxy:1.00,hp:0,mv:1.03,lr:1.00}, desc:'static in the water, hair-raising literal'},
+ {key:'gutted',      tag:'GUTTED',       suitTag:'STRIP-SPEC',   hue:-2, sat:0.78,lit:-0.03,glow:0.8, kelp:0,  haz:{elec:0,blob:0,sl:0},   stat:{oxy:1.00,hp:0,mv:1.06,lr:1.02}, desc:'torn to the frame; fast, empty runs'},
+ {key:'reinforced',  tag:'REINFORCED',   suitTag:'BRACE-SPEC',   hue:-12,sat:0.90,lit:0.00, glow:0.95,kelp:0,  haz:{elec:0,blob:0,sl:0},   stat:{oxy:1.00,hp:1,mv:0.97,lr:1.00}, desc:'retrofit ribs every third span'},
+ {key:'spored',      tag:'SPORED',       suitTag:'FILTER-SPEC',  hue:28, sat:1.05,lit:-0.01,glow:1.05,kelp:30, haz:{elec:0,blob:1,sl:1},   stat:{oxy:1.08,hp:0,mv:1.00,lr:0.97}, desc:'drifting motes catch the lamp like snow'},
+ {key:'brined',      tag:'BRINED',       suitTag:'CURE-SPEC',    hue:10, sat:0.80,lit:0.02, glow:0.9, kelp:-20,haz:{elec:0,blob:-1,sl:1},  stat:{oxy:1.00,hp:0,mv:1.00,lr:1.03}, desc:'salt-cured and preserved mid-collapse'},
+ {key:'scorched',    tag:'SCORCHED',     suitTag:'CHAR-SPEC',    hue:-150,sat:0.85,lit:-0.05,glow:0.9,kelp:-25,haz:{elec:0,blob:0,sl:0},  stat:{oxy:1.00,hp:0,mv:1.00,lr:1.08}, desc:'an old fire wrote on every wall'},
+ {key:'glassed',     tag:'GLASSED',      suitTag:'VITRO-SPEC',   hue:-22,sat:1.10,lit:0.04, glow:1.3, kelp:-10,haz:{elec:0,blob:0,sl:0},  stat:{oxy:1.00,hp:0,mv:1.00,lr:1.05}, desc:'heat-fused surfaces, mirror-smooth'},
+ {key:'shrouded',    tag:'SHROUDED',     suitTag:'VEIL-SPEC',    hue:2,  sat:0.70,lit:-0.05,glow:0.6, kelp:5,  haz:{elec:0,blob:1,sl:0},   stat:{oxy:1.00,hp:0,mv:1.00,lr:1.25}, desc:'hanging membranes curtain every span'},
+ {key:'humming',     tag:'HUMMING',      suitTag:'RESON-SPEC',   hue:-38,sat:1.10,lit:0.00, glow:1.2, kelp:0,  haz:{elec:1,blob:0,sl:0},   stat:{oxy:1.00,hp:0,mv:1.00,lr:1.00}, desc:'a deep chord nobody switched off'},
+ {key:'fractured',   tag:'FRACTURED',    suitTag:'SHARD-SPEC',   hue:-6, sat:1.00,lit:-0.01,glow:1.05,kelp:0,  haz:{elec:0,blob:0,sl:1},   stat:{oxy:1.00,hp:1,mv:1.00,lr:1.00}, desc:'stress cracks glowing at the seams'},
+ {key:'rebooted',    tag:'REBOOTED',     suitTag:'BOOT-SPEC',    hue:-32,sat:1.15,lit:0.03, glow:1.35,kelp:0,  haz:{elec:1,blob:-1,sl:-1}, stat:{oxy:1.02,hp:0,mv:1.02,lr:1.00}, desc:'systems waking, status lights everywhere'}
+];
+
+/* ---- CITY SCHEDULING --------------------------------------------------------
+ * A LAYER is one 34-row generation slab == exactly what growTier(n) builds
+ * today (tierTop[n]=3+34*n, tierBot=+31; game line 1659). An ENVIRONMENT is a
+ * run of layers sharing one (archetype x variant). A CITY is the full stack.
+ * ---------------------------------------------------------------------------- */
+let CITY=1;
+let WORLD_SEED=0x53574452;          // 'SWDR' — fixed => variants shared across all players.
+                                    // Set per-profile/per-run for private worlds (lever L7).
+const CITY_INTRO_SEEDED=false;      // true => shuffle ARCH_ORDER per WORLD_SEED (lever L6)
+const BASE_ORDER=['cybersewer','swamp','radioactive','datacentre','filtration']; // city-1 stack; filtration = persistent finale
+
+function _archOrder(){ // same <script> in-game; module scope under node validation
+  if(typeof ARCH_ORDER!=='undefined')return ARCH_ORDER;
+  return require('./archetypes-60.js').ARCH_ORDER;
+}
+function introOrder(){
+  if(!CITY_INTRO_SEEDED)return _archOrder();
+  const r=cvRng(cvHash('intro')^WORLD_SEED),p=_archOrder().slice();
+  for(let i=p.length-1;i>0;i--){const j=(r()*(i+1))|0;const t=p[i];p[i]=p[j];p[j]=t;}
+  return p;
+}
+/* Ordered archetype keys for city c, top -> bottom.
+ * City 1: the 5 base archetypes. Each later city inserts ONE new archetype
+ * just above the bottom (finale) environment; everything inherited keeps its
+ * order. envCount(c) = c + 4. */
+function cityEnvList(city){
+  const IO=introOrder(), list=BASE_ORDER.slice(0,4);
+  for(let c=2;c<=city;c++){const k=IO[c-2];if(k)list.push(k);}
+  list.push(BASE_ORDER[4]);
+  return list;
+}
+function envCount(city){return city+4;}
+/* Every environment is exactly 4 layers — one bulkhead + one quest per layer,
+ * suit upgrade at each environment boundary. (Was 5*city with blend buffers.) */
+const LAYER_CAP=Infinity;
+function layersPerEnv(city){return 4;}
+/* Blended border environments removed — every layer wears its env's pure coat. */
+const BUFFER_MAX=0;
+function bufferFor(city){return 0;}
+
+/* Deterministic variant pick: per (WORLD_SEED, archetype) a fixed shuffled
+ * permutation of all 60 mods; city c reads slot (c-1) mod 60. Guarantee: an
+ * archetype NEVER repeats a variant inside any 60-city window, and every
+ * archetype walks the mods in its own order. */
+function variantFor(archKey,city){
+  const r=cvRng(cvHash('perm:'+archKey)^WORLD_SEED);
+  const p=[...Array(VARIANT_MODS.length).keys()];
+  for(let i=p.length-1;i>0;i--){const j=(r()*(i+1))|0;const t=p[i];p[i]=p[j];p[j]=t;}
+  return VARIANT_MODS[p[(city-1)%VARIANT_MODS.length]];
+}
+
+/* Full build plan for one city: one descriptor per layer.
+ * d.blend = {arch,mod,w} of the NEIGHBOUR environment bleeding into this
+ * layer; w ramps k/(2B+1) so the boundary-adjacent layers are ~43% other
+ * at B=3 (weights 1/7,2/7,3/7 | 3/7,2/7,1/7) and pure after B layers. */
+function citySchedule(city){
+  const envs=cityEnvList(city),L=layersPerEnv(city),B=bufferFor(city),out=[];
+  for(let e=0;e<envs.length;e++){
+    const arch=envs[e],mod=variantFor(arch,city);
+    for(let li=0;li<L;li++){
+      const d={arch,mod,city,env:e,layerInEnv:li,first:li===0,blend:null};
+      if(e>0&&li<B){const k=B-li;d.blend={arch:envs[e-1],mod:variantFor(envs[e-1],city),w:k/(2*B+1)};}
+      else if(e+1<envs.length&&li>=L-B){const k=li-(L-B)+1;d.blend={arch:envs[e+1],mod:variantFor(envs[e+1],city),w:k/(2*B+1)};}
+      out.push(d);
+    }
+  }
+  return out;
+}
+
+/* ---- SUITS ------------------------------------------------------------------
+ * One suit per ENVIRONMENT-INSTANCE. Global env index g counts every
+ * environment ever descended: city 1 contributes 5 (g 0..4), city 2 six more,
+ * ... total through city 60 = sum(c+4, c=1..60) = 2070 suits.
+ * Stats ride the game's own curve gearStats(n) (line 1639) with g as n, so
+ * g=0 reproduces the starting loadout (oxy 110, hp 5) and growth is unchanged;
+ * th/po are clamped at 0 where the legacy formula goes negative. */
+function envGlobalIndex(city,e){let g=0;for(let c=1;c<city;c++)g+=envCount(c);return g+e;}
+function suitStatsFor(city,e,mod){
+  const g=envGlobalIndex(city,e);
+  const s={oxy:320+(g-3)*70,hp:8+(g-3),acc:1.4+(g-3)*0.1,mv:1.4+(g-3)*0.1,
+           lr:135+(g-3)*16,th:Math.max(0,5+(g-3)*2),po:Math.max(0,5+(g-3)*2)};
+  s.oxy=Math.round(s.oxy*(mod?mod.stat.oxy:1));
+  s.hp=Math.max(1,s.hp+(mod?mod.stat.hp:0));
+  s.mv=+(s.mv*(mod?mod.stat.mv:1)).toFixed(2); s.acc=s.mv;
+  s.lr=Math.round(s.lr*(mod?mod.stat.lr:1));
+  return s;
+}
+function suitNameFor(archLike,mod,city){
+  const base=(archLike&&archLike.suit)||'DIVE-RIG';
+  return base+' MK-'+city+(mod?' - '+mod.suitTag:'');
+}
+
+/* ---- IN-GAME APPLICATION ------------------------------------------------------
+ * Call INSTEAD of the bare skinTier(n,pickArch()) inside growTier (line 1663).
+ * Requires the game's globals; safe to ship in the same <script>. `A` is the
+ * merged ARCHETYPES table (base 5 + ARCHETYPES_EXT). */
+function applyCityVariant(n,d,A){
+  skinTier(n,d.arch);                              // game fn: names/colours/shapes/THEME
+  const a=A[d.arch],m=d.mod,T=THEME[n];
+  const P={};for(const k in a.pal){
+    if(k==='acc2'){const hx=cvShift('#'+a.pal.acc2.split(',').map(x=>(+x).toString(16).padStart(2,'0')).join(''),m.hue,m.sat,m.lit);
+      P.acc2=parseInt(hx.slice(1,3),16)+','+parseInt(hx.slice(3,5),16)+','+parseInt(hx.slice(5,7),16);}
+    else P[k]=cvShift(a.pal[k],m.hue,m.sat,m.lit);}
+  T.pal=P; T.glowMul=m.glow; T.mod=m.key;
+  T.plat=a.plat; T.float=a.float; T.bgx=a.bgx; T.tilex=a.tilex;   // graphics-basis fields (§8)
+  T.kelp=[cvShift(a.kelp[0],m.hue+m.kelp,m.sat,m.lit),cvShift(a.kelp[1],m.hue+m.kelp,m.sat,m.lit)];
+  if(typeof RES!=='undefined'&&typeof setResCol==='function'){    // ores/mixers/refined inherit the coat too
+    const t=n+1;for(const s of ['a','b','c'])for(const kind of ['r','m','f']){
+      const id='t'+t+kind+s;if(RES[id])setResCol(id,cvShift(RES[id].col,m.hue*0.5,Math.min(1.15,m.sat),m.lit*0.5));}}
+  TIERS[n].name=m.tag+' '+a.name;
+  TIERS[n].water=a.water.map(w=>cvShift(w,m.hue,m.sat,m.lit));
+  TIERS[n].rock=cvShift(a.rock,m.hue,Math.min(1,m.sat),m.lit);
+  // Modifier is applied to the PRISTINE base each time (idempotent), not to the running value — see
+  // BASE_HAZ0. Deep tiers (n>=4) get a fresh hazFor(n) from buildTierData, so base from there.
+  const H=TIERS[n].haz;if(H){const base=(n<BASE_HAZ0.length)?BASE_HAZ0[n]:hazFor(n);
+    H.elec=Math.max(0,base.elec+m.haz.elec);H.blob=Math.max(0,base.blob+m.haz.blob);H.sl=Math.max(2,base.sl+m.haz.sl);}
+  if(d.blend){const b=A[d.blend.arch],w=d.blend.w;                 // buffer layer: pull the neighbour in
+    T.pal=blendPal(T.pal,b.pal,w);
+    T.blend={arch:d.blend.arch,w};                                  // consumed by bgTexDraw/drawTile/genTier
+    TIERS[n].water=TIERS[n].water.map((c,i)=>blendHex(c,b.water[i],w));
+    TIERS[n].rock=blendHex(TIERS[n].rock,b.rock,w);
+    T.kelp=[blendHex(T.kelp[0],b.kelp[0],w),blendHex(T.kelp[1],b.kelp[1],w)];
+    T.scenery=(w>0.25)?a.scenery.slice(0,3).concat(b.scenery[0]):a.scenery;}
+  // one suit per ENVIRONMENT, fabricated on the env's LAST layer and required to pass the control
+  // unit into the next environment. Recipe = the TOP composite (slot c: 2× ore #3 + 1× floating #3,
+  // the tier reserved for suits) from EACH of this environment's 4 layers.
+  if(d.layerInEnv===3&&n<SCHED.length-1){
+    if(!TIERS[n].gear)TIERS[n].gear={name:'DIVE-RIG',in:{},carry:null,stats:null};
+    const nx=SCHED[n+1];                                            // the environment this suit unlocks
+    TIERS[n].gear.name=suitNameFor(A[nx.arch]||a,nx.mod||m,d.city);
+    TIERS[n].gear.stats=suitStatsFor(d.city,d.env+1,nx.mod||m);
+    const gin={};for(let L=n-3;L<=n;L++)gin['t'+(L+1)+'fc']=1;
+    TIERS[n].gear.in=gin;TIERS[n].gear.carry=null;
+  } else delete TIERS[n].gear;                                      // all other layers craft no suit
+}
+if(typeof module!=='undefined')module.exports={VARIANT_MODS,cvHash,cvRng,cvShift,cvHex2hsl,cvHsl2hex,blendHex,blendPal,
+  cityEnvList,envCount,layersPerEnv,bufferFor,citySchedule,variantFor,envGlobalIndex,suitStatsFor,suitNameFor,
+  BASE_ORDER,get CITY(){return CITY;},get WORLD_SEED(){return WORLD_SEED;}};
+
+/* ============================================================================
+ * CITY UPDATE — glue: data merge, city identity, transit-grid choices
+ * (pairs with ARCHETYPES_EXT + the city engine pasted directly above)
+ * ========================================================================== */
+Object.assign(ARCHETYPES,ARCHETYPES_EXT);
+// base five carry the §8 graphics-basis fields too
+Object.assign(ARCHETYPES.cybersewer, {float:'canister', plat:['chevron','rivet','moss']});
+Object.assign(ARCHETYPES.swamp,      {float:'jelly',    plat:['moss','drip','foam']});
+Object.assign(ARCHETYPES.radioactive,{float:'pod',      plat:['stain','crack','drip']});
+Object.assign(ARCHETYPES.datacentre, {float:'bulb',     plat:['trace','led','cable']});
+Object.assign(ARCHETYPES.filtration, {float:'canister', plat:['scale','drip','stain']});
+const EXT_BG_ON=true, EXT_TILE_ON=true;            // §8.4/8.5 extended renderers (lever L5)
+const BASE_WORLD_SEED=0x53574452;                  // 'SWDR' — canonical shared world
+let CITY_ID=0;                                     // 0 = the founding city; transit choices assign later ids
+let CITY_NAME='OLD MIRE';                          // display name of the current city
+let cityExit=null;                                 // the transit gate in the city's last layer
+function citySeed(id){return ((BASE_WORLD_SEED^(id>>>0))>>>0)||BASE_WORLD_SEED;}
+// every city rides its own seed, so two transit choices at the same depth wear different coats
+function cityScheduleFor(city,id){WORLD_SEED=citySeed(id);CITY=city;return citySchedule(city);}
+// procedural city names — deterministic from the city id
+const CITY_NM_A=['PORT','NEO','OLD','LOWER','GREATER','FORT','EAST','DEEP','GRAND','NEW','HIGH','SOUTH'];
+const CITY_NM_B=['MIRE','VANTA','KOWLOON','SLUICE','GRAVEN','HALDER','OKHTA','SUMP','CARRION','VELDT','BRACK','CINDER','MERIDIAN','HOLLOW','NARROWS','ZHU'];
+const CITY_NM_C=['','','',' BASIN',' REACH',' WARD',' SINK',' SPRAWL',' GATE',' FLATS'];
+function cityNameFor(id){const r=cvRng(((id>>>0)^0x9E3779B1)>>>0||1);
+  return CITY_NM_A[(r()*CITY_NM_A.length)|0]+' '+CITY_NM_B[(r()*CITY_NM_B.length)|0]+CITY_NM_C[(r()*CITY_NM_C.length)|0];}
+// the three transit lines out of the current city — deterministic per (city, id)
+function nextCityChoices(){
+  const out=[],c=CITY+1,keep=WORLD_SEED;
+  for(let s=0;s<3;s++){
+    const id=cvHash('transit:'+CITY+':'+CITY_ID+':'+s);
+    WORLD_SEED=citySeed(id);
+    const envs=cityEnvList(c),newest=envs[envs.length-2],fin=envs[envs.length-1];
+    const nmod=variantFor(newest,c),fmod=variantFor(fin,c);
+    out.push({id,name:cityNameFor(id),city:c,envs:envs.length,layers:envs.length*layersPerEnv(c),
+      newArch:nmod.tag+' '+ARCHETYPES[newest].name,finale:fmod.tag+' '+ARCHETYPES[fin].name});
+  }
+  WORLD_SEED=keep;
+  return out;
+}
+
+/* ============================================================================
+ * LAYER QUESTS — Procedural Cyberpunk Sewer Objective Generator
+ * One quest per LAYER. Every machine the quest needs spawns IN that layer,
+ * above its own sealed bulkhead. A control unit beside the bulkhead comes
+ * online when all the layer's tasks are done; tripping it plays the opening
+ * animation (flooding the deck below first if it spawned dry) and releases
+ * the bulkhead. Environment boundaries additionally demand the next suit.
+ * ========================================================================== */
+class SewerMissionDirector {
+    constructor() {
+        this.masterTaskPool = [
+            { id: "C_B_A1", archetype: "CYBER", title: "Hack Flow-Control Logic Node", input: "Open Network Link", output: "Diverted High-Voltage Grid Power", isBridge: true, target: "BIOLOGICAL" },
+            { id: "C_B_A2", archetype: "CYBER", title: "Sync Neuro-Link Bio-Monitors", input: "Decrypted Mainframe Access", output: "Stabilized Containment Field", isBridge: true, target: "BIOLOGICAL" },
+            { id: "C_B_B1", archetype: "CYBER", title: "Inject Siphon Routing Exploit", input: "Open Network Link", output: "Forced Manifold Drainage", isBridge: true, target: "POLLUTION" },
+            { id: "C_B_B2", archetype: "CYBER", title: "Override Scrubbing Protocol Array", input: "Decrypted Mainframe Access", output: "Activated Aeration Grid", isBridge: true, target: "POLLUTION" },
+            { id: "C_L_1", archetype: "CYBER", title: "Initialize Local Node Boot Sequence", input: "Open Network Link", output: "Decrypted Mainframe Access", isLoop: true },
+            { id: "C_L_2", archetype: "CYBER", title: "Deploy Sub-Network Decryption Script", input: "Decrypted Mainframe Access", output: "Overcharged Power Line", isLoop: true },
+            { id: "C_L_3", archetype: "CYBER", title: "Synchronize Quantum Encryption Keys", input: "Overcharged Power Line", output: "Isolated Secondary Sub-Grid", isLoop: true },
+            { id: "C_L_4", archetype: "CYBER", title: "Purge Corrupted Core Log Files", input: "Isolated Secondary Sub-Grid", output: "Restored Cyber Security Handshake", isLoop: true },
+            { id: "C_W_1", archetype: "CYBER", title: "Overload Substation Capacitors", input: "Open Network Link", output: "Triggered Electromagnetic Pulse (EMP)", isWildcard: true },
+            { id: "C_W_2", archetype: "CYBER", title: "Patch Rogue Sub-Network Firewall", input: "Decrypted Mainframe Access", output: "Secured Grid Communication Node", isWildcard: true },
+            { id: "C_W_3", archetype: "CYBER", title: "Bypass Magnetic Lock Relays", input: "Overcharged Power Line", output: "Disengaged Security Interlocks", isWildcard: true },
+            { id: "C_W_4", archetype: "CYBER", title: "Flash Mainframe Kernel Buffer", input: "Overcharged Power Line", output: "System Hard Reboot Cycle", isWildcard: true },
+
+            { id: "B_B_A1", archetype: "BIOLOGICAL", title: "Harvest Living Cybernetic Slime-Marrow", input: "Cleared Biological Blockage", output: "Exposed Organic Logic Circuitry", isBridge: true, target: "CYBER" },
+            { id: "B_B_A2", archetype: "BIOLOGICAL", title: "Purge Neuro-Parasite Swarm from Terminals", input: "Disrupted Bio-Ecosystem", output: "Restored Core Signal Integrity", isBridge: true, target: "CYBER" },
+            { id: "B_B_B1", archetype: "BIOLOGICAL", title: "Fire Industrial Thermal Incinerators", input: "Cleared Biological Blockage", output: "Cleaned Filtration Screen", isBridge: true, target: "POLLUTION" },
+            { id: "B_B_B2", archetype: "BIOLOGICAL", title: "Saturate Aqueduct with Saline Flush", input: "Disrupted Bio-Ecosystem", output: "Dissolved Organic Waste Runoff", isBridge: true, target: "POLLUTION" },
+            { id: "B_L_1", archetype: "BIOLOGICAL", title: "Neutralize Spore-Pod Incubation Clusters", input: "Cleared Biological Blockage", output: "Disrupted Bio-Ecosystem", isLoop: true },
+            { id: "B_L_2", archetype: "BIOLOGICAL", title: "Lash Synthetic Vines with Galvanic Probes", input: "Disrupted Bio-Ecosystem", output: "Neutralized Organic Spores", isLoop: true },
+            { id: "B_L_3", archetype: "BIOLOGICAL", title: "Surgically Excise Central Mycelium Core", input: "Neutralized Organic Spores", output: "Weakened Membrane Density", isLoop: true },
+            { id: "B_L_4", archetype: "BIOLOGICAL", title: "Introduce Engineered Macro-Phage Colony", input: "Weakened Membrane Density", output: "Sterilized Local Aqueduct Sector", isLoop: true },
+            { id: "B_W_1", archetype: "BIOLOGICAL", title: "Trigger Ultrasonic Acoustic Deflector", input: "Cleared Biological Blockage", output: "Scattered Submerged Vermin Swarm", isWildcard: true },
+            { id: "B_W_2", archetype: "BIOLOGICAL", title: "Inject Cellular Decomposition Mutagen", input: "Disrupted Bio-Ecosystem", output: "Liquefied Solid Structural Barriers", isWildcard: true },
+            { id: "B_W_3", archetype: "BIOLOGICAL", title: "Over-Oxygenate Local Water Column", input: "Neutralized Organic Spores", output: "Accelerated Fluid Agitation", isWildcard: true },
+            { id: "B_W_4", archetype: "BIOLOGICAL", title: "Deploy Genetically Altered Micro-Kelp", input: "Neutralized Organic Spores", output: "Absorbed Environmental Radiation", isWildcard: true },
+
+            { id: "P_B_A1", archetype: "POLLUTION", title: "Isolate Dissolving Acidic Runoff", input: "Balanced Chemical Compound", output: "Neutralized Conduit Corrosion", isBridge: true, target: "CYBER" },
+            { id: "P_B_A2", archetype: "POLLUTION", title: "Exhaust Corrosive Gas Pockets", input: "Purified Fluid Mass", output: "Cooled Server Environment", isBridge: true, target: "CYBER" },
+            { id: "P_B_B1", archetype: "POLLUTION", title: "Discharge Precipitate Siphon", input: "Balanced Chemical Compound", output: "Crystallized Heavy Metal Silt", isBridge: true, target: "BIOLOGICAL" },
+            { id: "P_B_B2", archetype: "POLLUTION", title: "Flush Sludge-Separator Vents", input: "Purified Fluid Mass", output: "Restored Normal Salinity Levels", isBridge: true, target: "BIOLOGICAL" },
+            { id: "P_L_1", archetype: "POLLUTION", title: "Calibrate Centrifugal Separation Grates", input: "Balanced Chemical Compound", output: "Purified Fluid Mass", isLoop: true },
+            { id: "P_L_2", archetype: "POLLUTION", title: "Inject Polymer Coagulant Gels", input: "Purified Fluid Mass", output: "Sealed Intake Gates", isLoop: true },
+            { id: "P_L_3", archetype: "POLLUTION", title: "Activate Catalytic Sludge Scrapers", input: "Sealed Intake Gates", output: "Precipitated Solid Toxic Slag", isLoop: true },
+            { id: "P_L_4", archetype: "POLLUTION", title: "Siphon Decanted Petroleum Layer", input: "Precipitated Solid Toxic Slag", output: "Lowered Fluid Corrosivity Rating", isLoop: true },
+            { id: "P_W_1", archetype: "POLLUTION", title: "Flood Chemical Neutralizer Tanks", input: "Balanced Chemical Compound", output: "Released Base Compound Liquid Medium", isWildcard: true },
+            { id: "P_W_2", archetype: "POLLUTION", title: "Cycle Aeration Vent Valves", input: "Purified Fluid Mass", output: "Exhausted Gaseous Air Pockets", isWildcard: true },
+            { id: "P_W_3", archetype: "POLLUTION", title: "Pressurize Hydro-Chemical Manifolds", input: "Sealed Intake Gates", output: "Elevated Hydraulic Backpressure", isWildcard: true },
+            { id: "P_W_4", archetype: "POLLUTION", title: "Stabilize Liquid Turbidity Parameters", input: "Sealed Intake Gates", output: "Refracted Local Visor Sonar Profile", isWildcard: true }
+        ];
+        this.exits = [
+            { title: "Cycle Air-Lock Manifold", mode: "Flash Flood", impact: "Equalizes air pressure gradients, flooding the current room to clear the passage below." },
+            { title: "Disengage Ballast Clamps", mode: "Abyss Plunge", impact: "Retracts heavy physical deadbolts, dropping the entire floor straight into the pre-flooded lower deck." }
+        ];
+    }
+    generateLevelManifest(depth = 3) {
+        if (depth < 2) depth = 2;
+        let pool = [...this.masterTaskPool];
+        let missionChain = [];
+        let currentNode = pool[Math.floor(Math.random() * pool.length)];
+        pool = pool.filter(task => task.id !== currentNode.id);
+        missionChain.push({
+            step: 1, archetype: currentNode.archetype, title: currentNode.title,
+            isLockedByDefault: false, unlockedByState: "Level Entrance Initialization Trigger",
+            yieldsEnvironmentalState: currentNode.output
+        });
+        for (let i = 2; i <= depth; i++) {
+            let lastOutput = missionChain[missionChain.length - 1].yieldsEnvironmentalState;
+            let currentArchetype = missionChain[missionChain.length - 1].archetype;
+            let structuralMatches = pool.filter(task => task.input === lastOutput);
+            if (structuralMatches.length === 0) {
+                structuralMatches = pool.filter(task => task.archetype === currentArchetype);
+                if (structuralMatches.length === 0) break;
+            }
+            const roll = Math.floor(Math.random() * 100) + 1;
+            let strategy = "STAY";
+            if (roll > 40 && roll <= 80) strategy = "WILDCARD";
+            if (roll > 80) strategy = "BRIDGE";
+            let strategyFilteredPool = [];
+            switch (strategy) {
+                case "STAY":
+                    // continue the current archetype's own state-chain (its loop tasks)
+                    strategyFilteredPool = structuralMatches.filter(t => t.archetype === currentArchetype && t.isLoop);
+                    if (strategyFilteredPool.length === 0) strategyFilteredPool = structuralMatches.filter(t => t.archetype === currentArchetype);
+                    break;
+                case "WILDCARD":
+                    // jump into a DIFFERENT archetype's wildcard task, so a layer mixes machine types.
+                    // cross-archetype state-inputs never equal the last output, so we draw from the whole
+                    // remaining pool here rather than structuralMatches (which only ever holds same-archetype tasks).
+                    strategyFilteredPool = pool.filter(t => t.archetype !== currentArchetype && t.isWildcard);
+                    break;
+                case "BRIDGE":
+                    // follow a bridge into another archetype: prefer the target the current archetype's
+                    // bridge tasks point at, then fall back to any other-archetype bridge task.
+                    {
+                        const bridgeTargets = pool.filter(t => t.archetype === currentArchetype && t.isBridge).map(t => t.target);
+                        if (bridgeTargets.length) {
+                            const tgt = bridgeTargets[Math.floor(Math.random() * bridgeTargets.length)];
+                            strategyFilteredPool = pool.filter(t => t.archetype === tgt);
+                        }
+                        if (strategyFilteredPool.length === 0) strategyFilteredPool = pool.filter(t => t.archetype !== currentArchetype);
+                    }
+                    break;
+            }
+            // last resort: keep the structural (same-archetype) chain rather than fail to place a step
+            if (strategyFilteredPool.length === 0) strategyFilteredPool = structuralMatches;
+            let chosenNode = strategyFilteredPool[Math.floor(Math.random() * strategyFilteredPool.length)];
+            pool = pool.filter(task => task.id !== chosenNode.id);
+            missionChain.push({
+                step: i, archetype: chosenNode.archetype, title: chosenNode.title,
+                isLockedByDefault: true, unlockedByState: lastOutput,
+                yieldsEnvironmentalState: chosenNode.output
+            });
+        }
+        let finalOutputState = missionChain[missionChain.length - 1].yieldsEnvironmentalState;
+        let chosenExit = this.exits[Math.floor(Math.random() * this.exits.length)];
+        missionChain.push({
+            step: missionChain.length + 1, archetype: "EXIT_GATEWAY", title: chosenExit.title,
+            isLockedByDefault: true, unlockedByState: finalOutputState,
+            transitionMode: chosenExit.mode, environmentalConsequence: chosenExit.impact
+        });
+        return missionChain;
+    }
+}
+const missionDirector=new SewerMissionDirector();
+let layerMissions={}; // keyed by LAYER index — {steps:[{title,archetype,kind,count}],exit,progress,complete}
+let missionObjs=[];   // physical task machines + control units; o.tier = the layer that owns it
+let sporeFx=[];       // transient toxin clouds vented by struck pods (not saved — they fade in seconds)
+let podBlasts=[];     // fused gas-sac detonations in the world after the flamethrower minigame (transient)
+let nearMission=null;
+let tierDry=[];       // per-layer: spawned without water — floods when the bulkhead above releases
+let floodFx=null;     // {tier,t,dur} rising-water animation in `tier`; the bulkhead above opens after
+let bulkAnims=[];     // [{tier,t,dur}] bulkhead-opening animations in progress
+/* Each chain archetype is a REAL mechanic with its own machine, sprite and action loop:
+ *  CYBER      -> wall terminal: F opens a focused, full-screen octagon ICE-break minigame — rotate a
+ *                cursor to each shining side of an 8-sided ring and select it to fold a glyph together,
+ *                then find that glyph among 3 rows of candidates and input it; crack 3 glyphs to break in
+ *  BIOLOGICAL -> gas sac: F opens a focused, full-screen flamethrower minigame — aim a high-precision
+ *                blue flame at 3 glowing slimes inside a metal urn and burn each down before an 8s timer
+ *                busts. Win OR bust, the sac blows and the step counts; a win gives a 2s escape window
+ *  POLLUTION  -> pressure valve: crank it (tap F) while the gauge reads green — every few seconds it
+ *                blasts scalding vapour; cranking (or loitering) through a vent burns you
+ *  CONTROL    -> the control unit beside the layer's sealed bulkhead; online once every task of the
+ *                layer's quest is done — trip it to open the bulkhead (flooding a dry deck first) */
+const MISSION_KIND={CYBER:{type:'term',count:1},BIOLOGICAL:{type:'pod',count:3},POLLUTION:{type:'valve',count:2}};
+const VALVE_CALM=2.2, VALVE_CYCLE=3.2, MOBJ_R=17;
+function buildLayerMission(n){
+  const depth=clamp(2+((CITY-1)/3|0),2,4);   // tasks per layer quest, growing slowly with the city
+  const chain=missionDirector.generateLevelManifest(depth);
+  const core=chain.slice(0,-1);
+  const grow=Math.min((CITY-1)/4|0,2);       // a little more to do per city, capped
+  const steps=core.map(c=>{const kd=MISSION_KIND[c.archetype]||MISSION_KIND.CYBER;
+    return {title:c.title,archetype:c.archetype,kind:kd.type,count:kd.count+(kd.type==='term'?Math.min(grow,1):grow)};});
+  return {steps,exit:chain[chain.length-1],progress:0,complete:steps.length===0};
+}
+function missionFor(n){return layerMissions[n]||null;}
+function missionComplete(n){const m=layerMissions[n];return !!m&&m.complete;}
+const _missionSolidAt=(xx,yy)=>{const t=(yy>=0&&yy<MH&&xx>=0&&xx<MW)?map[yy][xx]:WALL;return t===ROCK||t===WALL;};
+/* ---- objectives and creatures never share a seat ---------------------------
+ * A quest machine pins the diver in place — a hack, a crank, a focused minigame —
+ * so one spawning inside a predator's nest is an unwinnable ambush. Both sides
+ * place by the same rule (objectives dodge creatures here, creatures dodge
+ * objectives in creatureCell), so whichever of the two is generated second still
+ * cannot land on the first, and clearCreaturesAt closes the gap if a fallback path
+ * ever runs out of room. CLEAR is the breathing room we aim for; CLEAR_MIN is the
+ * hard floor at which the two sprites would start to overlap, and NOTHING —
+ * fallback, failsafe or control unit — is allowed below it. */
+const MOBJ_CLEAR=40, MOBJ_CLEAR_MIN=26;
+// Anchors count as much as live positions: an eel mid-pounce is a body-length from
+// its nest and back on it a moment later, so the nest is the seat to keep clear.
+function creatureNear(px,py,r){
+  for(const c of creatures){
+    if(Math.abs(py-c.y)<r&&Math.hypot(px-c.x,py-c.y)<r)return c;
+    if(c.ax!==undefined&&Math.abs(py-c.ay)<r&&Math.hypot(px-c.ax,py-c.ay)<r)return c;
+  }
+  return null;
+}
+function missionNear(px,py,r){
+  for(const o of missionObjs)if(Math.abs(py-o.y)<r&&Math.hypot(px-o.x,py-o.y)<r)return o;
+  return null;
+}
+// Hard guarantee, used wherever an objective HAS to sit at a given spot (the control
+// unit on the bulkhead, the packed-layer fallback): evict anything still inside its
+// footprint. Re-nesting comes first so the layer keeps its creature count; if the
+// layer has no room left the creature is culled — a missing predator costs nothing,
+// an objective the diver cannot work costs the run.
+function clearCreaturesAt(px,py,tier){
+  for(let k=creatures.length-1;k>=0;k--){
+    const c=creatures[k];
+    if(Math.hypot(px-c.x,py-c.y)>=MOBJ_CLEAR_MIN&&
+       (c.ax===undefined||Math.hypot(px-c.ax,py-c.ay)>=MOBJ_CLEAR_MIN))continue;
+    const t=(c.tier!==undefined)?c.tier:tier;
+    const spot=(t!==undefined&&tierTop[t]!==undefined)?creatureCell(t,c.type==='eel'||c.type==='fungus'):null;
+    if(spot){c.x=spot.x*TS+8;c.y=spot.y*TS+8;if(c.ax!==undefined){c.ax=c.x;c.ay=c.y;}}
+    else creatures.splice(k,1);
+  }
+}
+// EMPTY cell hugging a solid face, in tier i, clear of every creature; falls back
+// through steadily looser rules so a spawn can never fail — but never past CLEAR_MIN
+function placeMissionSpot(i,clear){
+  const top=tierTop[i],bot=tierBot[i],cl=(clear===undefined)?MOBJ_CLEAR:clear;
+  for(let tries=0;tries<240;tries++){const x=(4+Math.random()*(MW-8))|0,y=(top+3+Math.random()*(bot-top-6))|0;
+    if(map[y][x]!==EMPTY||nearSpawn(x,y))continue;
+    if(creatureNear(x*TS+8,y*TS+8,cl))continue;
+    let face=null;
+    if(_missionSolidAt(x,y+1))face='up';else if(_missionSolidAt(x-1,y))face='right';else if(_missionSolidAt(x+1,y))face='left';else if(_missionSolidAt(x,y-1))face='down';
+    if(face)return {x:x*TS+8,y:y*TS+8,face};}
+  for(let tries=0;tries<120;tries++){const x=(4+Math.random()*(MW-8))|0,y=(top+3+Math.random()*(bot-top-6))|0;
+    if(map[y][x]===EMPTY&&!nearSpawn(x,y)&&!creatureNear(x*TS+8,y*TS+8,cl))return {x:x*TS+8,y:y*TS+8,face:'up'};}
+  if(cl>MOBJ_CLEAR_MIN)return placeMissionSpot(i,MOBJ_CLEAR_MIN);   // give up the padding, not the separation
+  // random darts have missed: walk every cell of the layer before conceding the point
+  for(let y=top+3;y<bot-3;y++)for(let x=4;x<MW-4;x++){
+    if(!map[y]||map[y][x]!==EMPTY||nearSpawn(x,y))continue;
+    if(creatureNear(x*TS+8,y*TS+8,MOBJ_CLEAR_MIN))continue;
+    return {x:x*TS+8,y:y*TS+8,face:'up'};}
+  // the layer is genuinely packed wall-to-wall — take the centre and clear it by force
+  const sp={x:((MW/2)|0)*TS+8,y:(top+6)*TS+8,face:'up'};
+  clearCreaturesAt(sp.x,sp.y,i);
+  return sp;
+}
+// spawn EVERY machine of layer i's quest inside layer i, plus its control unit by the bulkhead
+function spawnMissionLayer(i){
+  const m=layerMissions[i];if(!m)return;
+  for(let k=0;k<m.steps.length;k++){const st=m.steps[k];
+    for(let j=0;j<st.count;j++){
+      const pp=placeMissionSpot(i);
+      missionObjs.push({type:st.kind,step:k,tier:i,x:pp.x,y:pp.y,face:pp.face,
+        ph:Math.random()*6,done:false,hp:3,hk:null,prog:0,cyc:Math.random()*3});
+    }}
+  if(i<SCHED.length-1)spawnControlUnit(i);   // the city's final layer uses the transit gate instead
+}
+// The control unit rests on the TOP face of the layer's sealed bulkhead (row `bot`, directly
+// above the BULK seal at bot+1..bot+2) so the diver can always swim down to it. It may sit
+// anywhere along the barrier's width — NOT locked to the centre — but never inside the central
+// sludge basin (the acid pool at rows bot-2..bot), so it is always safe to reach.
+function spawnControlUnit(i){
+  const bot=tierBot[i];
+  const slw=basinWidth(i);                                // SAME capped width the basin was carved with
+  const sx=((MW/2)-(slw/2))|0, se=sx+slw;                 // central sludge-basin x-span
+  const inSludge=(x)=>slw>0&&x>=sx-1&&x<se+1;             // basin footprint + 1-cell safety margin
+  const clearOre=(x,y)=>{if(map[y]&&map[y][x]===ORE){const oi=oreCells.findIndex(o=>o.x===x&&o.y===y);if(oi>=0)oreCells.splice(oi,1);}};
+  const ideal=[], usable=[];
+  for(let x=3;x<=MW-4;x++){
+    if(inSludge(x)||map[bot][x]===SLUDGE)continue;         // never on / beside an acid cell
+    if(map[bot][x]===WALL)continue;                        // outside the carved interior
+    usable.push(x);
+    if(map[bot][x]===EMPTY&&map[bot-1]&&map[bot-1][x]===EMPTY)ideal.push(x); // clear seat + open water above
+  }
+  const any=ideal.length?ideal:usable;
+  // of the seats that are legal, prefer the ones no creature is nesting on; the unit is pinned
+  // to the bulkhead's top row, so when every legal column is occupied it takes one by force below
+  const clearCols=any.filter(x=>!creatureNear(x*TS+8,bot*TS+8,MOBJ_CLEAR));
+  const pick=clearCols.length?clearCols:any;
+  // last-resort fallback lands OUTSIDE the basin (a near-edge column), never the acid-filled centre
+  const lx=pick.length?pick[(Math.random()*pick.length)|0]:(sx>MW-1-se?3:MW-4);
+  clearOre(lx,bot);clearOre(lx,bot-1);                     // carve a reachable pocket on the barrier top
+  map[bot][lx]=EMPTY;
+  if(map[bot-1]&&map[bot-1][lx]!==WALL)map[bot-1][lx]=EMPTY;
+  missionObjs.push({type:'gate',step:-1,tier:i,x:lx*TS+8,y:bot*TS+8,face:'up',ph:0,done:false});
+  clearCreaturesAt(lx*TS+8,bot*TS+8,i);   // the one seat the diver MUST reach: nothing else sits on it
+}
+// a layer's quest is generated the moment the layer itself is carved (and re-asserted when the
+// bulkhead above releases) — idempotent, so a quest can neither double-spawn nor go missing
+function ensureLayerMission(n){
+  if(n==null||n<0||n>=SCHED.length)return;
+  if(tierTop[n]===undefined||!map||map.length<=tierBot[n])return;   // layer not carved yet
+  if(!layerMissions[n]){layerMissions[n]=buildLayerMission(n);spawnMissionLayer(n);}
+}
+// FAILSAFE — runs every frame from ensureDepth: for every carved layer, machines-in-the-water must
+// equal interactions-required for every task of its quest, the control unit must exist, and no
+// machine may sit inside solid rock. Anything missing is (re)spawned on the spot, in that layer.
+function verifyMissionIntegrity(){
+  for(let n=0;n<generatedTiers&&n<SCHED.length;n++){
+    if(!layerMissions[n]){ensureLayerMission(n);continue;}
+    const m=layerMissions[n];
+    for(let k=0;k<m.steps.length;k++){
+      const st=m.steps[k];
+      const objs=missionObjs.filter(q=>q.tier===n&&q.step===k&&q.type!=='gate');
+      for(const o of objs){
+        if(o.done)continue;
+        const tx=((o.x-8)/TS)|0, ty=((o.y-8)/TS)|0;
+        if(map[ty]&&map[ty][tx]!==EMPTY){const pp=placeMissionSpot(n);o.x=pp.x;o.y=pp.y;o.face=pp.face;}
+      }
+      for(let j=objs.length;j<st.count;j++){
+        const pp=placeMissionSpot(n);
+        missionObjs.push({type:st.kind,step:k,tier:n,x:pp.x,y:pp.y,face:pp.face,
+          ph:Math.random()*6,done:false,hp:3,hk:null,prog:0,cyc:Math.random()*3});
+      }
+    }
+    if(n<SCHED.length-1&&!missionObjs.some(q=>q.tier===n&&q.type==='gate'))spawnControlUnit(n);
+  }
+  sweepMissionCreatures();
+}
+/* Placement keeps the two apart at spawn, but an angler RE-ANCHORS wherever its lunge ends,
+ * so a creature can still drift onto a machine long after both were generated. Swept a couple
+ * of times a second, and only well off-screen, so an intruder is quietly re-nested instead of
+ * teleporting in front of the diver. */
+let _mobjSweep=0;
+function sweepMissionCreatures(){
+  if((_mobjSweep=(_mobjSweep+1)%30)!==0||!player)return;
+  for(const o of missionObjs){
+    if(o.done)continue;
+    if(Math.hypot(player.x+4-o.x,player.y+4-o.y)<260)continue;   // never rearrange what the diver can see
+    if(creatureNear(o.x,o.y,MOBJ_CLEAR_MIN))clearCreaturesAt(o.x,o.y,o.tier);
+  }
+}
+function missionObjActive(o){const m=layerMissions[o.tier];if(!m||o.done)return false;
+  if(o.type==='gate')return m.complete;
+  return !m.complete&&o.step===m.progress;}
+function missionVerb(o){
+  if(o.type==='gate')return 'RELEASE';
+  if(o.type==='term')return 'HACK';
+  if(o.type==='pod')return 'BURN';
+  return (o.cyc%VALVE_CYCLE)>VALVE_CALM?'BACK OFF':'CRANK';
+}
+function missionStepDone(tier,step){return missionObjs.filter(q=>q.tier===tier&&q.step===step&&q.done&&q.type!=='gate').length;}
+function completeMissionObj(o){
+  o.done=true;
+  const m=layerMissions[o.tier],st=m.steps[o.step];
+  const done=missionStepDone(o.tier,o.step);
+  if(done<st.count){showMsg(st.title+' — '+done+'/'+st.count);return;}
+  m.progress++;sfx.craft();
+  if(m.progress>=m.steps.length){m.complete=true;sfx.build();
+    if(o.tier<SCHED.length-1)showMsg('ALL TASKS DONE — the control unit by the bulkhead is online');
+    else showMsg('ALL TASKS DONE — the transit gate will take you');}
+  else showMsg(st.title+' done — NEXT: '+m.steps[m.progress].title);
+}
+// control unit tripped on layer i — flood a dry deck below first, then play the bulkhead-open animation
+function controlTrigger(i){
+  if(floodFx||bulkAnims.some(a=>a.tier===i))return;   // a sequence is already in motion
+  sfx.uiopen();
+  if(i+1<SCHED.length&&tierDry[i+1]){
+    floodFx={tier:i+1,t:0,dur:3.4};
+    shake=Math.max(shake,5);
+    showMsg('deck below is dry — flooding it now, stand by');
+  } else startBulkAnim(i);
+}
+function startBulkAnim(i){bulkAnims.push({tier:i,t:0,dur:1.0});sfx.boom();shake=Math.max(shake,7);}
+function finishBulkAnim(i){
+  openBulkhead(i);
+  const g=missionObjs.find(q=>q.tier===i&&q.type==='gate');if(g)g.done=true;  // done only once truly open (save-safe)
+  ensureLayerMission(i+1);   // the next layer's quest — normally already built at generation; idempotent
+  verifyMissionIntegrity();  // and re-assert every sprite of it is in place before the diver descends
+  showMsg('bulkhead released — descend');
+}
+// F pressed on an active machine — each type is its own little action loop
+function missionInteract(o){
+  const m=layerMissions[o.tier];
+  if(o.type==='gate'){
+    if(!m.complete){openObjectives(o.tier);return;}   // briefing screen: every task in this layer
+    const d=SCHED[o.tier];
+    if(d&&d.layerInEnv===3&&gearLevel<=o.tier){const g=TIERS[o.tier]&&TIERS[o.tier].gear;
+      showMsg('new environment below — fabricate the '+(g?g.name:'next dive suit')+' first');sfx.deny();return;}
+    // the panel eats the layer's #1 composite once, on top of the finished quest (bulkPaid rides the
+    // saved mission, so a save caught mid-animation can't charge twice)
+    if(!m.bulkPaid){const toll=bulkToll(o.tier);
+      if(!canPay(toll)){showMsg('panel needs 1× '+RES['t'+(o.tier+1)+'fa'].name+' to power the release');sfx.deny();return;}
+      pay(toll);m.bulkPaid=true;sfx.craft();}
+    controlTrigger(o.tier);return;
+  }
+  if(o.type==='term'){
+    openHack(o);   // the wall terminal is now a focused, full-screen octagon ICE-break minigame (see below)
+    return;
+  }
+  if(o.type==='pod'){
+    openFlame(o);   // the gas sac is now a focused, full-screen flamethrower minigame (see below)
+    return;
+  }
+  if(o.type==='valve'){
+    openCrank(o);   // the pressure valve is now a focused, full-screen crank minigame (see below)
+    return;
+  }
+}
+// per-frame machine simulation: hack sweeps, valve vent cycles, spore-cloud damage, proximity pick,
+// plus the flood-fill and bulkhead-opening sequences kicked off by control units
+function missionSim(dt){
+  if(floodFx){floodFx.t+=dt;shake=Math.max(shake,1.5);
+    const ft=floodFx.tier,topY=tierTop[ft]*TS,botY=(tierBot[ft]+1)*TS;
+    const lvl=botY-(botY-topY)*Math.min(1,floodFx.t/floodFx.dur);
+    if((state.tick%2)===0)particles.push({type:'bubble',x:RCX+Math.random()*VW,y:lvl+Math.random()*10,
+      vx:(Math.random()-.5)*30,vy:-30-Math.random()*40,life:0.6,max:0.6,size:1.5+Math.random(),col:'#9fd8ef'});
+    if(floodFx.t>=floodFx.dur){tierDry[ft]=false;floodFx=null;startBulkAnim(ft-1);}
+  }
+  for(let i=bulkAnims.length-1;i>=0;i--){const a=bulkAnims[i];a.t+=dt;shake=Math.max(shake,2);
+    const b=bulkheads[a.tier];
+    if(b&&(state.tick%3)===0){const c=b.cells[(Math.random()*b.cells.length)|0];
+      burst(c.x*TS+8,c.y*TS+8,2,70,0.35,'#ffd23c');}
+    if(a.t>=a.dur){bulkAnims.splice(i,1);finishBulkAnim(a.tier);}
+  }
+  nearMission=null;
+  const elo=entTierLo(),ehi=entTierHi(),cx=player.x+4,cy=player.y+4;
+  let best=1e9;
+  for(const o of missionObjs){
+    if(o.tier<elo||o.tier>ehi)continue;
+    o.ph+=dt;
+    const act=missionObjActive(o);
+    if(o.type==='valve'&&act){o.cyc+=dt;
+      if((o.cyc%VALVE_CYCLE)>VALVE_CALM){
+        if((state.tick%4)===0)particles.push({type:'bubble',x:o.x-4+Math.random()*8,y:o.y-9,vx:(Math.random()-.5)*22,vy:-42-Math.random()*30,life:0.5,max:0.5,size:1.5,col:'#ffb35c'});
+        if(Math.hypot(cx-o.x,cy-(o.y-6))<15)hurt(1,o.x,o.y-6);
+      }}
+    if(act){const dd=Math.hypot(cx-o.x,cy-o.y);
+      if(dd<MOBJ_R&&dd<best){best=dd;nearMission=o;}}
+  }
+  for(let i=sporeFx.length-1;i>=0;i--){const s=sporeFx[i];s.t+=dt;
+    if(s.t>=s.life){sporeFx.splice(i,1);continue;}
+    if(s.t>0.28&&Math.hypot(cx-s.x,cy-s.y)<s.r)hurt(1,s.x,s.y);
+  }
+  // fused gas-sac detonations left behind when the flamethrower minigame ends in a BUST — a clean
+  // win never reaches here. Rides an almost-instant fuse so the gas erupts right in the diver's
+  // face, then vents a damaging cloud (a big sporeFx).
+  for(let i=podBlasts.length-1;i>=0;i--){const b=podBlasts[i];b.t+=dt;
+    shake=Math.max(shake,2.0);
+    const fl=Math.abs(Math.sin(b.t*(7+ (b.t/b.fuse)*24)));            // flash quickens toward the blast
+    if((state.tick%3)===0)burst(b.x,b.y,1,50,0.3,'#ff6a3c');
+    if(fl>0.85&&(state.tick%2)===0)particles.push({type:'bubble',x:b.x-4+Math.random()*8,y:b.y-8,vx:(Math.random()-.5)*20,vy:-34-Math.random()*24,life:0.5,max:0.5,size:1.5,col:'#9fd8ef'});
+    if(b.t>=b.fuse){
+      burst(b.x,b.y,26,180,0.7,'#c2ff5f');burst(b.x,b.y,14,120,0.5,'#ffe27a');
+      bubbleBurst(b.x,b.y,12,44,-24,22,1.3,2);
+      sporeFx.push({x:b.x,y:b.y,r:30,t:0,life:2.0,tier:b.tier});
+      shake=Math.max(shake,8);sfx.boom();
+      podBlasts.splice(i,1);
+    }
+  }
+}
+
+function _shuffle(a){for(let i=a.length-1;i>0;i--){const j=(Math.random()*(i+1))|0;const t=a[i];a[i]=a[j];a[j]=t;}return a;}
+function _pick3(pool){return _shuffle(pool.slice()).slice(0,3);}
+const SLOTS=['a','b','c'];
+let lastArchKey='';   // remembered so consecutive generated tiers don't repeat the same archetype
+// Skin one tier from an archetype: names, colours, ore shapes, THEME entry, water/rock.
+function skinTier(i,archKey){
+  const a=ARCHETYPES[archKey], t=i+1;
+  THEME[i]={key:archKey,bg:a.bg,tile:a.tile,scenery:a.scenery,kelp:a.kelp,pal:a.pal,oreShapes:{}};
+  TIERS[i].name=a.name; TIERS[i].water=a.water.slice(); TIERS[i].rock=a.rock;
+  if(i>=4&&TIERS[i].gear) TIERS[i].gear.name=a.suit;   // base-tier suit names stay fixed
+  const rawN=_pick3(a.raw), mixN=_pick3(a.mix), refN=_pick3(a.ref);
+  for(let j=0;j<3;j++){
+    const s=SLOTS[j], hue=a.palHues[j];
+    const rid='t'+t+'r'+s, mid='t'+t+'m'+s, fid='t'+t+'f'+s;
+    RES[rid].name=rawN[j]; setResCol(rid,hsl2hex(hue+ri(-14,14), 0.5+Math.random()*0.18, 0.5+Math.random()*0.1));
+    THEME[i].oreShapes[s]=a.shapes[j%a.shapes.length];   // slot-fixed identity (§8.1, lever L7 to re-roll)
+    RES[mid].name=mixN[j]; setResCol(mid,hsl2hex(hue+18+ri(-12,12), 0.6+Math.random()*0.2, 0.58+Math.random()*0.1));
+    RES[fid].name=refN[j]; setResCol(fid,hsl2hex(hue+ri(-10,10), 0.26+Math.random()*0.14, 0.62+Math.random()*0.08));
+    ICONSHAPE[mid]=SLOTS[(Math.random()*3)|0]; ICONSHAPE[fid]=SLOTS[(Math.random()*3)|0];
+  }
+}
+// City bootstrap: build the layer schedule for the current city and skin the first 4 layers from it.
+function genTheme(){
+  RUN_SEED=((Date.now()>>>0)^((Math.random()*0xffffffff)>>>0))>>>0||1;
+  _oreLv={}; _oreCanv={}; ICONSHAPE={};       // drop caches keyed on last play's shapes/colours
+  SCHED=cityScheduleFor(CITY,CITY_ID);
+  THEME=[];
+  for(let i=0;i<4;i++)applyCityVariant(i,SCHED[i],ARCHETYPES);   // skinTier runs inside
+  lastArchKey=SCHED[3].arch;
+}
+// pick an archetype for a generated (deep) tier — random, but never the same as the tier just above
+function pickArch(){const keys=Object.keys(ARCHETYPES);let k;do{k=keys[(Math.random()*keys.length)|0];}while(k===lastArchKey&&keys.length>1);lastArchKey=k;return k;}
+
+/* ---- INFINITE DESCENT: tiers 4+ are fabricated on demand as the diver goes deeper ---- */
+let ALLRAW=[];                 // every raw id known so far (fungus fakes pull from this; grows with depth)
+let SCHED=[];                  // one descriptor per layer of the current city (citySchedule)
+let generatedTiers=0;          // how many tiers currently exist (base game = 4)
+// gameplay stats for a generated suit — extends the base-4 progression smoothly
+function gearStats(n){return {oxy:320+(n-3)*70, hp:8+(n-3), acc:1.4+(n-3)*0.1, mv:1.4+(n-3)*0.1,
+  lr:135+(n-3)*16, th:5+(n-3)*2, po:5+(n-3)*2};}
+// hazard counts for a generated tier — denser the deeper you go, with sane caps
+function hazFor(n){return {elec:Math.min(3+((n-3)/2|0),6), blob:Math.min(2+((n-3)/3|0),5), sl:Math.min(16+(n-3),26)};}
+// create the resource + recipe + gear/hazard data for a fresh deep tier n (0-based)
+function buildTierData(n){
+  const t=n+1;
+  for(const s of SLOTS){
+    R('t'+t+'r'+s,'?','#888888','raw');
+    R('t'+t+'m'+s,'?','#888888','mix');
+    R('t'+t+'f'+s,'?','#888888','ref',{['t'+t+'r'+s]:2,['t'+t+'m'+s]:1});  // refined = 2 raw + 1 mixer (logic intact)
+  }
+  const raw=SLOTS.map(s=>'t'+t+'r'+s), mix=SLOTS.map(s=>'t'+t+'m'+s), ref=SLOTS.map(s=>'t'+t+'f'+s);
+  for(const id of raw)ALLRAW.push(id);
+  const prevRef=TIERS[n-1].ref, carry=prevRef[(Math.random()*prevRef.length)|0];
+  const gin={}; gin[ref[0]]=2; gin[ref[1]]=1; gin[ref[2]]=1; gin[carry]=1;   // this tier's refined + one carried down
+  TIERS[n]={name:'?',water:['#11313f','#0c2531','#071b25'],rock:'#3a4452',raw,mix,ref,
+    gear:{name:'DIVE-RIG',in:gin,carry,stats:gearStats(n)}, haz:hazFor(n)};
+}
+// fabricate the whole of tier n: data, skin, geometry, map rows, carve, creatures, scenery, bg texture
+function growTier(n){
+  if(n>=SCHED.length)return;                  // the city ends here — the transit gate takes over
+  tierTop[n]=3+34*n; tierBot[n]=tierTop[n]+31;
+  growMapTo(tierTop[n]+34);
+  buildTierData(n);
+  applyCityVariant(n,SCHED[n],ARCHETYPES);    // was: skinTier(n,pickArch())
+  buildTierBgTex(n);
+  genTier(n);
+  genCreatures(n);
+  genTierEnv(n);
+  generatedTiers=Math.max(generatedTiers,n+1);
+}
+// ensure tiers exist down to one level below the diver (lookahead so the next bulkhead always opens into real space)
+function ensureDepth(){const pt=tierAtY(player.y); while(generatedTiers<=pt+1&&generatedTiers<SCHED.length) growTier(generatedTiers); verifyMissionIntegrity();}
+
+// ============ STATE ============
+const state={mode:'title', loseReason:'', tick:0};
+const input={up:false,down:false,left:false,right:false,action:false,joy:false,jx:0,jy:0};
+let pendingCity=null;          // the transit choice waiting at the far end of the pipe run
+let subBoostTrig=false;        // emergency-thrust trigger: a press, not a hold — see the transversal section
+const TUT={active:false,joyLive:false};
+let actionEdge=false, queueCraft=false, queueStart=false, mineEdge=false, clipEdge=false;
+let MW, MH, map, pctx;
+let player, mixers, bases, nodes, blobs, oreCells, bulkheads, relic, scraps, creatures;
+let kelp=[], debris=[], scenery=[];
+let inv={}, gearLevel=0, miningCell=null, oreFlash=0, nearOre=null, mgOre=null, nearBase=null;
+let scrapInv={}, coins=0, partsInv={}, companion=null, respT=0, craftTab='work';
+let nearFungus=null, invSel=null;
+// the DV-8 "MULE" mech — a single persistent world entity (null until built at the shop).
+// {x,y,vx,vy,dir,battery,piloted,off,boostT,hookAnchor,...}; `off` = left behind in a previous
+// city, waiting to be quick-spawned. Upgrade flags live on the player (they survive transit).
+let mech=null, nearMech=null;
+let tierInfested=[], lastInfestTier=-1;   // per-layer swarm flag + last tier announced
+let particles=[], glows=[], camera={x:0,y:0}, shake=0, lockMsgCD=0, RCX=0, RCY=0;
+// shared particle-burst helpers — collapse the ~24 near-identical hand-rolled spawn loops (mining,
+// pickups, explosions, gear-ups, base activation, ...) into two calls. `life`/`col` may be a plain
+// value (same for every particle) or a zero-arg function (re-rolled per particle, matching the few
+// call sites that originally randomised per-particle inside the loop body).
+function _rv(v){return typeof v==='function'?v():v;}
+function burst(x,y,n,spd,life,col,size,maxLife){
+  for(let i=0;i<n;i++){const L=_rv(life);particles.push({type:'spark',x,y,vx:(Math.random()-.5)*spd,vy:(Math.random()-.5)*spd,life:L,max:maxLife||L,col:_rv(col),size:size||2});}
+}
+function bubbleBurst(x,y,n,vxSpread,vyBase,vySpread,life,size,col){
+  for(let i=0;i<n;i++)particles.push({type:'bubble',x,y,vx:(Math.random()-.5)*vxSpread,vy:vyBase-Math.random()*vySpread,life,max:life,size:size||2,col});
+}
+
+const overlayEl=document.getElementById('overlay');
+const craftEl=document.getElementById('craft');
+const cbodyEl=document.getElementById('cbody');
+const chTitle=document.getElementById('chTitle');
+const chSub=document.getElementById('chSub');
+const toastEl=document.getElementById('toast');
+const mineEl=document.getElementById('mine');
+const mSw=document.getElementById('mSw'),mName=document.getElementById('mName'),mCracks=document.getElementById('mCracks'),mSens=document.getElementById('mSens'),mBar=document.getElementById('mBar'),mProg=document.getElementById('mProg');
+const rewardEl=document.getElementById('reward'),rwIcon=document.getElementById('rwIcon'),rwName=document.getElementById('rwName');
+const craftfxEl=document.getElementById('craftfx'),cfIn=document.getElementById('cfIn'),cfOut=document.getElementById('cfOut'),cfLabel=document.getElementById('cfLabel');
+let rewardTimer=null,craftBusy=false;
+let toastTimer=null;
+function showMsg(t){toastEl.textContent=t;toastEl.classList.remove('hidden');clearTimeout(toastTimer);toastTimer=setTimeout(()=>toastEl.classList.add('hidden'),2200);}
+
+// ============ WORLD GEN ============
+function fillRect(x0,y0,x1,y1,t){for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++)if(x>=0&&y>=0&&x<MW&&y<MH)map[y][x]=t;}
+function setIf(x,y,t){if(x>1&&x<MW-2&&y>0&&y<MH-1&&map[y][x]===EMPTY)map[y][x]=t;}
+function growRock(cx,cy,n){let x=cx,y=cy;for(let k=0;k<n;k++){setIf(x,y,ROCK);setIf(x+1,y,ROCK);x+=((Math.random()*3)|0)-1;y+=((Math.random()*3)|0)-1;x=clamp(x,3,MW-4);y=clamp(y,4,MH-5);}}
+function nearSpawn(x,y){return Math.abs(x-(MW/2))<3&&Math.abs(y-(tierTop[0]+3))<3;}
+
+// Width of the central acid basin in tiles, hard-capped so it ALWAYS leaves clear ground on both sides
+// (footing for the diver + a non-acid seat for the bulkhead control unit). Used by both genTier and
+// spawnControlUnit so the carved basin and the "avoid the basin" exclusion always agree.
+function basinWidth(i){const sl=(TIERS[i]&&TIERS[i].haz&&TIERS[i].haz.sl)||0;return Math.max(0,Math.min(sl,MW-16));}
+function genTier(i){
+  const top=tierTop[i],bot=tierBot[i],T=TIERS[i];
+  fillRect(2,top,MW-3,bot,EMPTY);
+  // sludge basin (bottom)
+  const slw=basinWidth(i), sx=((MW/2)-(slw/2))|0;
+  for(let y=bot-2;y<=bot;y++)for(let x=sx;x<sx+slw;x++)if(x>1&&x<MW-2)map[y][x]=SLUDGE;
+  // rock + ledges
+  for(let k=0;k<5;k++)growRock((3+Math.random()*(MW-7))|0,(top+3+Math.random()*(bot-top-7))|0,8+((Math.random()*10)|0));
+  for(let k=0;k<2;k++){const ly=(top+5+Math.random()*(bot-top-9))|0,lx=(4+Math.random()*(MW-16))|0,lw=4+((Math.random()*6)|0);for(let x=lx;x<lx+lw;x++)setIf(x,ly,ROCK);}
+  // resource spacing — keep ore + mixers spread apart
+  const spots=[],SEP=4,farOK=(x,y)=>{for(const s of spots)if(Math.abs(s.x-x)<SEP&&Math.abs(s.y-y)<SEP)return false;return true;};
+  // ore outcrops (5 of each raw) — must grow from a rock/wall surface
+  for(let r=0;r<3;r++){const id=T.raw[r];let placed=0,tries=0;
+    while(placed<5&&tries<700){tries++;const x=(3+Math.random()*(MW-6))|0,y=(top+2+Math.random()*(bot-top-4))|0;
+      if(map[y][x]!==EMPTY||nearSpawn(x,y)||!farOK(x,y))continue;
+      const sol=(xx,yy)=>{const t=(yy>=0&&yy<MH&&xx>=0&&xx<MW)?map[yy][xx]:WALL;return t===ROCK||t===WALL;};
+      let face=null;
+      if(sol(x,y+1))face='up';else if(sol(x,y-1))face='down';else if(sol(x-1,y))face='right';else if(sol(x+1,y))face='left';
+      if(!face)continue;
+      map[y][x]=ORE;oreCells.push({x,y,resId:id,prog:0,maxhp:60,face,tier:i});spots.push({x,y});placed++;}}
+  // mixers (5 of each)
+  for(let m=0;m<3;m++){const id=T.mix[m];let placed=0,tries=0;
+    while(placed<5&&tries<500){tries++;const x=(3+Math.random()*(MW-6))|0,y=(top+2+Math.random()*(bot-top-4))|0;
+      if(map[y][x]===EMPTY&&!nearSpawn(x,y)&&farOK(x,y)){mixers.push({x:x*TS+8,y:y*TS+8,resId:id,ph:Math.random()*6,tier:i});spots.push({x,y});placed++;}}}
+  // valuable scrap (rarer; richer the deeper you go)
+  {const pool=[['cog','cog','coil'],['cog','coil','coil','plate'],['coil','plate','plate','idol'],['plate','idol','idol']][Math.min(i,3)];
+   for(let s=0;s<3;s++){let tries=0;while(tries<200){tries++;const x=(3+Math.random()*(MW-6))|0,y=(top+3+Math.random()*(bot-top-5))|0;
+     if(map[y][x]===EMPTY&&!nearSpawn(x,y)&&farOK(x,y)){scraps.push({x:x*TS+8,y:y*TS+8,kind:pool[(Math.random()*pool.length)|0],ph:Math.random()*6,got:false,tier:i});spots.push({x,y});break;}}}}
+  // (air pockets removed — oxygen now comes from the base air rope)
+  // electric nodes
+  for(let e=0;e<T.haz.elec;e++){let tries=0;while(tries<80){tries++;const x=(5+Math.random()*(MW-10))|0,y=(top+4+Math.random()*(bot-top-8))|0;
+    if(map[y][x]===EMPTY){nodes.push({x:x*TS+8,y:y*TS+8,r:24,ph:(Math.random()*180)|0,st:0,tier:i});break;}}}
+  // blobs
+  for(let b=0;b<T.haz.blob;b++){const y=(top+6+Math.random()*(bot-top-12))|0;
+    blobs.push({x:(MW/2)*TS,y:y*TS,minx:5*TS,maxx:(MW-6)*TS,dir:Math.random()<.5?1:-1,ph:Math.random()*6,tier:i});}
+  // thermal vents — hot-water pools (deeper tiers, scales with depth, capped like the other hazards in hazFor)
+  if(i>=1){const ventN=Math.min(i,6);for(let k=0;k<ventN;k++){let tries=0;while(tries<60){tries++;
+    const tw=3+((Math.random()*3)|0),th=2+((Math.random()*2)|0),tx2=(4+Math.random()*(MW-10))|0,ty2=(top+4+Math.random()*(bot-top-9))|0;
+    let okp=true;for(let yy=ty2;yy<ty2+th&&okp;yy++)for(let xx=tx2;xx<tx2+tw;xx++){if(yy<0||yy>=MH||xx<1||xx>=MW-1||map[yy][xx]!==EMPTY){okp=false;break;}}
+    if(okp){for(let yy=ty2;yy<ty2+th;yy++)for(let xx=tx2;xx<tx2+tw;xx++)map[yy][xx]=THERMAL;break;}}}}
+  // base station (top of tier) — tier 0 starts active; deeper bases must be activated
+  const bcx=(MW/2)|0;
+  for(let yy=top+1;yy<=top+4;yy++)for(let xx=bcx-2;xx<=bcx+2;xx++){if(yy<=0||yy>=MH||xx<=1||xx>=MW-2)continue;
+    if(map[yy][xx]===ORE){const oi=oreCells.findIndex(o=>o.x===xx&&o.y===yy);if(oi>=0)oreCells.splice(oi,1);}
+    map[yy][xx]=EMPTY;}
+  bases[i]={tier:i,x:bcx*TS+8,y:(top+3)*TS+4,active:i===0,ropeLen:ROPE_DEF,endX:bcx*TS+8,endY:(top+3)*TS+4};
+  for(let ni=nodes.length-1;ni>=0;ni--)if(Math.hypot(nodes[ni].x-bases[i].x,nodes[ni].y-bases[i].y)<44)nodes.splice(ni,1);
+  // bulkhead seal
+  const bcells=[];for(let y=bot+1;y<=bot+2;y++)for(let x=2;x<=MW-3;x++){map[y][x]=BULK;bcells.push({x,y});}
+  bulkheads.push({tier:i,cells:bcells,open:false});
+  // city transit gate — the EXIT hatch in the city's final layer (its bulkhead never opens)
+  if(SCHED.length&&i===SCHED.length-1){
+    const ecx=(MW/2)|0;
+    for(let yy=bot-4;yy<=bot;yy++)for(let xx=ecx-3;xx<=ecx+3;xx++){if(yy<=0||yy>=MH||xx<=1||xx>=MW-2)continue;
+      if(map[yy][xx]===ORE){const oi=oreCells.findIndex(o=>o.x===xx&&o.y===yy);if(oi>=0)oreCells.splice(oi,1);}
+      map[yy][xx]=EMPTY;}
+    cityExit={x:ecx*TS+8,y:(bot-1)*TS+8,tier:i,cool:false};
+  }
+  if(tierDry[i]===undefined)tierDry[i]=i>0&&Math.random()<0.45;   // decks can spawn dry — flooded when the bulkhead above releases
+  ensureLayerMission(i);   // this layer's quest: every machine + the control unit, in this layer
+}
+// append all-WALL rows until the map is at least `rows` tall (the map grows as the diver descends)
+function growMapTo(rows){if(!map)map=[];while(map.length<rows){const row=[];for(let x=0;x<MW;x++)row[x]=WALL;map.push(row);}MH=Math.max(MH||0,map.length);}
+function genWorld(){
+  MW=44;
+  tierTop=[3,37,71,105]; tierBot=[34,68,102,136];
+  MH=0; map=[]; growMapTo(tierTop[3]+34);     // base 4 tiers, no relic vault (deeper tiers append rows)
+  oreCells=[];mixers=[];bases=[];nodes=[];blobs=[];bulkheads=[];scraps=[];scrapInv={};creatures=[];
+  kelp=[];scenery=[];debris=[];bgTex=[];bgGlowTex=[];prerenderTiles={};ALLRAW=[];generatedTiers=4;cityExit=null;layerMissions={};missionObjs=[];sporeFx=[];podBlasts=[];nearMission=null;tierDry=[];floodFx=null;bulkAnims=[];
+  tierInfested=[];lastInfestTier=-1;nearMech=null;
+  TIERS.length=4; for(const id in RES)if(idTier(id)>4)delete RES[id];   // drop deep tiers from any previous run
+  genTheme();                                 // re-roll archetypes + re-skin the base ores/items
+  for(const T of TIERS.slice(0,4))for(const id of T.raw)ALLRAW.push(id);
+  for(let i=0;i<4;i++)buildTierBgTex(i);
+  for(let i=0;i<4;i++)genTier(i);
+  for(let i=0;i<4;i++)genCreatures(i);
+  relic=null;                                 // endless descent — depth is the score, no fixed bottom
+  for(let i=0;i<4;i++)genTierEnv(i);
+  for(let i=0;i<46;i++)debris.push(newDebris(true));
+}
+// ====== AMBIENT ENVIRONMENT LIFE (parallax glows, swaying kelp, drifting debris) ======
+const SCENE=[['pipe','neon','girder','pipe'],['vat','tower','vat'],['rustpipe','valve','rustpipe'],['circuit','server','gear','circuit']];
+// scenery props + floor kelp for one tier, coloured by its archetype
+function genTierEnv(n){
+  const top=tierTop[n],bot=tierBot[n],a=THEME[n];
+  const types=(a&&a.scenery)||SCENE[Math.min(n,3)], cnt=n===0?10:8;
+  for(let i=0;i<cnt;i++)scenery.push({x:18+Math.random()*(MW*TS-36),y:top*TS+18+Math.random()*((bot-top)*TS-36),
+    type:types[(Math.random()*types.length)|0],ph:Math.random()*7,c:(Math.random()*3)|0,tier:n});
+  const kc=(a&&a.kelp)||['#2e7d4f','#5fe39a'];
+  for(let ty=top;ty<=bot;ty++)for(let tx=2;tx<MW-2;tx++){
+    if(map[ty][tx]!==EMPTY)continue;const below=map[ty+1]&&map[ty+1][tx];
+    if(below!==ROCK&&below!==WALL)continue;
+    if(Math.random()>0.06)continue;
+    kelp.push({x:tx*TS+3+((Math.random()*10)|0),y:(ty+1)*TS,h:7+((Math.random()*17)|0),
+      ph:Math.random()*7,sw:0.5+Math.random()*0.9,col:kc[0],tip:kc[1],tier:n});}
+}
+function newDebris(anywhere){const k=Math.random(),type=k<0.5?'fleck':k<0.8?'mote':'chunk';
+  return {x:anywhere?Math.random()*MW*TS:(RCX-20+Math.random()*(VW+40)),
+    y:anywhere?Math.random()*MH*TS:(RCY+VH+Math.random()*44),
+    vx:(Math.random()-0.5)*4,vy:-2-Math.random()*5,sp:0.5+Math.random()*1.5,rot:Math.random()*6,
+    size:type==='chunk'?2+(Math.random()*2|0):1,type,
+    col:type==='chunk'?'#4a5560':type==='mote'?'#8fb6c8':'#5d6e7a'};}
+// ====== RICH PER-TIER BACKGROUND (dense machinery wall behind the platforms) ======
+let bgTex=[], bgGlowTex=[];
+const BTS=128;
+function newTex(){const c=document.createElement('canvas');c.width=BTS;c.height=BTS;return c;}
+function buildTierBgTex(n){const c=newTex(),gc=newTex();bgTexDraw(n,c.getContext('2d'),gc.getContext('2d'));bgTex[n]=c;bgGlowTex[n]=gc;}
+function bgTexDraw(tier,b,g,archKeyOverride){ // b = dim structure layer, g = additive glow layer; override paints a buffer neighbour pure
+  const R=(x,y)=>{let n=((x+7)*928371+(y+13)*1233 + tier*9301)>>>0;n=((n^(n>>13))*1274126177)>>>0;return((n^(n>>16))>>>0)/4294967296;};
+  const P=(c,x,y,w,h,col)=>{c.fillStyle=col;c.fillRect(x,y,w,h);};
+  const GL=(x,y,r,col)=>{const grd=g.createRadialGradient(x,y,0,x,y,r);grd.addColorStop(0,col);grd.addColorStop(1,'rgba(0,0,0,0)');g.fillStyle=grd;g.fillRect(x-r,y-r,r*2,r*2);};
+  // palette + feature style come from this tier's assigned archetype (or a buffer neighbour, pure)
+  const arch=archKeyOverride?ARCHETYPES[archKeyOverride]:(THEME[tier]||{bg:'ducts',pal:ARCHETYPES.cybersewer.pal});
+  const PAL=arch.pal||ARCHETYPES.cybersewer.pal;
+  const sty=(EXT_BG_ON&&arch.bgx)?arch.bgx:arch.bg;
+  P(b,0,0,BTS,BTS,PAL.base);
+  // panel grid + rivets
+  for(let py=0;py<BTS;py+=32){P(b,0,py,BTS,1,PAL.seam);P(b,0,py+1,BTS,1,PAL.hi);}
+  for(let px2=0;px2<BTS;px2+=32){P(b,px2,0,1,BTS,PAL.seam);P(b,px2+1,0,1,BTS,PAL.hi);
+    for(let py=0;py<BTS;py+=32){P(b,px2+3,py+3,1,1,PAL.rivet);P(b,px2+27,py+3,1,1,PAL.rivet);P(b,px2+3,py+27,1,1,PAL.rivet);P(b,px2+27,py+27,1,1,PAL.rivet);}}
+  // horizontal + vertical pipe runs
+  function hpipe(y){P(b,0,y,BTS,5,PAL.pipe);P(b,0,y,BTS,1,PAL.pipeL);P(b,0,y+4,BTS,1,PAL.seam);for(let x=8;x<BTS;x+=22)P(b,x,y-1,2,7,PAL.rivet);}
+  function vpipe(x){P(b,x,0,5,BTS,PAL.pipe);P(b,x,0,1,BTS,PAL.pipeL);P(b,x+4,0,1,BTS,PAL.seam);for(let y=8;y<BTS;y+=22)P(b,x-1,y,7,2,PAL.rivet);}
+  hpipe(46);hpipe(104);vpipe(20);vpipe(92);
+  // vents / gauges / boxes (deterministic)
+  for(let i=0;i<7;i++){const x=(R(i,1)*112)|0,y=(R(i,2)*112)|0,k=(R(i,3)*4)|0;
+    if(k===0){P(b,x,y,12,9,PAL.seam);for(let s=1;s<9;s+=2)P(b,x+1,y+s,10,1,PAL.hi);} // vent
+    else if(k===1){P(b,x,y,9,9,PAL.rivet);P(b,x+1,y+1,7,7,PAL.seam);P(b,x+3,y+3,3,3,PAL.pipeL);} // gauge box
+    else if(k===2){P(b,x,y,10,6,PAL.pipe);P(b,x,y,10,1,PAL.pipeL);P(b,x+2,y+2,2,2,PAL.accent);GL(x+3,y+3,6,'rgba('+PAL.acc2+',0.55)');} // lit junction
+  }
+  // archetype-specific features + growth + glow
+  if(sty==='ducts'){ // cyberpunk sewers: glowing cyan conduit + moss + mushrooms
+    P(b,60,0,6,BTS,'#0c2630');P(b,62,0,3,BTS,PAL.accent);for(let y=4;y<BTS;y+=11)P(b,61,y,5,3,'#aef6ff');
+    GL(63,30,13,'rgba('+PAL.acc2+',0.4)');GL(63,92,13,'rgba('+PAL.acc2+',0.4)');
+    for(let i=0;i<12;i++){const x=(R(i,5)*120)|0,y=(R(i,6)*120)|0;P(b,x,y,6,3,PAL.moss);P(b,x+1,y-1,1,2,'#3f8a4e');if(R(i,7)>0.6){P(b,x+2,y,1,1,'#7fffb0');GL(x+2,y,4,'rgba(110,255,170,0.5)');}}
+  } else if(sty==='core'){ // biocyber swamp: green core panels + ooze + moss
+    P(b,46,40,26,30,'#11402a');P(b,48,42,22,26,'#0c3320');P(b,50,44,18,22,'#1c7a3e');
+    for(let i=0;i<9;i++){const ox=50+((R(i,8)*16)|0),oy=44+((R(i,9)*20)|0);P(b,ox,oy,2,2,'#4fd06e');}
+    P(b,46,40,26,2,'#caa83a');P(b,46,68,26,2,'#caa83a');for(let x=46;x<72;x+=8){P(b,x,40,4,2,'#1a1a1a');}
+    GL(59,55,16,'rgba(90,230,110,0.42)');GL(59,55,8,'rgba(180,255,200,0.4)');
+    for(let i=0;i<10;i++){const x=(R(i,5)*120)|0,y=(R(i,6)*120)|0;P(b,x,y,5,4,PAL.moss);if(R(i,7)>0.5){P(b,x+2,y+4,1,3,'#5fe07a');GL(x+2,y+5,3,'rgba(90,230,110,0.5)');}}
+  } else if(sty==='reactor'){ // radioactive waste: isotope veins + glowing ooze drips + lichen
+    for(let i=0;i<6;i++){const x=(R(i,10)*120)|0;let y=0;while(y<BTS){const nx=x+Math.round(Math.sin(y*0.2+i)*5);P(b,nx,y,2,4,'#3a6a1e');P(b,nx,y,1,4,'#6aa82e');y+=4;}}
+    for(let i=0;i<8;i++){const x=(R(i,11)*118)|0,y=(R(i,12)*70)|0;P(b,x,y,2,8,'#5a7a1e');P(b,x,y+8,1,3,'#8fc23c');P(b,x,y+11,1,2,'#c6ff3c');GL(x,y+12,4,'rgba(180,255,60,0.4)');}
+    for(let i=0;i<6;i++){const x=(R(i,13)*116)|0,y=(R(i,14)*116)|0,mc=R(i,15)>0.5?'#9ac23c':'#caa83a';P(b,x,y,7,3,mc);P(b,x+1,y+3,2,3,'#3a4a1e');if(R(i,16)>0.4){P(b,x+3,y,1,1,'#e6ffb0');GL(x+3,y+1,5,'rgba(200,255,80,0.5)');}}
+  } else if(sty==='tanks'){ // derelict water filtration: settling tank + gauges + filter drip + scale
+    P(b,40,30,46,70,'#0e2a2e');P(b,42,32,42,66,'#123238');
+    for(let yy=46;yy<98;yy+=6){P(b,42,yy,42,2,'#1d4a50');P(b,42,yy,42,1,'#2c6a6e');}
+    GL(63,70,18,'rgba(70,224,208,0.26)');
+    for(let i=0;i<4;i++){const gx=44+i*11;P(b,gx,34,8,8,'#0a1e22');P(b,gx+1,35,6,6,'#16383c');P(b,gx+3,37,2,2,PAL.accent);GL(gx+3,38,4,'rgba('+PAL.acc2+',0.5)');}
+    for(let i=0;i<5;i++){const x=(R(i,5)*116)|0,y=(R(i,6)*40)|0;P(b,x,y,3,40,'#1c4248');P(b,x,y,1,40,'#2c6066');P(b,x+1,y+40,1,4,'#46e0d0');GL(x+1,y+42,4,'rgba(70,224,208,0.45)');}
+    for(let i=0;i<10;i++){const x=(R(i,7)*120)|0,y=(R(i,8)*120)|0;P(b,x,y,2,2,'#9fc2bf');}
+  } else if(sty==='channels'){ // storm culverts: twin arch mouths + waterline stains + wash streaks (§8.4)
+    for(let s=0;s<2;s++){const ax=18+s*62;P(b,ax,58,34,52,PAL.seam);
+      for(let i=0;i<17;i++){const w=34-2*Math.abs(i-8);P(b,ax+17-(w>>1),58+i*3-24,w,3,i%2?PAL.hi:PAL.base);}
+      P(b,ax+4,86,26,24,'#04080a');GL(ax+17,96,10,'rgba('+PAL.acc2+',0.22)');}
+    for(let i=0;i<5;i++){const y=70+((R(i,3)*40)|0);P(b,0,y,BTS,1,PAL.moss);}
+    for(let i=0;i<8;i++){const x=(R(i,4)*120)|0;P(b,x,20+((R(i,5)*30)|0),1,26,PAL.seam);}
+  } else if(sty==='platform'){ // drowned transit platform: edge band, route sign, tile wainscot
+    P(b,0,84,BTS,3,'#ffcf3a');for(let x=0;x<BTS;x+=8)P(b,x,84,4,3,'#181818');
+    P(b,0,87,BTS,26,PAL.hi);for(let x=0;x<BTS;x+=16)P(b,x,87,1,26,PAL.seam);
+    P(b,30,22,68,16,PAL.seam);P(b,32,24,64,12,'#0a0f16');P(b,36,28,40,4,PAL.accent);
+    P(b,80,28,10,4,'#ff5862');GL(64,30,18,'rgba('+PAL.acc2+',0.4)');
+  } else if(sty==='furnace'){ // crucible mouths + slag glow pools + heat shimmer bars
+    for(let s=0;s<3;s++){const fx=14+s*38;P(b,fx,40,26,34,PAL.seam);P(b,fx+3,46,20,22,'#050303');
+      P(b,fx+5,60,16,8,'#ff6a2c');P(b,fx+7,62,12,4,'#ffd23c');GL(fx+13,64,14,'rgba(255,140,50,0.5)');}
+    for(let i=0;i<6;i++){const x=(R(i,6)*116)|0;P(b,x,100+((R(i,7)*20)|0),8,3,'#ff8a3c');GL(x+4,102,6,'rgba(255,120,40,0.35)');}
+  } else if(sty==='coldstore'){ // frost panels, hanging hooks, fog vents
+    for(let x=0;x<BTS;x+=24)for(let y=0;y<BTS;y+=24){P(b,x+1,y+1,22,1,'#dff6ff');P(b,x+1,y+1,1,10,'#bfe8ff');}
+    for(let i=0;i<5;i++){const hx=12+i*24;P(b,hx,0,1,14,PAL.rivet);P(b,hx-2,14,5,2,'#8a96a2');P(b,hx-1,16,1,3,'#aab6c2');}
+    for(let i=0;i<4;i++){const x=(R(i,8)*112)|0;P(b,x,108,12,6,PAL.seam);GL(x+6,110,9,'rgba(200,240,255,0.28)');}
+  } else if(sty==='vaults'){ // brick vault ribs + niches + seep
+    for(let s=0;s<3;s++){const vx=20+s*44;for(let i=0;i<15;i++){const w=30-2*Math.abs(i-7);
+      P(b,vx-(w>>1),16+i*2,w,2,i%2?PAL.hi:PAL.base);}P(b,vx-13,46,26,60,PAL.seam);
+      P(b,vx-8,56,16,22,'#05070a');P(b,vx-6,58,12,2,PAL.rivet);}
+    for(let y=48;y<BTS;y+=10)P(b,0,y,BTS,1,PAL.seam);
+    for(let i=0;i<6;i++){const x=(R(i,9)*120)|0;P(b,x,90+((R(i,10)*30)|0),1,14,PAL.moss);}
+  } else if(sty==='canopy'){ // overgrown lattice: trellis grid + hanging growth + fruiting glow
+    for(let x=8;x<BTS;x+=20)P(b,x,0,2,BTS,PAL.rivet);for(let y=8;y<BTS;y+=20)P(b,0,y,BTS,2,PAL.rivet);
+    for(let i=0;i<14;i++){const x=(R(i,11)*120)|0,l=6+((R(i,12)*22)|0);P(b,x,0,1,l,PAL.moss);
+      P(b,x-1,l,3,3,PAL.moss);if(R(i,13)>0.6){P(b,x,l+1,1,1,PAL.accent);GL(x,l+1,4,'rgba('+PAL.acc2+',0.45)');}}
+    for(let i=0;i<8;i++){const x=(R(i,14)*118)|0,y=(R(i,15)*118)|0;P(b,x,y,4,3,PAL.moss);}
+  } else if(sty==='gallery'){ // grand machine hall: volute + flywheel + gauge rail
+    P(b,30,44,50,50,PAL.seam);for(let r=22;r>4;r-=5)for(let i=0;i<20;i++){const a2=i/20*6.283;
+      P(b,(55+Math.cos(a2)*r)|0,(69+Math.sin(a2)*r)|0,2,2,r%2?PAL.pipe:PAL.hi);}
+    P(b,53,67,5,5,PAL.pipeL);GL(55,69,10,'rgba('+PAL.acc2+',0.3)');
+    P(b,0,20,BTS,4,PAL.pipe);for(let x=6;x<BTS;x+=18){P(b,x,17,6,3,PAL.rivet);P(b,x+2,18,2,1,PAL.accent);}
+  } else { // datacentre: server racks + circuits + neon (default 'racks')
+    for(let s=0;s<2;s++){const rx=24+s*64,ry=16;P(b,rx,ry,28,86,'#0c1322');P(b,rx+1,ry+1,26,84,'#141d2e');
+      for(let r=0;r<14;r++){const yy=ry+3+r*6;P(b,rx+2,yy,24,4,'#0a0f1a');for(let c2=0;c2<4;c2++){const on=R(s*20+r,c2)>0.4,col=c2===0?'#46ff8a':c2===1?'#46d0ff':'#ffcf3a';P(b,rx+4+c2*5,yy+1,1,1,on?col:'#243040');if(on&&R(r,c2+5)>0.7)GL(rx+4+c2*5,yy+1,3,'rgba(90,180,255,0.45)');}}}
+    P(b,8,6,28,8,'#3a1530');P(b,10,8,24,4,'#ff3c6a');GL(22,10,10,'rgba(255,60,106,0.4)');  // DATA neon
+    for(let i=0;i<8;i++){const x=(R(i,17)*118)|0,y=(R(i,18)*118)|0;P(b,x,y,10,1,'#2f6f82');P(b,x+5,y-4,1,5,'#2f6f82');P(b,x+5,y,2,2,PAL.accent);GL(x+6,y+1,5,'rgba(90,180,255,0.45)');}
+  }
+  // buffer layer: composite the neighbouring environment's texture over at its blend weight (§3)
+  const BL=!archKeyOverride&&THEME[tier]&&THEME[tier].blend;
+  if(BL&&ARCHETYPES[BL.arch]){const oc=document.createElement('canvas');oc.width=oc.height=BTS;
+    const og=document.createElement('canvas');og.width=og.height=BTS;
+    bgTexDraw(tier,oc.getContext('2d'),og.getContext('2d'),BL.arch);   // neighbour, pure
+    b.globalAlpha=BL.w;b.drawImage(oc,0,0);b.globalAlpha=1;
+    g.globalAlpha=BL.w;g.drawImage(og,0,0);g.globalAlpha=1;}
+  // soft vignette darkening on the dim layer
+  const vg=b.createRadialGradient(BTS/2,BTS/2,BTS*0.2,BTS/2,BTS/2,BTS*0.8);vg.addColorStop(0,'rgba(0,0,0,0)');vg.addColorStop(1,'rgba(0,0,0,0.35)');b.fillStyle=vg;b.fillRect(0,0,BTS,BTS);
+}
+function tileTex(tex,par){const ox=-(((RCX*par)%BTS+BTS)%BTS),oy=-(((RCY*par)%BTS+BTS)%BTS);
+  for(let y=oy-BTS;y<VH+BTS;y+=BTS)for(let x=ox-BTS;x<VW+BTS;x+=BTS)ctx.drawImage(tex,Math.round(x),Math.round(y));}
+function bgBands(texArr,par,useGlowMul){const N=tierTop.length;
+  for(let t=0;t<N;t++){const e0=(t===0?0:tierTop[t]*TS),e1=(t+1<N?tierTop[t+1]*TS:MH*TS);
+    const sy0=Math.max(-TM,e0-RCY),sy1=Math.min(VH+TM,e1-RCY);
+    if(sy1<=sy0)continue;
+    if(!texArr[t]){if(t<generatedTiers&&THEME[t])buildTierBgTex(t);if(!texArr[t])continue;}   // evicted / not saved — rebuild on sight
+    ctx.save();ctx.beginPath();ctx.rect(-TM,sy0,VW+2*TM,sy1-sy0);ctx.clip();
+    if(useGlowMul)ctx.globalAlpha=Math.min(1,(THEME[t]&&THEME[t].glowMul)||1);   // BLACKOUT goes dark, PHOSPHOR blooms
+    tileTex(texArr[t],par);ctx.restore();}}
+function drawBgWall(){bgBands(bgTex,0.55);
+  // structural divider beam at each tier boundary
+  for(let t=1;t<tierTop.length;t++){const y=tierTop[t]*TS-RCY;if(y<-6||y>VH+6)continue;
+    ctx.fillStyle='#0a1118';ctx.fillRect(-TM,y-3,VW+2*TM,6);ctx.fillStyle='#1c2c38';ctx.fillRect(-TM,y-3,VW+2*TM,1);ctx.fillStyle='#05080c';ctx.fillRect(-TM,y+2,VW+2*TM,1);}
+}
+function drawBgGlow(){ctx.globalCompositeOperation='lighter';bgBands(bgGlowTex,0.55,true);ctx.globalCompositeOperation='source-over';}
+function drawKelp(){
+  const elo=entTierLo(),ehi=entTierHi();
+  for(const k of kelp){if(k.tier<elo||k.tier>ehi)continue;const bx=k.x-RCX,by=k.y-RCY;
+    if(bx<-12||bx>VW+12||by<-12||by-k.h>VH+12)continue;
+    for(let s=0;s<k.h;s++){const sway=Math.sin(state.tick*0.04*k.sw+k.ph+s*0.22)*(s/k.h)*3.4;
+      const sx=Math.round(bx+sway),sy=by-s;
+      px(ctx,sx,sy,1,1,s>k.h-3?k.tip:k.col);
+      if(s%4===2)px(ctx,sx+((s>>1)&1?1:-1),sy,1,1,k.col);}
+    const tx=Math.round(bx+Math.sin(state.tick*0.04*k.sw+k.ph+k.h*0.22)*3.4);
+    gl(k.x+(tx-bx),k.y-k.h,4,hex2rgb(k.tip).join(','),0.5);}
+}
+function drawDebris(){
+  for(const d of debris){d.x+=d.vx*0.16;d.y+=d.vy*0.16;
+    const sx=d.x-RCX,sy=d.y-RCY;
+    if(sy<-32||sx<-32||sx>VW+32){Object.assign(d,newDebris(false));continue;}
+    const wob=Math.sin(state.tick*0.05*d.sp+d.rot)*1.3,X=Math.round(sx+wob),Y=Math.round(sy);
+    px(ctx,X,Y,d.size,d.size,d.col);
+    if(d.type==='chunk')px(ctx,X,Y,1,1,'#6e7e8c');}
+}
+// ====== BACKGROUND SCENERY (parallax props per biome) ======
+function glS(sx,sy,r,col,a){glows.push({x:Math.round(sx),y:Math.round(sy),r,col,a,k:GLK});}
+const SCN_P=0.84;  // scenery parallax (close to 1 so it stays in its tier)
+function drawScenery(){const t=state.tick;
+  const elo=entTierLo(),ehi=entTierHi();
+  for(const s of scenery){if(s.tier<elo||s.tier>ehi)continue;const X=Math.round(s.x-RCX*SCN_P-(1-SCN_P)*RCX),Y=Math.round(s.y-RCY*SCN_P-(1-SCN_P)*RCY);
+    if(X<-60||X>VW+60||Y<-80||Y>VH+60)continue;
+    switch(s.type){
+      case 'pipe':{ // overhead pipe run with flanges
+        px(ctx,X-22,Y,44,5,'#2b3742');px(ctx,X-22,Y,44,1,'#3e4c58');px(ctx,X-22,Y+4,44,1,'#161e26');
+        px(ctx,X-14,Y-1,3,7,'#222d36');px(ctx,X+11,Y-1,3,7,'#222d36');px(ctx,X-4,Y+1,1,3,'#46505c');break;}
+      case 'girder':{ // truss / I-beam cross
+        px(ctx,X-18,Y,36,3,'#232e38');px(ctx,X-18,Y+12,36,3,'#232e38');
+        for(let i=-15;i<16;i+=8){px(ctx,X+i,Y,2,15,'#1c2630');px(ctx,X+i,Y+i%3,8,2,'#283440');}break;}
+      case 'neon':{ // glowing neon sign
+        const NC=['255,80,90','120,230,255','255,170,60'][s.c],hex=['#ff5862','#7fe6ff','#ffaa3c'][s.c];
+        const bl=(t*0.1+s.ph*9)%10>1.2?1:0.5;
+        px(ctx,X-12,Y-6,24,14,'#0a1018');px(ctx,X-11,Y-5,22,12,'#0e1620');
+        if(bl>0.8){px(ctx,X-9,Y-3,3,8,hex);px(ctx,X-4,Y-3,3,8,hex);px(ctx,X+1,Y-3,3,8,hex);px(ctx,X+6,Y-3,2,8,hex);px(ctx,X-9,Y-3,17,1,hex);}
+        glS(X,Y,16,NC,0.18*bl);break;}
+      case 'vat':{ // glowing bio tank
+        const gp=0.6+0.4*Math.sin(t*0.04+s.ph);
+        px(ctx,X-9,Y-18,18,40,'#14302a');px(ctx,X-8,Y-17,16,38,'#10261f');
+        px(ctx,X-7,Y-14,14,32,'#1c7a3e');px(ctx,X-7,Y-14,14,32,'#1c7a3e');
+        for(let i=0;i<6;i++){const yy=Y-12+i*6+((t*0.3)%6),xx=X-5+((i*5+((t*0.4)|0))%11);px(ctx,xx,yy|0,2,2,'#4fd06e');}
+        px(ctx,X-9,Y-18,18,2,'#3a4a52');px(ctx,X-9,Y+20,18,2,'#3a4a52');px(ctx,X-7,Y-14,3,30,'#3fe07a');
+        glS(X,Y,22,'80,230,110',0.16*gp);break;}
+      case 'tower':{ // cooling-tower silhouette
+        px(ctx,X-14,Y-20,28,4,'#16242a');px(ctx,X-11,Y-16,22,36,'#13202600');
+        for(let yy=0;yy<36;yy+=2){const w=22-Math.round(Math.sin(yy/36*Math.PI)*7);px(ctx,X-(w>>1),Y-16+yy,w,1,'#14222a');}
+        px(ctx,X-14,Y-20,28,2,'#22343c');break;}
+      case 'rustpipe':{ // corroded dripping pipe
+        px(ctx,X-20,Y,40,6,'#5a4a2e');px(ctx,X-20,Y,40,1,'#7a6a42');px(ctx,X-20,Y+5,40,1,'#2e2614');
+        for(let i=0;i<4;i++){const rx=X-16+i*10+((s.c*3)|0);px(ctx,rx,Y+1,3,4,'#8f4a1e');px(ctx,rx+1,Y+2,1,2,'#c2641e');}
+        const dy=((t*0.6+s.ph*10)%14);px(ctx,X-2,Y+6,1,(dy)|0,'#b85a1e');px(ctx,X-2,Y+6+(dy|0),1,2,'#ff9a3c');break;}
+      case 'valve':{ // valve wheel on pipe
+        px(ctx,X-3,Y-14,6,16,'#4a4030');px(ctx,X-3,Y-14,6,1,'#6a5c42');
+        for(let a=0;a<6;a++){const an=a/6*6.283,wx=X+Math.cos(an)*6,wy=Y+Math.sin(an)*6;px(ctx,wx|0,wy|0,2,2,'#6a5a3a');}
+        px(ctx,X-6,Y-6,12,2,'#5a4c34');px(ctx,X-1,Y-1,2,2,'#7a6a48');px(ctx,X-7,Y-1,2,2,'#8f4a1e');break;}
+      case 'circuit':{ // glowing PCB panel
+        const gp=0.55+0.45*Math.sin(t*0.05+s.ph),CC=s.c===0?'120,80,255':s.c===1?'70,208,255':'255,90,200',hex=s.c===0?'#7f5cff':s.c===1?'#46d0ff':'#ff5ac8';
+        px(ctx,X-18,Y-16,36,32,'#160e26');px(ctx,X-17,Y-15,34,30,'#1a1230');
+        for(let i=0;i<5;i++){const ly=Y-12+i*6;px(ctx,X-14,ly,(8+s.c*4+i*3)%26,1,hex);px(ctx,X-14+((i*7)%24),ly-3,1,4,hex);}
+        for(let i=0;i<4;i++){px(ctx,X-12+i*8,Y-13+((i*5)%24),2,2,hex);}
+        glS(X,Y,24,CC,0.15*gp);break;}
+      case 'server':{ // server rack with blinking LEDs
+        px(ctx,X-10,Y-18,20,38,'#10161f');px(ctx,X-9,Y-17,18,36,'#161e2a');
+        for(let r=0;r<8;r++){const ry=Y-15+r*4.5;px(ctx,X-8,ry|0,16,3,'#0c1119');
+          for(let c=0;c<3;c++){const on=((t*0.2+r*3+c*7+s.ph*5)|0)%5<3;px(ctx,X-6+c*5,ry|0+1,1,1,on?(c===0?'#46ff8a':c===1?'#46d0ff':'#ffcf3a'):'#243040');}}
+        glS(X,Y,18,'70,208,255',0.12);break;}
+      case 'gear':{ // big slow cog
+        const an=t*0.004+s.ph;px(ctx,X-2,Y-2,4,4,'#2a3440');
+        for(let i=0;i<10;i++){const a=an+i/10*6.283,gx=X+Math.cos(a)*11,gy=Y+Math.sin(a)*11;px(ctx,gx|0,gy|0,3,3,'#323e4a');}
+        for(let rr=9;rr>2;rr-=2)for(let i=0;i<12;i++){const a=an+i/12*6.283;px(ctx,(X+Math.cos(a)*rr)|0,(Y+Math.sin(a)*rr)|0,2,2,'#28333e');}
+        px(ctx,X-1,Y-1,2,2,'#46505c');break;}
+    }
+  }
+}
+// ====== SOFT RESOURCE RESPAWN (prevents dead-ends) ======
+// (ALLRAW is declared up in the theme section and (re)filled per play in genWorld / growTier)
+const RESP_INT=8, ORE_FLOOR=2, MIX_FLOOR=2;
+function farFromPlayer(px,py){return Math.hypot(px-(player.x+4),py-(player.y+4))>46;}
+function spawnOreInTier(t,id){const top=tierTop[t],bot=tierBot[t];
+  for(let tries=0;tries<140;tries++){const x=(3+Math.random()*(MW-6))|0,y=(top+2+Math.random()*(bot-top-4))|0;
+    if(map[y][x]!==EMPTY||!farFromPlayer(x*TS+8,y*TS+8))continue;
+    const sol=(xx,yy)=>{const tt=(yy>=0&&yy<MH&&xx>=0&&xx<MW)?map[yy][xx]:WALL;return tt===ROCK||tt===WALL;};
+    let face=null;if(sol(x,y+1))face='up';else if(sol(x,y-1))face='down';else if(sol(x-1,y))face='right';else if(sol(x+1,y))face='left';
+    if(!face)continue;
+    map[y][x]=ORE;oreCells.push({x,y,resId:id,prog:0,maxhp:60,face,fresh:60,tier:t});
+    burst(x*TS+8,y*TS+8,10,80,0.6,RES[id].col);
+    return true;}
+  return false;}
+function spawnMixerInTier(t,id){const top=tierTop[t],bot=tierBot[t];
+  for(let tries=0;tries<140;tries++){const x=(3+Math.random()*(MW-6))|0,y=(top+2+Math.random()*(bot-top-4))|0;
+    if(map[y][x]!==EMPTY||!farFromPlayer(x*TS+8,y*TS+8))continue;
+    mixers.push({x:x*TS+8,y:y*TS+8,resId:id,ph:Math.random()*6,fresh:60,tier:t});
+    burst(x*TS+8,y*TS+8,8,70,0.5,RES[id].col);
+    return true;}
+  return false;}
+function doRespawn(){const cur=tAt(player.y);
+  // count each resId once over the whole world (O(total)) instead of re-filtering the
+  // full oreCells/mixers arrays once per tier per id (was O(tiers * total))
+  const oreN={},mixN={};
+  for(const o of oreCells)oreN[o.resId]=(oreN[o.resId]||0)+1;
+  for(const m of mixers)mixN[m.resId]=(mixN[m.resId]||0)+1;
+  for(let t=0;t<=cur;t++){const T=TIERS[t];
+    for(const id of T.raw){if((oreN[id]||0)<ORE_FLOOR){spawnOreInTier(t,id);break;}}
+    for(const id of T.mix){if((mixN[id]||0)<MIX_FLOOR){spawnMixerInTier(t,id);break;}}}
+}
+// ====== CREATURES (deceptive predators) ======
+const CRE_CFG=[{eel:1,angler:0,fungus:1,mermaid:0},{eel:1,angler:1,fungus:1,mermaid:0},{eel:2,angler:1,fungus:1,mermaid:1},{eel:2,angler:2,fungus:2,mermaid:1}];
+function creatureCfg(i){ if(i<4)return CRE_CFG[i];
+  return {eel:Math.min(2+((i-3)/2|0),5), angler:Math.min(2+((i-4)/2|0),5), fungus:2, mermaid:Math.min(1+((i-4)/3|0),3)}; }
+/* An EMPTY cell in tier i, clear of the diver's entry AND of every quest objective —
+ * the mirror of placeMissionSpot, so the rule holds whichever of the two is placed
+ * second. Loosens in the same order: full padding, then the CLEAR_MIN floor, then
+ * (for the rock-huggers) any open water. Returning null simply means this creature
+ * does not spawn — the layer is full, and an ambush on a machine is the worse trade. */
+function creatureCell(i,adjRock,clear){
+  const top=tierTop[i],bot=tierBot[i],cl=(clear===undefined)?MOBJ_CLEAR:clear;
+  for(let tries=0;tries<160;tries++){const x=(4+Math.random()*(MW-8))|0,y=(top+4+Math.random()*(bot-top-8))|0;
+    if(!map[y]||map[y][x]!==EMPTY||nearSpawn(x,y))continue;
+    if(missionNear(x*TS+8,y*TS+8,cl))continue;
+    if(adjRock){const r=(map[y+1]&&map[y+1][x]===ROCK)||(map[y-1]&&map[y-1][x]===ROCK)||map[y][x-1]===ROCK||map[y][x+1]===ROCK;if(!r)continue;}
+    return {x,y};}
+  if(cl>MOBJ_CLEAR_MIN)return creatureCell(i,adjRock,MOBJ_CLEAR_MIN);
+  if(adjRock)return creatureCell(i,false,MOBJ_CLEAR_MIN);
+  return null;
+}
+function genCreatures(i){
+  // infested layers: the same species, at swarm density. Fully clearable on foot, but the
+  // annoyance is the point — the mech's saw removes every one of them permanently.
+  if(tierInfested[i]===undefined)tierInfested[i]=i>0&&Math.random()<INFEST_CHANCE;
+  const cfg0=creatureCfg(i);
+  const cfg=tierInfested[i]?{eel:Math.min(cfg0.eel*INFEST_MUL,8),angler:Math.min(cfg0.angler*INFEST_MUL,8),
+    fungus:Math.min(cfg0.fungus*INFEST_MUL,6),mermaid:Math.min(cfg0.mermaid*2+1,4)}:cfg0;
+  const cell=(adjRock)=>creatureCell(i,adjRock);
+  for(let k=0;k<cfg.eel;k++){const c=cell(true);if(c)creatures.push({type:'eel',x:c.x*TS+8,y:c.y*TS+8,ax:c.x*TS+8,ay:c.y*TS+8,state:'hide',t:0,ph:Math.random()*6,cd:1+Math.random(),lvx:0,lvy:0,tier:i});}
+  for(let k=0;k<cfg.angler;k++){const c=cell(false);if(c)creatures.push({type:'angler',x:c.x*TS+8,y:c.y*TS+8,ax:c.x*TS+8,ay:c.y*TS+8,state:'lure',t:0,ph:Math.random()*6,cd:0,lvx:0,lvy:0,tier:i});}
+  for(let k=0;k<cfg.fungus;k++){const c=cell(true);if(c){const raw=TIERS[i].raw;creatures.push({type:'fungus',x:c.x*TS+8,y:c.y*TS+8,state:'idle',t:0,ph:Math.random()*6,fake:raw[(Math.random()*raw.length)|0],gl:Math.random()*6,grab:0,dmgT:0,tier:i});}}
+  for(let k=0;k<cfg.mermaid;k++){const c=cell(false);if(c)creatures.push({type:'mermaid',x:c.x*TS+8,y:c.y*TS+8,ax:c.x*TS+8,ay:c.y*TS+8,state:'distress',t:0,ph:Math.random()*6,tier:i});}
+}
+function cdist(c){return Math.hypot(player.x+4-c.x,player.y+4-c.y);}
+function fungusGrab(c){if(mech&&mech.piloted)return;   // vines can't root a mech — the saw gets them first
+  c.state='grab';c.t=0;c.dmgT=0;player.rooted=82;shake=9;sfx.zap();
+  showMsg('it was no ore — the vines have you!');
+  burst(c.x,c.y,20,130,0.6,'#7fae3a');}
+function updateCreatures(dt){
+  const elo=entTierLo(),ehi=entTierHi();
+  for(const c of creatures){
+    if(c.tier<elo||c.tier>ehi)continue;
+    if(c.type==='eel'){
+      if(c.state==='hide'){c.cd-=dt;if(c.cd<=0&&cdist(c)<52){c.state='pounce';c.t=0;const dx=(player.x+4)-c.x,dy=(player.y+4)-c.y,d=Math.hypot(dx,dy)||1;c.lvx=dx/d;c.lvy=dy/d;sfx.dash();}}
+      else if(c.state==='pounce'){c.t+=dt;c.x+=c.lvx*230*dt;c.y+=c.lvy*230*dt;if(cdist(c)<11)hurt(1,c.x,c.y);if(c.t>0.5){c.state='retract';c.t=0;}}
+      else if(c.state==='retract'){const dx=c.ax-c.x,dy=c.ay-c.y,d=Math.hypot(dx,dy);if(d<3){c.x=c.ax;c.y=c.ay;c.state='hide';c.cd=2.0;}else{c.x+=dx/d*130*dt;c.y+=dy/d*130*dt;}}
+    }else if(c.type==='angler'){c.cd-=dt;
+      if(c.state==='lure'){c.x=c.ax+Math.sin(state.tick*0.02+c.ph)*6;c.y=c.ay+Math.cos(state.tick*0.017+c.ph)*5;
+        if(cdist(c)<42&&c.cd<=0){c.state='attack';c.t=0;const dx=(player.x+4)-c.x,dy=(player.y+4)-c.y,d=Math.hypot(dx,dy)||1;c.lvx=dx/d;c.lvy=dy/d;sfx.zap();}}
+      else if(c.state==='attack'){c.t+=dt;c.x+=c.lvx*210*dt;c.y+=c.lvy*210*dt;if(cdist(c)<12)hurt(1,c.x,c.y);if(c.t>0.45){c.state='lure';c.ax=c.x;c.ay=c.y;c.cd=1.8;}}
+    }else if(c.type==='fungus'){c.grab-=dt;
+      if(c.state==='idle'){if(((state.tick+(c.gl*7|0))%26)===0)c.fake=ALLRAW[(Math.random()*ALLRAW.length)|0];
+        if(cdist(c)<13&&c.grab<=0)fungusGrab(c);}
+      else if(c.state==='grab'){c.t+=dt;player.rooted=Math.max(player.rooted,4);c.dmgT+=dt;if(c.dmgT>=0.45){c.dmgT=0;hurt(1,c.x,c.y);}if(c.t>1.35){c.state='idle';c.grab=3.5;}}
+    }else if(c.type==='mermaid'){
+      if(c.state==='distress'){c.x=c.ax+Math.sin(state.tick*0.04+c.ph)*2;c.y=c.ay+Math.cos(state.tick*0.03+c.ph)*2;if(cdist(c)<36){c.state='reveal';c.t=0;sfx.hurt();}}
+      else if(c.state==='reveal'){c.t+=dt;if(c.t>0.45){c.state='slash';c.t=0;hurt(2,c.x,c.y);shake=11;sfx.zap();burst(player.x+4,player.y+4,18,160,0.5,'#ff5a8c');}}
+      else if(c.state==='slash'){c.t+=dt;if(c.t>0.35){c.state='flee';c.t=0;}}
+      else if(c.state==='flee'){c.t+=dt;const dx=c.x-(player.x+4),dy=c.y-(player.y+4),d=Math.hypot(dx,dy)||1;c.x+=dx/d*130*dt;c.y-=70*dt;if(c.t>1.6)c.dead=true;}
+    }
+  }
+  if(creatures.some(c=>c.dead))creatures=creatures.filter(c=>!c.dead);
+}
+/* the lantern's live reach: base radius, +10% per lens grind, wider from the MULE's floods.
+ * The murk cut, the visible beam and the scrappy robot's work area all read from this. */
+function lanternRadius(){return player.lightRadius*(1+0.10*(player.lanternLevel||0))*((mech&&mech.piloted)?1.25:1);}
+
+const COMP_CRAWL=24;    // px/s floor, so it can still finish a grab while you hold station
+const COMP_GRAB=8;      // how close it has to get before the claw closes
+// the robot paces the diver exactly — its speed is whatever you are swimming at this frame
+// (the MULE's, when you are piloting it), never faster. Velocities are per-frame, hence ×60.
+function companionSpeed(){
+  const src=(mech&&mech.piloted)?mech:player;
+  return Math.max(COMP_CRAWL,Math.hypot(src.vx||0,src.vy||0)*60);
+}
+// nearest floating resource / valuable scrap inside the lit area — the robot only works
+// what the lantern shows, so a wider beam (lens grinds, floodlight) is a wider sweep.
+function companionTarget(co){
+  const R=lanternRadius(),px0=player.x+4,py0=player.y+4,elo=entTierLo(),ehi=entTierHi();
+  let best=null,bd=Infinity;
+  for(const list of [scraps,mixers])
+    for(const it of list){
+      if(it.tier<elo||it.tier>ehi)continue;
+      if(Math.hypot(px0-it.x,py0-it.y)>R)continue;              // leashed to the diver's light
+      const d=Math.hypot(co.x-it.x,co.y-it.y);
+      if(d<bd){bd=d;best=it;}
+    }
+  return best;
+}
+function updateCompanion(dt){if(!companion)return;const co=companion;
+  co.ph=(co.ph||0)+dt;
+  // a fresh scan every frame — the diver may have grabbed the old target out from under it
+  const tgt=companionTarget(co),spd=companionSpeed();
+  if(tgt){ // swim at it, at the diver's own pace
+    const dx=tgt.x-co.x,dy=tgt.y-co.y,d=Math.hypot(dx,dy)||1,step=Math.min(spd*dt,d);
+    co.x+=dx/d*step;co.y+=dy/d*step;
+    if(dx<-0.5)co.dir=-1;else if(dx>0.5)co.dir=1;
+  }else{   // nothing lit worth grabbing — trail the diver, same speed cap on the catch-up
+    const tx=player.x+4-12*player.dir,ty=player.y+4-10;
+    const dx=tx-co.x,dy=ty-co.y,d=Math.hypot(dx,dy)||1,step=Math.min(d*0.08,spd*dt,d);
+    co.x+=dx/d*step;co.y+=dy/d*step;co.dir=player.dir;
+  }
+  co.busy=!!tgt;
+  // whatever it is sitting on goes in the hold, same haul as the diver's own pickup
+  collectNear(mixers,co.x,co.y,COMP_GRAB,m=>{addInv(m.resId,1);sfx.pop();burst(m.x,m.y,8,90,0.5,RES[m.resId].col);co.grabFx=0.35;});
+  collectNear(scraps,co.x,co.y,COMP_GRAB,s=>{const sd=SCRAPBYID[s.kind];scrapInv[s.kind]=(scrapInv[s.kind]||0)+1;sfx.pop();
+    burst(s.x,s.y,12,110,0.6,sd.col);showMsg('robot · '+sd.name+' ('+sd.coin+' coin)');co.grabFx=0.35;});
+  if(co.grabFx>0)co.grabFx=Math.max(0,co.grabFx-dt);
+}
+
+// ====== MECH — DV-8 "MULE" (pilotable heavy frame) ======
+// Design intent: overpowered but rationed. The battery cell is expensive (4× each of the layer's six
+// basic resources) and only drains when the mech WORKS — drill 1s/vein, saw 1.5s/kill, hook 0.8s/shot,
+// boost 1s/s — so every crafted cell converts fully into power, never into walking. One cell carried,
+// no refunds. A dead MULE seizes exactly where it stands until a fresh cell reaches it.
+function mUpgCount(m){let c=0;for(const k in m)if(m[k])c++;return c;}
+function mechBatMax(){return MECH_BAT_BASE+MECH_BAT_STEP*mUpgCount(player.mechBatUpg||{});}
+function mechBoostMax(){return MECH_BOOST_BASE+MECH_BOOST_STEP*mUpgCount(player.mechBoostUpg||{});}
+// the coil's two halves upgrade apart: how much boost it HOLDS (above) vs how fast it COMES BACK (here)
+function mechBoostRegen(){return MECH_BOOST_REGEN+MECH_REGEN_STEP*mUpgCount(player.mechRegenUpg||{});}
+// seconds a burnt-out thruster stays dead: a full rebuild from empty at the current recharge rate
+function mechBoostRebuild(){return mechBoostMax()*MECH_BOOST_RESET/mechBoostRegen();}
+function mechHookReach(){return Math.min(MECH_HOOK_MAX,MECH_HOOK_BASE+MECH_HOOK_STEP*mUpgCount(player.mechHookUpg||{}));}
+/* Mech fittings are ONE PER ENVIRONMENT — and an environment means every environment ever descended,
+ * which is what envGlobalIndex counts (the suit curve already rides it). envOfTier alone is the
+ * CITY-LOCAL index: it restarts at 0 through every transit gate, so keying the slots on it would read
+ * city 2's first five environments as already fitted from city 1 and weld the Mech Lab shut for the
+ * rest of the run. All four branches — cell, coil capacity, coil recharge, hook — key on this. */
+function mechUpgEnv(t){return envGlobalIndex(CITY,envOfTier(t));}
+// deeper environments charge more for the same fitting; g is the global index, so the curve keeps
+// climbing across cities instead of resetting to pocket change at every transit
+function mechUpgCost(kind,g){return kind==='bat'?(40+g*10):(24+g*8);}
+// battery recipe scales with the dive by construction: it always draws on the CURRENT layer's resources
+function mechBatteryCost(t){const c={};for(const s of SLOTS){c['t'+(t+1)+'r'+s]=MECH_BAT_QTY;c['t'+(t+1)+'m'+s]=MECH_BAT_QTY;}return c;}
+// quick-spawn toll: 10× ONE floating kind of this layer — whichever the player holds most of
+function mechCallCost(t){const T=TIERS[t];if(!T)return null;let best=T.mix[0],bh=-1;
+  for(const id of T.mix){const h=invGet(id);if(h>bh){bh=h;best=id;}}
+  return {[best]:MECH_CALL_COST};}
+function mechCollAt(x,y){return rectHit(x-6,y-7,MECH_W,MECH_H);}
+function mechColl(m){return mechCollAt(m.x,m.y);}
+function mechOnGround(m){return mechCollAt(m.x,m.y+1);}
+function mechDrain(s){const m=mech;if(!m)return;m.battery=Math.max(0,m.battery-s);
+  if(m.battery<=0)mechPowerDown();}
+function mechPowerDown(){const m=mech;
+  if((player.mechBattery||0)>0){player.mechBattery=0;m.battery=mechBatMax();sfx.build();
+    burst(m.x,m.y,14,120,0.5,'#ffd23c');showMsg('cell spent — the spare slams in');return;}
+  m.hookAnchor=null;m.hanging=false;
+  if(m.piloted){m.piloted=false;player.x=m.x-4;player.y=m.y-4;player.vx=0;player.vy=-0.4;
+    player.invuln=Math.max(player.invuln,40);updateActionLabels();}
+  sfx.lose();shake=Math.max(shake,6);
+  showMsg('battery dead — the MULE seizes where it stands. bring it a fresh cell');}
+// X near the mech: slot a carried cell into a dead frame, or climb in
+function mechInteract(){const m=mech;
+  if(m.battery<=0){
+    if((player.mechBattery||0)>0){player.mechBattery=0;m.battery=mechBatMax();sfx.build();
+      burst(m.x,m.y,18,130,0.6,'#ffd23c');showMsg('cell slotted — the MULE rumbles awake');}
+    else{sfx.deny();showMsg('the MULE is dead — craft a battery cell at any workshop (MECH bay)');return;}
+  }
+  m.piloted=true;m.dir=player.dir;m.boostT=mechBoostMax();m.boostOut=false;m.hookAnchor=null;m.hanging=false;
+  if(player.attached){player.attached=false;const cb=player.attachedBase||curBase();
+    if(cb){cb.endX=player.x+4;cb.endY=player.y+4;}player.attachedBase=null;}
+  player.x=m.x-4;player.y=m.y-4;player.vx=0;player.vy=0;player.rooted=0;
+  updateActionLabels();
+  sfx.start();showMsg('piloting the MULE — F drill · SPACE hook · hold ↑ boost · X exit · sealed: no O₂ drain');}
+// dormant frame keeps honest physics: a mech that dies mid-air falls, lands, and stays put
+function updateMechIdle(dt){const m=mech;
+  if(mechOnGround(m)){m.vy=0;m.sawFx=0;return;}
+  m.vy=(m.vy||0)+MECH_GRAV;if(m.vy>2.8)m.vy=2.8;
+  m.y+=m.vy;
+  if(mechColl(m)){m.y-=m.vy;const s=Math.sign(m.vy)||0;let g=0;
+    while(g<16&&s&&!mechCollAt(m.x,m.y+s)){m.y+=s;g++;}m.vy=0;}}
+function mechFireHook(m){
+  if(m.battery<=0)return;
+  let axx=(m.aimX!=null?m.aimX:m.dir),ayy=(m.aimY||0);const l=Math.hypot(axx,ayy)||1;axx/=l;ayy/=l;
+  const reach=mechHookReach();
+  for(let d=8;d<=reach;d+=3){const hx=m.x+axx*d,hy=m.y-4+ayy*d;
+    if(solidPx(hx,hy)){m.hookAnchor={x:hx,y:hy};m.hanging=false;mechDrain(MECH_HOOK_COST);
+      sfx.dash();burst(hx,hy,6,80,0.4,'#ffd23c');return;}}
+  sfx.deny();showMsg('hook found no purchase within '+mechHookReach()+'u');}
+// teleport the MULE to a base pad, exactly as it was left — dead or alive
+function mechCallTo(b){const m=mech;if(!m||!b)return;
+  let px0=b.x+18,py0=b.y+4;
+  const spots=[[18,4],[-18,4],[0,16],[26,4],[-26,4],[0,28],[34,4],[-34,4]];
+  for(const s of spots){const xx=b.x+s[0],yy=b.y+s[1];
+    if(!mechCollAt(xx,yy)){px0=xx;py0=yy;break;}}
+  m.x=px0;m.y=py0;m.vx=0;m.vy=0;m.off=false;m.piloted=false;m.hookAnchor=null;m.hanging=false;
+  updateActionLabels();
+  burst(m.x,m.y,22,150,0.7,'#7fe6ff');bubbleBurst(m.x,m.y-4,8,24,-24,14,1.1,2);sfx.build();
+  showMsg(m.battery>0?'the MULE stomps in — battery at '+Math.round(100*m.battery/mechBatMax())+'%'
+                     :'the MULE is hauled in — dead, its bay waiting for a cell');}
+// the piloted step: replaces the diver's movement/hazard block wholesale (called from update())
+function updateMechPiloted(dt){const m=mech,p=player;
+  const elo=entTierLo(),ehi=entTierHi();
+  // --- input & aim ---
+  let ax=0,ay=0;
+  if(input.joy&&(input.jx||input.jy)){ax=input.jx;ay=input.jy;}
+  else{if(input.left)ax-=1;if(input.right)ax+=1;if(input.up)ay-=1;if(input.down)ay+=1;}
+  if(ax<-0.05)m.dir=-1;else if(ax>0.05)m.dir=1;
+  if(ax||ay){const ll=Math.hypot(ax,ay)||1;m.aimX=ax/ll;m.aimY=ay/ll;p.lookX=m.aimX;p.lookY=m.aimY;}
+  const grounded=mechOnGround(m)&&!m.hookAnchor;
+  if(grounded){m.boostT=mechBoostMax();m.boostOut=false;}   // a foot on solid ground snaps the coil full and clears a burnout
+  let boosting=false;                    // set by the thruster branch below; anything else means it's recovering
+  // --- grappling hook: fire / reel / hang / release ---
+  if(m.hookAnchor){
+    if(actionEdge){actionEdge=false;m.hookAnchor=null;m.hanging=false;}
+    else{const dx=m.hookAnchor.x-m.x,dy=m.hookAnchor.y-(m.y-4),d=Math.hypot(dx,dy);
+      if(d>10&&!m.hanging){const sx=dx/d*MECH_REEL,sy=dy/d*MECH_REEL;
+        m.x+=sx;m.y+=sy;
+        if(mechColl(m)){m.x-=sx;m.y-=sy;m.hanging=true;}   // pulled flush against the surface: hang
+        m.vx=0;m.vy=0;}
+      else{m.hanging=true;m.vx=0;m.vy=0;}}
+  }else if(actionEdge){actionEdge=false;mechFireHook(m);}
+  // --- walk / jump / boost (skipped while on the line) ---
+  if(!m.hookAnchor){
+    m.vx+=ax*MECH_ACC;m.vx*=0.82;
+    if(Math.abs(m.vx)>MECH_MAXV)m.vx=Math.sign(m.vx)*MECH_MAXV;
+    if(ay<-0.4){
+      if(grounded&&!m.jumpHeld){m.vy=-MECH_JUMP;m.jumpHeld=true;sfx.dash();
+        bubbleBurst(m.x,m.y+7,4,20,-10,10,0.8,2);}
+      else if(!grounded&&m.boostT>0&&m.battery>0&&!m.boostOut){
+        boosting=true;
+        m.boostT=Math.max(0,m.boostT-dt);mechDrain(dt);   // boost is the only continuous battery cost
+        m.vy-=MECH_BOOST_ACC;if(m.vy<-MECH_BOOST_MAXUP)m.vy=-MECH_BOOST_MAXUP;m.boostFx=3;
+        if(state.tick%3===0)burst(m.x,m.y+8,2,40,0.3,'#7fe6ff',1);
+        // coil hits empty mid-burn: the thruster shuts down then and there — it does NOT keep sipping
+        // the trickle of regen to hold a hover. Gravity takes over until the coil is rebuilt.
+        if(m.boostT<=0){m.boostOut=true;m.boostFx=0;boosting=false;sfx.deny();shake=Math.max(shake,3);
+          burst(m.x,m.y+8,6,50,0.35,'#ff9a3c',1);showMsg('thruster burnt out — coil rebuilding');}}
+    }else m.jumpHeld=false;
+    m.vy+=MECH_GRAV;m.vy*=0.96;if(m.vy>3.0)m.vy=3.0;
+    m.x+=m.vx;if(mechColl(m)){m.x-=m.vx;const s=Math.sign(m.vx)||0;let g=0;
+      while(g<16&&s&&!mechCollAt(m.x+s,m.y)){m.x+=s;g++;}m.vx=0;}
+    m.y+=m.vy;if(mechColl(m)){m.y-=m.vy;const s=Math.sign(m.vy)||0;let g=0;
+      while(g<16&&s&&!mechCollAt(m.x,m.y+s)){m.y+=s;g++;}m.vy=0;}
+  }
+  // --- thruster coil: recharges the instant it stops firing, wherever the MULE is ---
+  // Airborne, hanging off the hook or parked — if you aren't burning it, it's coming back. Free
+  // (the coil is a rate limiter, not a fuel tank); the battery stays the only thing boosting spends.
+  if(!boosting){const bmx=mechBoostMax();
+    if(m.boostT<bmx)m.boostT=Math.min(bmx,(m.boostT||0)+mechBoostRegen()*dt);
+    if(m.boostOut&&m.boostT>=bmx*MECH_BOOST_RESET){m.boostOut=false;sfx.pop();}}   // coil rebuilt — thruster back online
+  m.boostFx=Math.max(0,(m.boostFx||0)-1);m.drillFx=Math.max(0,(m.drillFx||0)-1);m.sawFx=Math.max(0,(m.sawFx||0)-1);
+  // keep the diver riding the cockpit so camera/tier/oxygen logic sees the right position
+  p.x=m.x-4;p.y=m.y-4;p.vx=0;p.vy=0;p.rooted=0;
+  const cx=m.x,cy=m.y;
+  // --- drill (F): insta-mine any vein in reach — no minigame, no gas, 1s of cell per vein ---
+  let target=null,bd=1e9;const mx0=m.x-6,my0=m.y-7;
+  for(const o of oreCells){if(o.tier<elo||o.tier>ehi)continue;const orx=o.x*TS,ory=o.y*TS;
+    if(mx0+MECH_W+MINE_PAD>orx&&mx0-MINE_PAD<orx+TS&&my0+MECH_H+MINE_PAD>ory&&my0-MINE_PAD<ory+TS){
+      const d=Math.hypot(cx-(orx+8),cy-(ory+8));if(d<bd){bd=d;target=o;}}}
+  nearOre=target;nearFungus=null;
+  if(mineEdge){mineEdge=false;
+    if(target){
+      if(m.battery>0){const rid=target.resId;
+        addInv(rid,ORE_YIELD);removeOre(target);mechDrain(MECH_DRILL_COST);
+        m.drillFx=6;shake=Math.max(shake,4);sfx.boom();
+        burst(target.x*TS+8,target.y*TS+8,14,130,0.5,RES[rid].col);
+        showReward(rid,ORE_YIELD);}
+      else showMsg('cell dead — the drill won’t spin');}
+    else if(nearMission)showMsg('the MULE’s hands are too big for that — step out (X) to work it');
+    else showMsg('no ore in the drill’s reach');}
+  // --- kill-saw: always hot while the cell has charge; contact removes the creature for good ---
+  for(const c of creatures){if(c.tier<elo||c.tier>ehi||c.dead)continue;
+    if(Math.hypot(cx-c.x,cy-c.y)<13&&m.battery>0){
+      c.dead=true;mechDrain(MECH_SAW_COST);
+      m.sawFx=5;shake=Math.max(shake,6);sfx.zap();
+      burst(c.x,c.y,18,150,0.6,c.type==='eel'?'#5fe39a':'#ff5a8c');
+      const deceiver=(c.type==='angler'||c.type==='fungus'||c.type==='mermaid');
+      if(deceiver&&Math.random()<MECH_DROP_CHANCE){
+        const r=Math.random(),kind=r<0.2?'idol':r<0.6?'plate':'coil';
+        scraps.push({x:c.x,y:c.y,kind,ph:Math.random()*6,got:false,tier:c.tier});
+        showMsg('the saw shreds the '+c.type+' — '+SCRAPBYID[kind].name+' spills out');}
+      else showMsg('sawed the '+c.type+' apart — this one’s gone for good');}}
+  if(creatures.some(c=>c.dead))creatures=creatures.filter(c=>!c.dead);
+  // --- exit (X) ---
+  if(clipEdge){clipEdge=false;
+    m.piloted=false;m.hookAnchor=null;m.hanging=false;
+    p.x=m.x-4;p.y=m.y-4;p.vx=0;p.vy=0;p.invuln=Math.max(p.invuln,30);
+    updateActionLabels();
+    sfx.back();showMsg('stepped out — the MULE holds position');return;}
+  // --- world interactions the diver path normally handles ---
+  const _tb=bases[tAt(p.y)];
+  nearBase=(_tb&&Math.hypot(cx-_tb.x,cy-_tb.y)<=DOCK_R)?_tb:null;
+  if(cityExit){const ed=Math.hypot(cx-cityExit.x,cy-cityExit.y);
+    if(ed<15&&!cityExit.cool){cityExit.cool=true;
+      showMsg('the transit gate is too tight for the MULE — step out (X) to ride the grid');}
+    if(ed>44)cityExit.cool=false;}
+  collectNear(mixers,cx,cy,14,mm=>{addInv(mm.resId,1);sfx.pop();burst(mm.x,mm.y,8,90,0.5,RES[mm.resId].col);});
+  collectNear(scraps,cx,cy,14,s=>{const sd=SCRAPBYID[s.kind];scrapInv[s.kind]=(scrapInv[s.kind]||0)+1;sfx.pop();
+    burst(s.x,s.y,12,110,0.6,sd.col);showMsg('salvage · '+sd.name+' ('+sd.coin+' coin)');});
+  updateCreatures(dt);
+  updateCompanion(dt);
+  // --- oxygen: the cockpit is SEALED and runs its own scrubber — the cell is the only thing you spend ---
+  // Tank air is held exactly where you boarded (never drains, never refills) and drowning cannot tick
+  // while piloting. Climb out (X) and the tank starts breathing down again from that same level.
+  p.regen=0;p.drown=0;
+  if(p.tint>0)p.tint=Math.max(0,p.tint-0.03);
+  if(p.invuln>0)p.invuln--;
+  // soft resource respawn keeps ticking so the mech can't strip-mine the run into a dead end
+  respT+=dt;if(respT>=RESP_INT){respT=0;doRespawn();}
+  const tx=clamp(cx-VW/2,0,MW*TS-VW),ty=clamp(cy-VH/2,0,MH*TS-VH);
+  camera.x+=(tx-camera.x)*0.16;camera.y+=(ty-camera.y)*0.16;
+  if(shake>0)shake-=dt*60;
+  if(lockMsgCD>0)lockMsgCD--;
+}
+
+// ============ COLLISION ============
+function solid(x,y){if(x<0||y<0||x>=MW||y>=MH)return true;const t=map[y][x];return t===WALL||t===ROCK||t===ORE||t===BULK;}
+function solidPx(x,y){return solid(Math.floor(x/TS),Math.floor(y/TS));}
+function tileTypePx(x,y){const tx=Math.floor(x/TS),ty=Math.floor(y/TS);if(tx<0||ty<0||tx>=MW||ty>=MH)return WALL;return map[ty][tx];}
+function rectHit(x,y,w,h){return solidPx(x,y)||solidPx(x+w-1,y)||solidPx(x,y+h-1)||solidPx(x+w-1,y+h-1)||
+  solidPx(x+w/2,y)||solidPx(x+w/2,y+h-1)||solidPx(x,y+h/2)||solidPx(x+w-1,y+h/2);}
+
+// ============ PRERENDER (static walls + rock — per-tier band canvases, built lazily, freed when far) ============
+// Walls/rock never change at runtime (only ore/bulkhead cells mutate, and those draw dynamically),
+// so each tier's tiles bake once into a band canvas. Bands far from the diver are dropped to save memory
+// and rebuilt identically from the map when revisited.
+let prerenderTiles={}, pYoff=0;
+function bandStart(i){return i===0?0:tierTop[i];}
+function bandEnd(i){return (i+1<tierTop.length)?tierTop[i+1]:MH;}
+function buildBandCanvas(i){
+  const r0=bandStart(i), r1=bandEnd(i), cv=document.createElement('canvas');
+  cv.width=MW*TS; cv.height=Math.max(1,(r1-r0)*TS);
+  pctx=cv.getContext('2d'); pctx.imageSmoothingEnabled=false; pYoff=r0*TS;
+  for(let y=r0;y<r1;y++)for(let x=0;x<MW;x++){const t=map[y][x];if(t===WALL)drawTile(x,y,false);else if(t===ROCK)drawTile(x,y,true);}
+  return cv;
+}
+function getBandCanvas(i){return prerenderTiles[i]||(prerenderTiles[i]=buildBandCanvas(i));}
+function drawTile(tx,ty,isRock){
+  const X=tx*TS,Y=ty*TS-pYoff,tier=tAt(ty*TS),base=TIERS[tier].rock,h=hash(tx,ty);
+  const T=THEME[tier]||{};
+  let tk=T.tile||'metal';
+  if(EXT_TILE_ON&&T.tilex)tk=T.tilex;
+  // buffer layer: cells of the neighbouring environment's tile style salt through at the blend weight (§3.1)
+  if(T.blend&&hash(tx*3+1,ty*3+7)<T.blend.w){const nb=ARCHETYPES[T.blend.arch];tk=(EXT_TILE_ON&&nb.tilex)||nb.tile;}
+  const up=solid(tx,ty-1),dn=solid(tx,ty+1),lf=solid(tx-1,ty),rt=solid(tx+1,ty);
+  if(tk==='metal'){ // INDUSTRIAL METAL — grated panels with hazard-chevron lips
+    px(pctx,X,Y,16,16,isRock?'#222d38':'#283441');
+    for(let i=3;i<15;i+=4)px(pctx,X+1,Y+i,14,1,'#1b242e');
+    px(pctx,X,Y,16,1,'#3c4a58');px(pctx,X,Y,1,16,'#36444f');px(pctx,X,Y+15,16,1,'#131b22');px(pctx,X+15,Y,1,16,'#131b22');
+    px(pctx,X+2,Y+2,1,1,'#465462');px(pctx,X+13,Y+2,1,1,'#465462');px(pctx,X+2,Y+13,1,1,'#465462');px(pctx,X+13,Y+13,1,1,'#465462');
+    if(!up){for(let i=0;i<16;i+=4){px(pctx,X+i,Y,2,3,'#ffcf3a');px(pctx,X+((i+2)%16),Y,2,3,'#181818');}px(pctx,X,Y,16,1,'#5b6470');}
+    if(!dn)px(pctx,X,Y+13,16,3,'#101820');
+  } else if(tk==='bio'){ // BIO ROCK — mossy, glowing green spores
+    px(pctx,X,Y,16,16,shade(base,isRock?0.58:0.74));
+    for(let i=0;i<5;i++){const hh=hash(tx*7+i,ty*11+i),rx=(hh*13)|0,ry=((hh*53)%13)|0;px(pctx,X+rx,Y+ry,2,2,shade(base,0.5+hh*0.5));}
+    if(h>0.45){const mx=(h*9)|0;px(pctx,X+mx,Y+2,5,3,'#2f6e3e');px(pctx,X+mx+1,Y+3,1,1,'#5fe39a');if(h>0.75)px(pctx,X+mx+3,Y+2,1,1,'#9fffc8');}
+    if(!up){px(pctx,X,Y,16,2,'#2f6e3e');px(pctx,X+2,Y-1,2,2,'#3a8a4e');px(pctx,X+9,Y-1,2,2,'#3a8a4e');px(pctx,X+(h>0.5?5:11),Y,1,1,'#9fffc8');}
+    if(!dn)px(pctx,X,Y+14,16,2,shade(base,0.3));
+  } else if(tk==='toxic'){ // RADIOACTIVE SLAG — eroded, glowing green seepage
+    px(pctx,X,Y,16,16,shade(base,isRock?0.68:0.84));
+    for(let i=0;i<6;i++){const hh=hash(tx*5+i,ty*9+i),rx=(hh*13)|0,ry=((hh*61)%13)|0;px(pctx,X+rx,Y+ry,2,1,shade(base,0.5+hh*0.45));}
+    if(h>0.5){const sx=(h*12)|0;px(pctx,X+sx,Y+3,1,9,'#5a7a1e');px(pctx,X+sx,Y+6,2,1,'#3e5214');}
+    if(!up){px(pctx,X,Y,16,2,shade(base,1.12));const dx=(h*11)|0;px(pctx,X+dx,Y,2,5,'#8fc23c');px(pctx,X+dx,Y+5,1,3,'#5a7a1e');px(pctx,X+dx+1,Y+1,1,1,'#d6ff4f');}
+    if(!dn)px(pctx,X,Y+14,16,2,shade(base,0.38));
+  } else if(tk==='concrete'){ // FILTRATION CONCRETE — pale weir walls with teal waterline stains
+    px(pctx,X,Y,16,16,shade(base,isRock?0.7:0.86));
+    for(let i=0;i<5;i++){const hh=hash(tx*5+i,ty*7+i),rx=(hh*13)|0,ry=((hh*47)%13)|0;px(pctx,X+rx,Y+ry,1,1,shade(base,0.6+hh*0.3));}
+    px(pctx,X,Y,16,1,shade(base,1.1));px(pctx,X,Y+15,16,1,shade(base,0.5));
+    if(h>0.55){const sx=(h*10)|0;px(pctx,X+sx,Y+4,1,8,'#2c6a6e');px(pctx,X+sx,Y+7,2,1,'#1d4a50');}
+    if(!up){px(pctx,X,Y,16,2,'#2c6e6a');px(pctx,X+(h>0.5?4:10),Y,1,1,'#52e0d2');px(pctx,X+(h>0.5?10:4),Y-1,1,2,'#3a8a86');}
+    if(!dn)px(pctx,X,Y+14,16,2,shade(base,0.35));
+  } else if(tk==='brick'){ // OLD SEWER BRICK — courses + variant-tinted mortar (§8.5)
+    px(pctx,X,Y,16,16,shade(base,isRock?0.62:0.8));
+    for(let r=0;r<4;r++){px(pctx,X,Y+r*4,16,1,shade(base,0.45));
+      px(pctx,X+((r&1)?4:9),Y+r*4,1,4,shade(base,0.45));}
+    if(h>0.6)px(pctx,X+(h*9|0),Y+2,3,2,shade(base,1.15));
+    if(!up)px(pctx,X,Y,16,2,shade(base,1.1)); if(!dn)px(pctx,X,Y+14,16,2,shade(base,0.35));
+  } else if(tk==='grate'){ // OPEN STEEL GRATING — see-through slots over darkness
+    px(pctx,X,Y,16,16,'#0a0e12');px(pctx,X,Y,16,2,shade(base,1.05));px(pctx,X,Y+14,16,2,shade(base,0.5));
+    for(let i=1;i<15;i+=3)px(pctx,X+i,Y+2,2,12,shade(base,0.9));
+    px(pctx,X,Y+7,16,1,shade(base,0.75)); if(!up)px(pctx,X,Y,16,1,'#5b6470');
+  } else if(tk==='ceramic'){ // GLAZED TILE — gloss square + crazing
+    px(pctx,X,Y,16,16,shade(base,isRock?0.72:0.9));px(pctx,X+1,Y+1,14,14,shade(base,1.02));
+    px(pctx,X+2,Y+2,5,2,shade(base,1.35));px(pctx,X,Y+15,16,1,shade(base,0.45));px(pctx,X+15,Y,1,16,shade(base,0.5));
+    if(h>0.55){px(pctx,X+(h*10|0),Y+6,1,6,shade(base,0.55));}
+    if(!up)px(pctx,X,Y,16,1,shade(base,1.3));
+  } else if(tk==='slag'){ // FUSED CLINKER — pocked, ember pores on top faces
+    px(pctx,X,Y,16,16,shade(base,isRock?0.55:0.7));
+    for(let i=0;i<7;i++){const hh=hash(tx*9+i,ty*5+i);px(pctx,X+(hh*13|0),Y+((hh*67)%13|0),2,2,shade(base,0.4+hh*0.5));}
+    if(!up){px(pctx,X,Y,16,2,shade(base,0.95));const ex=(h*12|0);px(pctx,X+ex,Y+1,2,1,'#ff8a3c');
+      if(h>0.7)px(pctx,X+ex+1,Y,1,1,'#ffd23c');}
+    if(!dn)px(pctx,X,Y+14,16,2,shade(base,0.3));
+  } else if(tk==='frost'){ // ICED CONCRETE — pale sheet + icicle lips
+    px(pctx,X,Y,16,16,shade(base,isRock?0.85:1.0));px(pctx,X+1,Y+1,14,3,'#dff6ff');
+    for(let i=0;i<4;i++){const hh=hash(tx*3+i,ty*7+i);px(pctx,X+(hh*13|0),Y+5+((hh*31)%8|0),1,1,'#bfe8ff');}
+    if(!up)px(pctx,X,Y,16,2,'#eef9ff');
+    if(!dn){px(pctx,X,Y+14,16,2,shade(base,0.4));const ix=(h*11|0);px(pctx,X+ix,Y+14,1,2,'#bfe8ff');}
+  } else { // CORE TECH — dark panels, glowing circuit traces (datacentre)
+    px(pctx,X,Y,16,16,'#1a212e');px(pctx,X+1,Y+1,14,14,'#212939');
+    px(pctx,X,Y,16,1,'#2e3a4e');px(pctx,X,Y,1,16,'#2a3344');px(pctx,X,Y+15,16,1,'#0e131c');px(pctx,X+15,Y,1,16,'#0e131c');
+    const c='#2f6f82';
+    if(h<0.38){px(pctx,X+3,Y+8,10,1,c);px(pctx,X+8,Y+3,1,6,c);px(pctx,X+8,Y+7,2,2,'#46d0ff');}
+    else if(h<0.7){px(pctx,X+4,Y+4,1,8,c);px(pctx,X+4,Y+11,7,1,c);px(pctx,X+10,Y+11,1,1,'#46d0ff');}
+    else{px(pctx,X+3,Y+3,1,1,'#46d0ff');px(pctx,X+12,Y+10,1,1,'#7f5cff');}
+    if(!up)px(pctx,X,Y,16,1,'#3a8aa0');
+    if(!dn)px(pctx,X,Y+14,16,2,'#0c1019');
+  }
+  if(T.plat&&h>0.35)drawMotif(T.plat[(h*97|0)%3],X,Y,h,T.pal||{});   // archetype platform motif (§8.2)
+  if(tk!=='metal'){if(!lf)px(pctx,X,Y,2,16,shade(base,0.92));if(!rt)px(pctx,X+14,Y,2,16,shade(base,0.55));}
+}
+// 20-motif platform vocabulary — drawn in the layer's variant-shifted palette (§8.2)
+function drawMotif(m,X,Y,h,PAL){const A=PAL.accent||'#46d0ff',R=PAL.rivet||'#3a4a58',S=PAL.seam||'#0c1418',M=PAL.moss||'#2c5e3c';
+ switch(m){
+  case 'grate':   for(let i=2;i<14;i+=3)px(pctx,X+i,Y+5,1,7,S); px(pctx,X+2,Y+4,12,1,R); break;
+  case 'chevron': for(let i=0;i<16;i+=4){px(pctx,X+i,Y+11,2,3,'#ffcf3a');px(pctx,X+(i+2)%16,Y+11,2,3,'#181818');} break;
+  case 'rivet':   px(pctx,X+3,Y+3,1,1,R);px(pctx,X+12,Y+3,1,1,R);px(pctx,X+3,Y+12,1,1,R);px(pctx,X+12,Y+12,1,1,R); break;
+  case 'moss':    px(pctx,X+(h*9|0),Y+2,5,2,M);px(pctx,X+(h*9|0)+2,Y+1,1,1,A); break;
+  case 'drip':    px(pctx,X+(h*12|0),Y+3,1,9,S);px(pctx,X+(h*12|0),Y+12,1,2,A); break;
+  case 'stain':   px(pctx,X+2,Y+9,11,3,S);px(pctx,X+3,Y+10,9,1,R); break;
+  case 'trace':   px(pctx,X+3,Y+8,9,1,A);px(pctx,X+8,Y+4,1,5,A);px(pctx,X+8,Y+8,2,2,'#ffffff'); break;
+  case 'led':     if(h>0.5){px(pctx,X+12,Y+3,2,2,A);}else{px(pctx,X+3,Y+12,2,2,A);} break;
+  case 'vent':    px(pctx,X+4,Y+5,8,6,S);for(let i=6;i<11;i+=2)px(pctx,X+5,Y+i,6,1,R); break;
+  case 'crack':   px(pctx,X+2,Y+13,5,1,S);px(pctx,X+6,Y+10,1,3,S);px(pctx,X+7,Y+8,4,1,S); break;
+  case 'scale':   for(let i=0;i<3;i++)px(pctx,X+3+i*4,Y+4+((h*7|0)+i)%6,2,1,'#cfe0dc'); break;
+  case 'bolt':    px(pctx,X+7,Y+7,3,3,R);px(pctx,X+8,Y+8,1,1,S); break;
+  case 'weld':    for(let i=3;i<13;i+=2)px(pctx,X+i,Y+7+(i&1),1,1,'#8a96a2'); break;
+  case 'frost':   px(pctx,X+2,Y+2,4,1,'#dff6ff');px(pctx,X+3,Y+2,1,3,'#dff6ff');px(pctx,X+10,Y+9,3,1,'#bfe8ff'); break;
+  case 'coral':   px(pctx,X+5,Y+9,2,5,M);px(pctx,X+4,Y+8,4,2,A);px(pctx,X+9,Y+11,1,3,M); break;
+  case 'cable':   px(pctx,X,Y+6,16,1,S);px(pctx,X,Y+7,16,1,R);px(pctx,X+5,Y+5,1,3,R); break;
+  case 'tread':   for(let i=1;i<15;i+=4)px(pctx,X+i,Y+2,2,2,S); break;
+  case 'sign':    px(pctx,X+3,Y+3,10,6,S);px(pctx,X+4,Y+4,8,1,A);px(pctx,X+4,Y+6,5,1,R); break;
+  case 'brick':   px(pctx,X,Y+8,16,1,S);px(pctx,X+((h>0.5)?4:9),Y+8,1,8,S); break;
+  case 'foam':    for(let i=0;i<4;i++)px(pctx,X+2+i*4,Y+2+((h*11|0)+i*2)%3,2,2,'#e8f4e0'); break;
+ }}
+// floating-resource silhouettes — the archetype's `float` field picks one of 4 forms (§8.3)
+// LEGACY: superseded by the FRGen procedural generator used in drawMixer(); kept as a
+// lightweight fallback and for the `float` metadata still carried in ARCHETYPES.
+function drawFloatForm(form,X,Y,col){
+ if(form==='bulb'){       // glass sphere on a stem — labs, cryo, med, plating
+   px(ctx,X+1,Y+2,6,6,shade(col,0.5));px(ctx,X+2,Y+3,4,4,col);px(ctx,X+2,Y+3,1,2,shade(col,1.6));
+   px(ctx,X+3,Y,2,2,'#8a96a2');px(ctx,X+3,Y+8,2,2,'#5a666f');}
+ else if(form==='jelly'){ // soft blob, dangling drip — bio, dye, grease, aquarium
+   px(ctx,X+1,Y+3,6,4,shade(col,0.55));px(ctx,X+2,Y+2,4,6,col);px(ctx,X+2,Y+2,2,1,shade(col,1.5));
+   px(ctx,X+4,Y+8,1,2,shade(col,0.8));}
+ else if(form==='pod'){   // twin-lobe capsule with band — foundry, fuel, drones
+   px(ctx,X,Y+3,8,5,shade(col,0.5));px(ctx,X+1,Y+4,2,3,col);px(ctx,X+5,Y+4,2,3,col);
+   px(ctx,X+3,Y+2,2,7,'#8a96a2');px(ctx,X+1,Y+4,1,1,shade(col,1.6));}
+ else {                   // canister — the original sprite, unchanged
+   px(ctx,X,Y,8,11,'#2a3540');px(ctx,X+1,Y+1,6,9,shade(col,0.5));px(ctx,X+2,Y+2,4,7,col);
+   px(ctx,X+2,Y+2,1,5,shade(col,1.5));px(ctx,X+2,Y-1,4,2,'#8a96a2');px(ctx,X+3,Y-2,2,1,'#aab6c2');}}
+
+// ============ INPUT ============
+// virtual joystick: finger sits on the pad and drags; vector drives movement
+(function(){const pad=document.getElementById('dpad'),knob=document.getElementById('stick');
+  let active=false,cx=0,cy=0,R=1,pid=null;
+  const DEAD=0.16;
+  function setKnob(dx,dy){knob.querySelector('span').style.transform='translate('+dx+'px,'+dy+'px)';}
+  function clear(){active=false;pid=null;input.joy=false;input.jx=0;input.jy=0;pad.classList.remove('active');setKnob(0,0);}
+  function start(e){if(state.mode!=='play'&&state.mode!=='flame'&&state.mode!=='sub'&&!TUT.joyLive){return;}e.preventDefault();audioInit();
+    const r=pad.getBoundingClientRect();cx=r.left+r.width/2;cy=r.top+r.height/2;R=r.width*0.42;
+    active=true;pid=e.pointerId;pad.classList.add('active');try{pad.setPointerCapture(e.pointerId);}catch(_){}
+    move(e);}
+  function move(e){if(!active||e.pointerId!==pid)return;e.preventDefault();
+    let dx=e.clientX-cx,dy=e.clientY-cy;const d=Math.hypot(dx,dy);
+    if(d>R){dx*=R/d;dy*=R/d;}
+    setKnob(dx,dy);
+    let nx=dx/R,ny=dy/R;const m=Math.hypot(nx,ny);
+    if(m<DEAD){nx=0;ny=0;}
+    input.joy=true;input.jx=nx;input.jy=ny;}
+  function end(e){if(e.pointerId!==pid&&pid!==null)return;e.preventDefault();clear();}
+  pad.addEventListener('pointerdown',start);pad.addEventListener('pointermove',move);
+  pad.addEventListener('pointerup',end);pad.addEventListener('pointercancel',end);pad.addEventListener('pointerleave',end);
+})();
+function bindBtn(id,fn){const el=document.getElementById(id);if(!el)return;
+  el.addEventListener('pointerdown',e=>{e.preventDefault();audioInit();fn();el.classList.add('on');});
+  const up=e=>{if(e)e.preventDefault();el.classList.remove('on');};
+  el.addEventListener('pointerup',up);el.addEventListener('pointerleave',up);el.addEventListener('pointercancel',up);}
+bindBtn('minebtn',()=>{if(state.mode==='craft'||state.mode==='inv')menuConfirm();else if(state.mode==='sub')subFire();else if(state.mode==='play'||state.mode==='mine'||state.mode==='crank')mineEdge=true;else if(state.mode==='objectives')closeObjectives();});
+bindBtn('clipbtn',()=>{if(state.mode==='play')clipEdge=true;});
+bindBtn('ropebtn',()=>{if(state.mode==='sub'){subDropMine(-1);return;}
+  if(state.mode==='play'&&mech&&mech.piloted){actionEdge=true;return;}   // piloted MULE: this is the hook trigger
+  queueCraft=true;});
+// BOOST is an emergency-thrust trigger, not a held control: one press lights the whole
+// coil, which then burns to empty on its own. The clip button just needs the press edge.
+(function(){const cb=document.getElementById('clipbtn');if(!cb)return;
+  const dn=e=>{if(state.mode==='sub'){e.preventDefault();subBoostTrig=true;}};
+  cb.addEventListener('pointerdown',dn);
+})();
+// menu/minigame cluster: confirm activates (dig in the mine), back & the red EXIT pill both bail out
+function menuConfirmAct(){if(state.mode==='craft'||state.mode==='inv')menuConfirm();else if(state.mode==='mine')mineDigSel();else if(state.mode==='crank')crankTurn();else if(state.mode==='hack')hackConfirm();}
+function menuExit(){if(state.mode==='craft')toggleCraft(false);else if(state.mode==='inv')toggleInv(false);else if(state.mode==='mine')closeMine();else if(state.mode==='crank')closeCrank();else if(state.mode==='flame')closeFlame();else if(state.mode==='hack')closeHack();}
+bindBtn('confirmbtn',menuConfirmAct);
+bindBtn('backbtn',menuBack);
+bindBtn('exitbtn',menuExit);
+// FLAME minigame: the confirm button doubles as a HOLD-to-fire trigger (space on desktop). bindBtn
+// already toggles its pressed look; these listeners just track the held state while in flame mode.
+let flameFire=false;
+(function(){const cb=document.getElementById('confirmbtn');if(!cb)return;
+  const dn=e=>{if(state.mode==='flame'){e.preventDefault();flameFire=true;}};
+  const up=e=>{flameFire=false;};
+  cb.addEventListener('pointerdown',dn);cb.addEventListener('pointerup',up);
+  cb.addEventListener('pointerleave',up);cb.addEventListener('pointercancel',up);
+})();
+bindBtn('pausebtn',()=>{if(state.mode==='play'||state.mode==='sub')pauseGame();});
+// tab hidden / navigated away / closed — grab a save so the dive can resume later
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&player&&(state.mode==='play'||state.mode==='mine'||state.mode==='craft'||state.mode==='inv'||state.mode==='pause'))saveGame();});
+window.addEventListener('pagehide',()=>{if(player&&(state.mode==='play'||state.mode==='mine'||state.mode==='craft'||state.mode==='inv'||state.mode==='pause'))saveGame();});
+// directional pad — drives the mining selector AND (now) menu navigation; instant move on tap, fast auto-repeat while held
+(function(){const DIR={up:[0,-1],down:[0,1],left:[-1,0],right:[1,0]};
+  const REPEAT_DELAY=220,REPEAT_RATE=80;   // ms before auto-repeat kicks in, then ms between steps
+  const MINEPAD_DEAD=0.13;                  // neutral-centre radius as a fraction of pad size; everything outside it is split into 4 generous directional zones
+  let curEl=null,pid=null,delayT=null,repT=null;
+  const padLive=()=>state.mode==='mine'||state.mode==='craft'||state.mode==='inv'||state.mode==='hack';
+  // route a direction to the right consumer for the current mode
+  function padDir(md){
+    if(state.mode==='mine'){const d=DIR[md];if(d)mgMove(d[0],d[1]);}
+    else if(state.mode==='craft'||state.mode==='inv'){menuMove(md);}
+    else if(state.mode==='hack'){hackNav(md);}
+  }
+  function stop(){if(delayT){clearTimeout(delayT);delayT=null;}if(repT){clearInterval(repT);repT=null;}
+    if(curEl){curEl.classList.remove('held');curEl=null;}pid=null;}
+  function press(el,e){if(!padLive())return;
+    if(curEl&&curEl!==el)curEl.classList.remove('held');
+    curEl=el;pid=e.pointerId;el.classList.add('held');
+    padDir(el.dataset.md);   // immediate step
+    if(delayT)clearTimeout(delayT);if(repT)clearInterval(repT);
+    delayT=setTimeout(()=>{repT=setInterval(()=>{if(!padLive()){stop();return;}
+      padDir(el.dataset.md);},REPEAT_RATE);},REPEAT_DELAY);}
+  // The mining/menu d-pad hit-tests the WHOLE pad by zone instead of relying on the small buttons:
+  // a press maps to the nearest direction by where it lands, so fast, slightly-off thumb taps still
+  // fire the intended move. Buttons stay the same size; each direction's effective hitbox is ~a quarter of the pad.
+  (function(){
+    const pad=document.getElementById('minepad'),mk={};
+    document.querySelectorAll('#minepad .mk').forEach(el=>{mk[el.dataset.md]=el;});
+    function dirAt(e){
+      const r=pad.getBoundingClientRect(),dx=e.clientX-(r.left+r.width/2),dy=e.clientY-(r.top+r.height/2),dead=Math.min(r.width,r.height)*MINEPAD_DEAD;
+      if(dx*dx+dy*dy<dead*dead)return null;                          // tiny neutral centre — a dead-centre tap does nothing
+      return Math.abs(dx)>=Math.abs(dy)?(dx>=0?'right':'left'):(dy>=0?'down':'up');
+    }
+    pad.addEventListener('pointerdown',e=>{e.preventDefault();audioInit();const el=mk[dirAt(e)];if(!el)return;try{pad.setPointerCapture(e.pointerId);}catch(_){}press(el,e);});
+    const release=e=>{if(e)e.preventDefault();if(e&&pid!==null&&e.pointerId!==pid)return;stop();};
+    pad.addEventListener('pointerup',release);
+    pad.addEventListener('pointercancel',release);
+  })();
+})();
+const keymap={ArrowUp:'up',KeyW:'up',ArrowDown:'down',KeyS:'down',ArrowLeft:'left',KeyA:'left',ArrowRight:'right',KeyD:'right'};
+window.addEventListener('keydown',e=>{audioInit();
+  // the boat: planes on the arrows, tubes on fire, the coil HELD on X, one key per mine chute
+  if(state.mode==='sub'){
+    if(keymap[e.code]){input[keymap[e.code]]=true;e.preventDefault();return;}
+    if(!e.repeat&&(e.code==='Space'||e.code==='Enter'||e.code==='KeyF')){subFire();e.preventDefault();return;}
+    if(!e.repeat&&(e.code==='KeyX'||e.code==='ShiftLeft'||e.code==='ShiftRight')){subBoostTrig=true;e.preventDefault();return;}
+    if(!e.repeat&&e.code==='KeyQ'){subDropMine(-1);e.preventDefault();return;}
+    if(!e.repeat&&(e.code==='KeyE'||e.code==='KeyC')){subDropMine(1);e.preventDefault();return;}
+    if(e.code==='Escape'){pauseGame();e.preventDefault();return;}
+    return;
+  }
+  if(state.mode==='drydock'){
+    if(keymap[e.code]){dryDockMove(keymap[e.code]);e.preventDefault();return;}
+    if(!e.repeat&&(e.code==='Space'||e.code==='Enter'||e.code==='KeyF')){dryDockConfirm();e.preventDefault();return;}
+    e.preventDefault();return;   // there is no backing out of the yard — the only door is the city
+  }
+  if(state.mode==='citymap'){
+    if(keymap[e.code]){cityMapMove(keymap[e.code]);e.preventDefault();return;}
+    if(e.code==='Space'||e.code==='Enter'||e.code==='KeyF'||e.code==='KeyE'){cityMapConfirm();e.preventDefault();return;}
+    if(e.code==='Escape'){closeCityMap();e.preventDefault();return;}
+    return;
+  }
+  if(state.mode==='objectives'){   // read-only briefing: any confirm/back key closes it (ignore auto-repeat)
+    if(!e.repeat&&(e.code==='Escape'||e.code==='Space'||e.code==='Enter'||e.code==='KeyF'||e.code==='KeyE'))closeObjectives();
+    e.preventDefault();return;
+  }
+  if(state.mode==='hack'){   // octagon ICE minigame: arrows move the cursor, confirm selects/inputs, Esc aborts
+    if(keymap[e.code]){hackNav(keymap[e.code]);e.preventDefault();return;}
+    if(!e.repeat&&(e.code==='Space'||e.code==='Enter'||e.code==='KeyF')){hackConfirm();e.preventDefault();return;}
+    if(e.code==='Escape'){closeHack();e.preventDefault();return;}
+    return;
+  }
+  const inMenu=(state.mode==='craft'||state.mode==='inv');
+  if(keymap[e.code]){if(inMenu){menuMove(keymap[e.code]);e.preventDefault();return;}input[keymap[e.code]]=true;e.preventDefault();return;}
+  if(e.code==='Space'||e.code==='Enter'){if(inMenu){menuConfirm();}else{if(!input.action)actionEdge=true;input.action=true;}e.preventDefault();}
+  if(e.code==='KeyF'){if(inMenu)menuConfirm();else if(state.mode==='play'||state.mode==='mine'||state.mode==='crank')mineEdge=true;e.preventDefault();}
+  if(e.code==='KeyX'){if(state.mode==='play')clipEdge=true;e.preventDefault();}
+  if(e.code==='KeyI'){if(state.mode==='play')toggleInv(true);else if(state.mode==='inv')toggleInv(false);e.preventDefault();}
+  if(e.code==='KeyC'||e.code==='KeyE'||e.code==='Tab'){queueCraft=true;e.preventDefault();}
+  if(e.code==='KeyQ'){if(state.mode==='play')useMedkit();e.preventDefault();}
+  if(e.code==='Escape'){if(state.mode==='play')pauseGame();else if(state.mode==='pause')resumeGame();else if(state.mode==='mine'||state.mode==='craft'||state.mode==='inv'||state.mode==='crank'||state.mode==='flame')menuBack();e.preventDefault();}
+});
+window.addEventListener('keyup',e=>{if(keymap[e.code]){input[keymap[e.code]]=false;e.preventDefault();}
+  if(e.code==='Space'||e.code==='Enter')input.action=false;});
+
+// ============ INVENTORY + CRAFT ============
+function invGet(id){return inv[id]||0;}
+function addInv(id,n){inv[id]=(inv[id]||0)+n;}
+function canPay(m){for(const id in m)if(invGet(id)<m[id])return false;return true;}
+function pay(m){for(const id in m)inv[id]=invGet(id)-m[id];}
+function tryRefine(id){const r=RES[id];if(canPay(r.in)){pay(r.in);addInv(id,1);sfx.mix();}}
+// interior layers carry no suit line (one suit per environment) — the next craftable
+// suit is the first layer at-or-below gearLevel that still has gear data
+function nextGearTier(){for(let n=gearLevel;n<TIERS.length;n++){if(TIERS[n]&&TIERS[n].gear)return n;}return -1;}
+function tryGear(idx){if(idx!==nextGearTier())return;const g=TIERS[idx]&&TIERS[idx].gear;if(g&&canPay(g.in)){pay(g.in);applyGear(idx);}}
+function openBulkhead(idx){const b=bulkheads[idx];if(!b)return;for(const c of b.cells)map[c.y][c.x]=EMPTY;b.open=true;
+  const mid=b.cells[(b.cells.length/2)|0];bubbleBurst(mid.x*TS,b.cells[0].y*TS,16,30,-30,20,1.1,2);}
+function applyGear(idx){const s=TIERS[idx].gear.stats;
+  player.maxOxygen=s.oxy+(player.tankBonus||0);player.oxygen=player.maxOxygen;player.maxHearts=s.hp;player.hearts=s.hp;
+  player.accMul=s.acc;player.maxvMul=s.mv+(player.mvBonus||0);player.lightRadius=s.lr+(player.lightBonus||0);player.thermalR=s.th;player.pollutionR=s.po;
+  player.sensitivity=idx+2;
+  gearLevel=idx+1;
+  burst(player.x+4,player.y+4,26,170,0.7,'#ffe27a');
+  sfx.build();
+  showMsg(TIERS[idx].gear.name+' equipped — the next environment will let you through');
+}
+// ====== AIR ROPE + BASES ======
+function curBase(){const t=tAt(player.y);const b=bases[t];return (b&&b.active)?b:null;}
+function baseDist(b){return Math.hypot(player.x+4-b.x,player.y+4-b.y);}
+function clipReach(b){if(!b)return false;
+  if(baseDist(b)<=DOCK_R)return true;
+  if(b.endX!==undefined&&Math.hypot(player.x+4-b.endX,player.y+4-b.endY)<=GRAB_R)return true;
+  return false;}
+function ropeCost(t){const c={};c['t'+(t+1)+'ra']=3;return c;}
+/* ---- per-environment V1–V4 progression (O2 tank, O2 regulator, lens; seals ride player.seals) ----
+ * Version v of an item draws on layer v of the CURRENT environment: layer li (0..3) of environment
+ * e ↔ global tier index 4*e+li (every environment is exactly 4 layers). Resource roles per layer:
+ * slot a (#1) = life support & infrastructure (tank←floating, regulator←ore, composite→bulkhead+seal),
+ * slot b (#2) = utility (composite→lens, base power, seal), slot c (#3) = reserved for the suit. */
+function envTier(e,li){return 4*e+li;}
+function progFlags(p,key,e){if(!p[key])p[key]={};if(!p[key][e])p[key][e]=[false,false,false,false];return p[key][e];}
+function progCount(p,key){let c=0;const m=p[key]||{};for(const e in m)for(let i=0;i<4;i++)if(m[e][i])c++;return c;}
+function recalcOxyDrain(){player.oxyDrainMul=Math.max(0.4,1-0.05*progCount(player,'o2reg'));}
+const O2_TANK_COST=5, O2_REG_COST=5;      // × the layer's #1 floating / #1 ore
+function o2TankCost(e,v){return {['t'+(envTier(e,v)+1)+'ma']:O2_TANK_COST};}
+function o2RegCost(e,v){return {['t'+(envTier(e,v)+1)+'ra']:O2_REG_COST};}
+function lensCost(e,v){return {['t'+(envTier(e,v)+1)+'fb']:1};}
+function sealCost(t){return {['t'+(t+1)+'fa']:1,['t'+(t+1)+'fb']:1};}
+function bulkToll(t){return {['t'+(t+1)+'fa']:1};}
+// every base eats the #2 composite of the layer ABOVE it ('t'+b.tier is the previous layer's prefix;
+// only env-1 layer-a of each city has nothing above, and that base spawns online)
+function activateBase(b){const kit={};kit['t'+b.tier+'fb']=1;
+  if(canPay(kit)){pay(kit);b.active=true;b.ropeLen=ROPE_DEF;
+    burst(b.x,b.y,26,150,0.7,'#46d0ff');
+    bubbleBurst(b.x,b.y-2,10,20,-26,16,1.3,2);
+    sfx.build();
+    // bulkheads are owned by the layer's quest + control unit now — the base is air and crafting only
+    showMsg('base online — air line live, clip on with ⚓');}
+  else showMsg('haul 1 '+RES['t'+b.tier+'fb'].name+' down here — built one layer up — to power this base');
+}
+function chip(id){const r=RES[id];return '<span class="chip">'+iconSVG(id,18)+'<span class="n">'+r.name+'</span><span class="q">'+invGet(id)+'</span></span>';}
+function need(m,curT){return Object.keys(m).map(id=>{const r=RES[id],nd=m[id],hv=invGet(id),ok=hv>=nd,it=idTier(id)-1,carry=it<curT;
+  return '<span class="req '+(ok?'ok':'no')+'">'+iconSVG(id,15)+'<span class="rqn">'+r.name+'</span><span class="rqq">'+hv+'/'+nd+'</span>'+(carry?'<span class="from">◂</span>':'')+'</span>';}).join('');}
+const DIVICON={"crate": "<svg class=\"dico\" viewBox=\"0 0 16 16\" width=\"100%\" height=\"100%\" shape-rendering=\"crispEdges\" fill=\"#c79a5a\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"1\" y=\"2\" width=\"14\" height=\"1\"/><rect x=\"1\" y=\"3\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"3\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"3\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"12\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"4\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"11\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"10\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"9\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"8\" width=\"1\" height=\"1\"/><rect x=\"7\" y=\"8\" width=\"2\" height=\"1\"/><rect x=\"14\" y=\"8\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"9\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"10\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"10\" width=\"1\" height=\"1\"/><rect x=\"10\" y=\"10\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"10\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"11\" width=\"1\" height=\"1\"/><rect x=\"4\" y=\"11\" width=\"1\" height=\"1\"/><rect x=\"11\" y=\"11\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"11\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"12\" width=\"1\" height=\"1\"/><rect x=\"3\" y=\"12\" width=\"1\" height=\"1\"/><rect x=\"12\" y=\"12\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"12\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"13\" width=\"14\" height=\"1\"/></svg>", "flask": "<svg class=\"dico\" viewBox=\"0 0 16 16\" width=\"100%\" height=\"100%\" shape-rendering=\"crispEdges\" fill=\"#5fe3c8\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"6\" y=\"0\" width=\"4\" height=\"1\"/><rect x=\"6\" y=\"1\" width=\"1\" height=\"1\"/><rect x=\"9\" y=\"1\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"2\" width=\"1\" height=\"1\"/><rect x=\"9\" y=\"2\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"3\" width=\"1\" height=\"1\"/><rect x=\"9\" y=\"3\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"4\" width=\"2\" height=\"1\"/><rect x=\"9\" y=\"4\" width=\"2\" height=\"1\"/><rect x=\"5\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"10\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"4\" y=\"6\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"6\" width=\"2\" height=\"1\"/><rect x=\"4\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"7\" y=\"7\" width=\"2\" height=\"1\"/><rect x=\"11\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"3\" y=\"8\" width=\"2\" height=\"1\"/><rect x=\"6\" y=\"8\" width=\"4\" height=\"1\"/><rect x=\"11\" y=\"8\" width=\"2\" height=\"1\"/><rect x=\"3\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"9\" width=\"4\" height=\"1\"/><rect x=\"12\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"3\" y=\"10\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"10\" width=\"6\" height=\"1\"/><rect x=\"12\" y=\"10\" width=\"1\" height=\"1\"/><rect x=\"3\" y=\"11\" width=\"10\" height=\"1\"/><rect x=\"4\" y=\"12\" width=\"8\" height=\"1\"/></svg>", "wrench": "<svg class=\"dico\" viewBox=\"0 0 16 16\" width=\"100%\" height=\"100%\" shape-rendering=\"crispEdges\" fill=\"#bfeaff\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"12\" y=\"0\" width=\"2\" height=\"1\"/><rect x=\"11\" y=\"1\" width=\"4\" height=\"1\"/><rect x=\"10\" y=\"2\" width=\"2\" height=\"1\"/><rect x=\"14\" y=\"2\" width=\"1\" height=\"1\"/><rect x=\"10\" y=\"3\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"3\" width=\"1\" height=\"1\"/><rect x=\"10\" y=\"4\" width=\"2\" height=\"1\"/><rect x=\"14\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"9\" y=\"5\" width=\"4\" height=\"1\"/><rect x=\"8\" y=\"6\" width=\"3\" height=\"1\"/><rect x=\"7\" y=\"7\" width=\"3\" height=\"1\"/><rect x=\"6\" y=\"8\" width=\"3\" height=\"1\"/><rect x=\"5\" y=\"9\" width=\"3\" height=\"1\"/><rect x=\"4\" y=\"10\" width=\"3\" height=\"1\"/><rect x=\"3\" y=\"11\" width=\"3\" height=\"1\"/><rect x=\"2\" y=\"12\" width=\"3\" height=\"1\"/><rect x=\"1\" y=\"13\" width=\"3\" height=\"1\"/><rect x=\"1\" y=\"14\" width=\"2\" height=\"1\"/></svg>", "swap": "<svg class=\"dico\" viewBox=\"0 0 16 16\" width=\"100%\" height=\"100%\" shape-rendering=\"crispEdges\" fill=\"#9fd0e6\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"7\" y=\"0\" width=\"2\" height=\"1\"/><rect x=\"6\" y=\"1\" width=\"4\" height=\"1\"/><rect x=\"5\" y=\"2\" width=\"6\" height=\"1\"/><rect x=\"4\" y=\"3\" width=\"2\" height=\"1\"/><rect x=\"7\" y=\"3\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"3\" width=\"2\" height=\"1\"/><rect x=\"7\" y=\"4\" width=\"2\" height=\"1\"/><rect x=\"7\" y=\"5\" width=\"2\" height=\"1\"/><rect x=\"7\" y=\"6\" width=\"2\" height=\"1\"/><rect x=\"7\" y=\"7\" width=\"2\" height=\"1\"/><rect x=\"7\" y=\"8\" width=\"2\" height=\"1\"/><rect x=\"7\" y=\"9\" width=\"2\" height=\"1\"/><rect x=\"4\" y=\"10\" width=\"2\" height=\"1\"/><rect x=\"7\" y=\"10\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"10\" width=\"2\" height=\"1\"/><rect x=\"5\" y=\"11\" width=\"6\" height=\"1\"/><rect x=\"6\" y=\"12\" width=\"4\" height=\"1\"/><rect x=\"7\" y=\"13\" width=\"2\" height=\"1\"/></svg>"};
+const TABICON={"craft": "<svg class=\"dico\" viewBox=\"0 0 16 16\" width=\"100%\" height=\"100%\" shape-rendering=\"crispEdges\" fill=\"#9fdcff\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"6\" y=\"0\" width=\"4\" height=\"1\"/><rect x=\"2\" y=\"1\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"1\" width=\"4\" height=\"1\"/><rect x=\"13\" y=\"1\" width=\"1\" height=\"1\"/><rect x=\"2\" y=\"2\" width=\"2\" height=\"1\"/><rect x=\"5\" y=\"2\" width=\"6\" height=\"1\"/><rect x=\"12\" y=\"2\" width=\"2\" height=\"1\"/><rect x=\"3\" y=\"3\" width=\"10\" height=\"1\"/><rect x=\"1\" y=\"4\" width=\"5\" height=\"1\"/><rect x=\"10\" y=\"4\" width=\"5\" height=\"1\"/><rect x=\"1\" y=\"5\" width=\"4\" height=\"1\"/><rect x=\"11\" y=\"5\" width=\"4\" height=\"1\"/><rect x=\"1\" y=\"6\" width=\"3\" height=\"1\"/><rect x=\"7\" y=\"6\" width=\"2\" height=\"1\"/><rect x=\"12\" y=\"6\" width=\"3\" height=\"1\"/><rect x=\"1\" y=\"7\" width=\"3\" height=\"1\"/><rect x=\"6\" y=\"7\" width=\"4\" height=\"1\"/><rect x=\"12\" y=\"7\" width=\"3\" height=\"1\"/><rect x=\"1\" y=\"8\" width=\"3\" height=\"1\"/><rect x=\"6\" y=\"8\" width=\"4\" height=\"1\"/><rect x=\"12\" y=\"8\" width=\"3\" height=\"1\"/><rect x=\"1\" y=\"9\" width=\"3\" height=\"1\"/><rect x=\"7\" y=\"9\" width=\"2\" height=\"1\"/><rect x=\"12\" y=\"9\" width=\"3\" height=\"1\"/><rect x=\"1\" y=\"10\" width=\"4\" height=\"1\"/><rect x=\"11\" y=\"10\" width=\"4\" height=\"1\"/><rect x=\"1\" y=\"11\" width=\"5\" height=\"1\"/><rect x=\"10\" y=\"11\" width=\"5\" height=\"1\"/><rect x=\"3\" y=\"12\" width=\"10\" height=\"1\"/><rect x=\"2\" y=\"13\" width=\"2\" height=\"1\"/><rect x=\"5\" y=\"13\" width=\"6\" height=\"1\"/><rect x=\"12\" y=\"13\" width=\"2\" height=\"1\"/><rect x=\"2\" y=\"14\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"14\" width=\"4\" height=\"1\"/><rect x=\"13\" y=\"14\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"15\" width=\"4\" height=\"1\"/></svg>", "shop": "<svg class=\"dico\" viewBox=\"0 0 16 16\" width=\"100%\" height=\"100%\" shape-rendering=\"crispEdges\" fill=\"#ffd23c\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"6\" y=\"0\" width=\"4\" height=\"1\"/><rect x=\"4\" y=\"1\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"1\" width=\"2\" height=\"1\"/><rect x=\"3\" y=\"2\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"2\" width=\"4\" height=\"1\"/><rect x=\"12\" y=\"2\" width=\"1\" height=\"1\"/><rect x=\"2\" y=\"3\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"3\" width=\"2\" height=\"1\"/><rect x=\"9\" y=\"3\" width=\"2\" height=\"1\"/><rect x=\"13\" y=\"3\" width=\"1\" height=\"1\"/><rect x=\"2\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"10\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"13\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"7\" y=\"5\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"7\" y=\"6\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"7\" y=\"7\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"8\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"8\" width=\"1\" height=\"1\"/><rect x=\"7\" y=\"8\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"8\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"8\" width=\"1\" height=\"1\"/><rect x=\"2\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"10\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"13\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"2\" y=\"10\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"10\" width=\"2\" height=\"1\"/><rect x=\"9\" y=\"10\" width=\"2\" height=\"1\"/><rect x=\"13\" y=\"10\" width=\"1\" height=\"1\"/><rect x=\"3\" y=\"11\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"11\" width=\"4\" height=\"1\"/><rect x=\"12\" y=\"11\" width=\"1\" height=\"1\"/><rect x=\"4\" y=\"12\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"12\" width=\"2\" height=\"1\"/><rect x=\"6\" y=\"13\" width=\"4\" height=\"1\"/></svg>"};
+
+// ===== HIERARCHICAL CRAFT/SHOP MENU: tabs (top) -> division icons -> options =====
+const DIVS={
+ work:[
+  {k:'hold',  label:'Cargo',   fn:()=>DIVICON.crate},
+  {k:'mixer', label:'Mixer',   fn:()=>DIVICON.flask},
+  {k:'fab',   label:'Fab Bay', fn:()=>gearIcon(34)},
+  {k:'airline',label:'Air Line',fn:()=>ropeIcon(34)},
+  {k:'o2',    label:'O₂ Gear', fn:()=>tankIcon(34)},
+  {k:'seals', label:'Seals',   fn:()=>sealIcon(34)},
+  {k:'lens',  label:'Lens',    fn:()=>lensIcon(34)},
+  {k:'patch', label:'Patch',   fn:()=>medIcon(34)},
+  {k:'mech',  label:'Mech',    fn:()=>machIcon('mech',34)},
+ ],
+ shop:[
+  {k:'dealer', label:'Dealer',   fn:()=>coinIcon(34)},
+  {k:'parts',  label:'Parts',    fn:()=>partIcon('bolt',34)},
+  {k:'machine',label:'Machines', fn:()=>machIcon('robot',34)},
+  {k:'outfit', label:'Outfit',   fn:()=>DIVICON.wrench},
+  {k:'mechlab',label:'Mech Lab', fn:()=>machIcon('mech',34)},
+  {k:'exch',   label:'Exchange', fn:()=>DIVICON.swap},
+ ]
+};
+const DIVTITLE={hold:'Cargo hold',mixer:'The mixer',fab:'Fabrication bay',airline:'Air line',o2:'O₂ tank & regulator',seals:'Hazard seals',lens:'Lantern lens',patch:'Patch kits',mech:'Mech bay',dealer:'Scrap dealer',parts:'Buy parts',machine:'Machine shop',outfit:'Outfitter',mechlab:'Mech lab',exch:'Resource exchange'};
+const ctabsEl=document.getElementById('ctabs');
+let mDiv=null, mZone='tab', mIdx=0, mGridIdx=0;
+let baseIntroSeen=false;
+let mineIntroSeen=false, mineIntroActive=false;
+/* answer to the studio intro's FIRST TIME HERE prompt: NO turns every tutorial deck
+ * off for the whole run (boot manual, base briefing, mining primer). */
+let tutorialsOn=true;
+
+function resChip(id,nd){
+ const have=invGet(id), ok=(nd==null)?true:(have>=nd);
+ return '<span class="rpchip '+(nd==null?'':(ok?'ok':'no'))+'">'+iconSVG(id,16)+'<span class="rpn">'+have+'</span>'+(nd!=null?'<span class="rpneed">/'+nd+'</span>':'')+'</span>';
+}
+// resources relevant to ONLY what's craftable in this module at this base/level (concise inventory)
+function relevantResPanel(tab,div,T0){
+ const ord=[], nd={};
+ function add(id,n){ if(!RES[id])return; if(!(id in nd)){nd[id]=(n==null?null:0);ord.push(id);} if(n!=null)nd[id]=(nd[id]||0)+n; }
+ let baseRow='';
+ if(tab==='work'){
+  if(div==='hold')return '';                                   // cargo already shows the full hold
+  else if(div==='mixer'){ for(let t=0;t<=T0;t++)for(const rid of TIERS[t].ref){const r=RES[rid];for(const k in r.in)add(k,null);} }
+  else if(div==='fab'){
+   const _gi=nextGearTier();
+   if(_gi>=0){const g=TIERS[_gi].gear;for(const k in g.in)add(k,g.in[k]);}
+   const nb=bases[T0+1];
+   if(nb&&!nb.active){const aid='t'+nb.tier+'fb',ah=invGet(aid),aok=ah>=1;
+    baseRow='<div class="rpbase"><span class="rpb-l">NEXT BASE \u25be</span><span class="rpchip '+(aok?'ok':'no')+'">'+iconSVG(aid,16)+'<span class="rpn">'+ah+'</span><span class="rpneed">/1</span></span><span class="rpb-t">'+(aok?'ready \u2014 haul it down &amp; power on':'haul '+RES[aid].name+' down to power it on')+'</span></div>';}
+  }
+  else if(div==='airline'){const rc=ropeCost(T0);for(const k in rc)add(k,rc[k]);}
+  else if(div==='o2'){const e=envOfTier(T0);
+   const tk=progFlags(player,'o2tank',e);let tv=0;while(tv<4&&tk[tv])tv++;
+   if(tv<4){const c=o2TankCost(e,tv);for(const k in c)add(k,c[k]);}
+   const rg=progFlags(player,'o2reg',e);let rv=0;while(rv<4&&rg[rv])rv++;
+   if(rv<4){const c=o2RegCost(e,rv);for(const k in c)add(k,c[k]);}
+  }
+  else if(div==='seals'){if(envOfTier(T0)>=1&&!(player.seals&&player.seals[T0])){const sc=sealCost(T0);for(const k in sc)add(k,sc[k]);}}
+  else if(div==='lens'){const e=envOfTier(T0),lf=progFlags(player,'lensUpg',e);let lv=0;while(lv<4&&lf[lv])lv++;
+   if(lv<4){const lc=lensCost(e,lv);for(const k in lc)add(k,lc[k]);}}
+  else if(div==='patch'){add('t'+(T0+1)+'ra',1);add('t'+(T0+1)+'ma',1);}
+  else if(div==='mech'){
+   if(mech&&(player.mechBattery||0)<1){const bc=mechBatteryCost(T0);for(const k in bc)add(k,bc[k]);}
+   if(mech){const cc=mechCallCost(T0);if(cc)for(const k in cc)add(k,cc[k]);}
+  }
+ } else {
+  if(div==='dealer'||div==='parts'||div==='exch'||div==='mechlab')return '';    // these run on coins/scrap shown elsewhere
+  else if(div==='machine'){
+   const seen={},chips=[];for(const m of MACHINES)for(const k in m.cost){if(seen[k])continue;seen[k]=1;chips.push('<span class="rpchip">'+partIcon(k,16)+'<span class="rpn">'+(partsInv[k]||0)+'</span></span>');}
+   if(!chips.length)return '';
+   return '<div class="rpanel"><div class="rphead">parts aboard</div><div class="rpgrid">'+chips.join('')+'</div></div>';
+  }
+  else if(div==='outfit')return '';                              // coin-only now — tank & regulator craft in the workshop
+ }
+ if(!ord.length&&!baseRow)return '';
+ let chips=ord.map(id=>resChip(id,nd[id])).join('');
+ if(!chips&&baseRow)chips='<span class="rpempty">bring resources down to power the base below</span>';
+ return '<div class="rpanel"><div class="rphead">resources \u00b7 in stock</div><div class="rpgrid">'+chips+'</div>'+baseRow+'</div>';
+}
+// overview-grid panel: what it takes to power on the NEXT base (updates per level)
+function nextBasePanel(T0){
+ const nb=bases[T0+1];
+ if(nb&&!nb.active){
+  const aid='t'+nb.tier+'fb',ah=invGet(aid),aok=ah>=1;
+  return '<div class="rpanel rpnext"><div class="rphead">next base \u00b7 power-on</div><div class="rpnextrow">'
+   +'<span class="rpchip '+(aok?'ok':'no')+'">'+iconSVG(aid,18)+'<span class="rpn">'+ah+'</span><span class="rpneed">/1</span></span>'
+   +'<span class="rpb-t">'+(aok? RES[aid].name+' ready \u2014 haul it to the dead base below &amp; press X to power on' : 'haul 1\u00d7 '+RES[aid].name+' \u2014 this layer\u2019s #2 composite \u2014 down to the dead base below to power it on')+'</span>'
+   +'</div></div>';
+ }
+ if(nb&&nb.active) return '<div class="rpanel rpnext"><div class="rphead">next base</div><div class="rpnextrow"><span class="rpb-t" style="color:#5dff8a">\u2713 the base below is powered \u2014 gear up and descend</span></div></div>';
+ return '<div class="rpanel rpnext"><div class="rphead">deepest reach</div><div class="rpnextrow"><span class="rpb-t">no base below \u2014 this is the bottom of the route</span></div></div>';
+}
+function divContent(tab,div,T0){
+ let h='';
+ if(tab==='work'){
+  if(div==='hold'){
+   const raws=[],mixs=[],refs=[];
+   for(const id in inv){if(invGet(id)<=0)continue;const k=RES[id].kind;(k==='raw'?raws:k==='mix'?mixs:refs).push(id);}
+   if(!raws.length&&!mixs.length&&!refs.length)h+='<div class="emptyhold">hold\u2019s empty \u2014 go crack some outcrops and snag mixer canisters</div>';
+   else h+='<div class="chips">'+raws.map(chip).join('')+mixs.map(chip).join('')+refs.map(chip).join('')+'</div>';
+  }
+  else if(div==='mixer'){
+   for(let t=0;t<=T0;t++)for(const rid of TIERS[t].ref){const r=RES[rid],ok=canPay(r.in);
+    h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+iconSVG(rid,30)+'<span class="nm">'+r.name+'</span></div><div class="rin">'+need(r.in,t)+'</div><button class="cbtn '+(ok?'go':'')+'" data-craft="refine:'+rid+'"'+(ok?'':' disabled')+'>Mix</button></div>';}
+  }
+  else if(div==='fab'){
+   const gi=nextGearTier(), g=gi>=0&&TIERS[gi].gear;
+   if(g){const ok=canPay(g.in);
+    h+='<div class="recipe gearrec '+(ok?'rok':'')+'"><div class="rout">'+gearIcon(30)+'<span class="nm" style="color:var(--gold)">'+g.name+'</span></div><div class="rin">'+need(g.in,gi)+'</div><button class="cbtn build" data-craft="gear:'+gi+'"'+(ok?'':' disabled')+'>Build</button></div>';
+    if(g.carry)h+='<div class="gearnote">\u25c2 needs '+RES[g.carry].name+' carried down from the tier above</div>';
+    h+='<div class="gearnote">the top (#3) composite from each of this environment\u2019s 4 layers \u2014 the control unit at its last bulkhead demands this suit</div>';}
+   else h+='<div class="emptyhold">no suit line to fabricate right now \u2014 the next environment\u2019s spec unlocks as you descend; the transit gate waits at the bottom</div>';
+  }
+  else if(div==='airline'){
+   const _b=bases[T0];
+   if(!_b)h+='<div class="emptyhold">no base on this level</div>';
+   else if(_b.ropeLen>=ROPE_MAX)h+='<div class="allbuilt" style="color:#46d0ff;text-shadow:0 0 10px rgba(70,208,255,.4)">air line maxed \u00b7 '+_b.ropeLen+'u</div>';
+   else{const rc=ropeCost(T0),ok=canPay(rc);
+    h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+ropeIcon(30)+'<span class="nm">Extend rope +'+ROPE_STEP+' <span style="color:#5b8095;font-size:9px">'+_b.ropeLen+'\u2192'+Math.min(ROPE_MAX,_b.ropeLen+ROPE_STEP)+'u</span></span></div><div class="rin">'+need(rc,T0)+'</div><button class="cbtn '+(ok?'go':'')+'" data-craft="rope"'+(ok?'':' disabled')+'>Extend</button></div>';}
+  }
+  else if(div==='o2'){
+   const e=envOfTier(T0),tk=progFlags(player,'o2tank',e),rg=progFlags(player,'o2reg',e);
+   h+='<div class="gearnote">each version draws on one layer of this environment \u2014 V1 from its 1st layer down to V4 from its 4th</div>';
+   for(let vv=0;vv<4;vv++){const fitted=tk[vv],rid='t'+(envTier(e,vv)+1)+'ma';
+    if(!RES[rid]){h+='<div class="gearnote">\u25c2 O\u2082 tank V'+(vv+1)+' \u2014 descend to this environment\u2019s layer '+(vv+1)+' to spec it</div>';continue;}
+    const c=o2TankCost(e,vv),ok=!fitted&&(vv===0||tk[vv-1])&&canPay(c);
+    h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+tankIcon(30)+'<span class="nm">O\u2082 tank V'+(vv+1)+' <span style="color:#5b8095;font-size:9px">+'+TANK_STEP+' max air</span></span></div><div class="rin">'+(fitted?'<span style="color:#5dff8a;font-size:9px">FITTED</span>':need(c,T0))+'</div><button class="cbtn '+(ok?'build':'')+'" data-craft="o2tank:'+vv+'"'+(ok?'':' disabled')+'>'+(fitted?'\u2713':'Fit')+'</button></div>';}
+   for(let vv=0;vv<4;vv++){const fitted=rg[vv],rid='t'+(envTier(e,vv)+1)+'ra';
+    if(!RES[rid]){h+='<div class="gearnote">\u25c2 O\u2082 regulator V'+(vv+1)+' \u2014 descend to this environment\u2019s layer '+(vv+1)+' to spec it</div>';continue;}
+    const c=o2RegCost(e,vv),ok=!fitted&&(vv===0||rg[vv-1])&&canPay(c);
+    h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+tankIcon(30)+'<span class="nm">O\u2082 regulator V'+(vv+1)+' <span style="color:#5b8095;font-size:9px">\u22125% air drain</span></span></div><div class="rin">'+(fitted?'<span style="color:#5dff8a;font-size:9px">FITTED</span>':need(c,T0))+'</div><button class="cbtn '+(ok?'build':'')+'" data-craft="o2reg:'+vv+'"'+(ok?'':' disabled')+'>'+(fitted?'\u2713':'Fit')+'</button></div>';}
+  }
+  else if(div==='seals'){
+   const e=envOfTier(T0),V=(SCHED[T0]?SCHED[T0].layerInEnv:T0%4)+1;
+   if(e<1)h+='<div class="emptyhold">this environment runs clean \u2014 pollution (and the seals that counter it) begin one environment down</div>';
+   else if(player.seals&&player.seals[T0])h+='<div class="allbuilt" style="color:#7dff4a">seal V'+V+' fitted for this layer \u2713</div>';
+   else{const sc=sealCost(T0),ok=canPay(sc);
+    h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+sealIcon(30)+'<span class="nm">Hazard seal V'+V+' <span style="color:#5b8095;font-size:9px">big cut to this layer\u2019s pollution \u00b7 its #1 + #2 composites</span></span></div><div class="rin">'+need(sc,T0)+'</div><button class="cbtn '+(ok?'go':'')+'" data-craft="seal"'+(ok?'':' disabled')+'>Fit</button></div>';}
+  }
+  else if(div==='lens'){
+   const e=envOfTier(T0),lf=progFlags(player,'lensUpg',e),LL=player.lanternLevel||0;
+   let lv=0;while(lv<4&&lf[lv])lv++;
+   if(lv>=4)h+='<div class="allbuilt" style="color:#ffd23c;text-shadow:0 0 10px rgba(255,210,60,.4)">lens fully focused for this environment \u00b7 beam +'+(LL*10)+'%</div>';
+   else{const rid='t'+(envTier(e,lv)+1)+'fb';
+    if(!RES[rid])h+='<div class="gearnote">\u25c2 lens V'+(lv+1)+' \u2014 descend to this environment\u2019s layer '+(lv+1)+' to spec it</div>';
+    else{const lc=lensCost(e,lv),ok=canPay(lc);
+     h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+lensIcon(30)+'<span class="nm">Grind lens V'+(lv+1)+' <span style="color:#5b8095;font-size:9px">beam +10% ('+(LL*10)+'%\u2192'+((LL+1)*10)+'%) \u00b7 layer '+(lv+1)+'\u2019s #2 composite</span></span></div><div class="rin">'+need(lc,T0)+'</div><button class="cbtn '+(ok?'go':'')+'" data-craft="lens"'+(ok?'':' disabled')+'>Grind</button></div>';}}
+  }
+  else if(div==='patch'){
+   const mc={};mc['t'+(T0+1)+'ra']=1;mc['t'+(T0+1)+'ma']=1;const full=(player.medkits||0)>=5,ok=!full&&canPay(mc);
+   if(full)h+='<div class="allbuilt" style="color:#5dff8a">patch kits full (5)</div>';
+   else h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+medIcon(30)+'<span class="nm">Patch kit <span style="color:#5b8095;font-size:9px">heals 2 \u00b7 max 5 \u00b7 '+(player.medkits||0)+' aboard</span></span></div><div class="rin">'+need(mc,T0)+'</div><button class="cbtn '+(ok?'go':'')+'" data-craft="medkit"'+(ok?'':' disabled')+'>Make</button></div>';
+  }
+  else if(div==='mech'){
+   if(!mech)h+='<div class="emptyhold">no mech aboard \u2014 build the DV-8 \u201cMULE\u201d in the SHOP\u2019s machine bay</div>';
+   else{
+    const pct=Math.round(100*mech.battery/mechBatMax());
+    h+='<div class="gearnote">MULE status \u2014 battery '+(mech.battery>0?pct+'%':'<span style="color:#ff4d5e">DEAD</span>')+' \u00b7 cap '+mechBatMax().toFixed(0)+'s \u00b7 coil '+mechBoostMax().toFixed(1)+'s @ +'+mechBoostRegen().toFixed(2)+'/s (burnout '+mechBoostRebuild().toFixed(1)+'s) \u00b7 hook '+mechHookReach()+'u'+(mech.off?' \u00b7 <span style="color:#ff9a3c">LEFT BEHIND \u2014 call it below</span>':'')+'</div>';
+    h+='<div class="gearnote">the cell drains only while the MULE works \u2014 drill '+MECH_DRILL_COST.toFixed(0)+'s a vein \u00b7 saw '+MECH_SAW_COST.toFixed(1)+'s a kill \u00b7 hook '+MECH_HOOK_COST.toFixed(1)+'s a shot \u00b7 boost 1s/s \u00b7 walking is free. the thruster coil <b>recharges whenever it isn\u2019t firing</b> (+'+mechBoostRegen().toFixed(2)+'s a second, free), but burn it to <b>empty</b> and the thruster <b>cuts out</b> for '+mechBoostRebuild().toFixed(1)+'s while it rebuilds \u2014 land to clear it instantly. the Mech Lab upgrades <b>how much it holds</b> and <b>how fast it winds back</b> separately. the cockpit is <b>sealed</b> \u2014 your tank holds while you pilot, so the cell is the only thing you spend</div>';
+    const bc=mechBatteryCost(T0),carrying=(player.mechBattery||0)>=1,ok=!carrying&&canPay(bc);
+    h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+batIcon(30)+'<span class="nm">Battery cell <span style="color:#5b8095;font-size:9px">4\u00d7 each of this layer\u2019s ores &amp; floats \u00b7 carry max 1</span></span></div><div class="rin">'+(carrying?'<span style="color:#5dff8a;font-size:9px">STOWED 1/1</span>':need(bc,T0))+'</div><button class="cbtn '+(ok?'go':'')+'" data-craft="mbat"'+(ok?'':' disabled')+'>Cell</button></div>';
+    const cc=mechCallCost(T0),cok=!!cc&&canPay(cc);
+    h+='<div class="recipe '+(cok?'rok':'')+'"><div class="rout">'+machIcon('mech',30)+'<span class="nm">Call the MULE here <span style="color:#5b8095;font-size:9px">arrives exactly as you left it \u2014 dead or alive \u00b7 10\u00d7 one floating kind</span></span></div><div class="rin">'+(cc?need(cc,T0):'')+'</div><button class="cbtn '+(cok?'go':'')+'" data-craft="mcall"'+(cok?'':' disabled')+'>Call</button></div>';
+   }
+  }
+ } else {
+  if(div==='dealer'){
+   const sids=SCRAP.map(s=>s.id).filter(id=>(scrapInv[id]||0)>0);
+   if(!sids.length)h+='<div class="emptyhold">no salvage aboard \u2014 grab the glinting scrap out in the dark</div>';
+   else{for(const id of sids){const s=SCRAPBYID[id];
+     h+='<div class="recipe rok"><div class="rout">'+scrapIcon(id,30)+'<span class="nm">'+s.name+' \u00d7'+scrapInv[id]+' <span style="color:#5b8095;font-size:9px">'+s.coin+' coin ea</span></span></div><button class="cbtn go" data-craft="sell:'+id+'">Sell</button></div>';}
+    let tot=0;for(const id of sids)tot+=scrapInv[id]*SCRAPBYID[id].coin;
+    h+='<div class="recipe rok"><div class="rout"><span class="nm" style="color:var(--gold)">Sell everything <span style="color:#5b8095;font-size:9px">+'+tot+' coin</span></span></div><button class="cbtn build" data-craft="sellall">Cash in</button></div>';}
+  }
+  else if(div==='parts'){
+   for(const pt of PARTS){const have=partsInv[pt.id]||0,ok=coins>=pt.coin;
+    h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+partIcon(pt.id,30)+'<span class="nm">'+pt.name+' <span style="color:#5b8095;font-size:9px">have '+have+' \u00b7 '+pt.coin+' coin</span></span></div><button class="cbtn '+(ok?'go':'')+'" data-craft="buypart:'+pt.id+'"'+(ok?'':' disabled')+'>Buy</button></div>';}
+  }
+  else if(div==='machine'){
+   for(const m of MACHINES){const built=(m.id==='robot'&&companion)||(m.id==='floodlight'&&player.builtFloodlight)||(m.id==='thruster'&&player.builtThruster)||(m.id==='mech'&&mech);
+    const ok=!built&&canPayParts(m.cost);
+    let costStr=Object.keys(m.cost).map(k=>partIcon(k,16)+'<span class="pq'+((partsInv[k]||0)>=m.cost[k]?' ok':'')+'">'+(partsInv[k]||0)+'/'+m.cost[k]+'</span>').join('');
+    h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+machIcon(m.id,30)+'<span class="nm">'+m.name+' <span style="color:#5b8095;font-size:9px">'+m.desc+'</span></span></div><div class="rin">'+(built?'<span style="color:#5dff8a;font-size:9px">BUILT</span>':costStr)+'</div><button class="cbtn '+(ok?'build':'')+'" data-craft="machine:'+m.id+'"'+(ok?'':' disabled')+'>'+(built?'\u2713':'Build')+'</button></div>';}
+  }
+  else if(div==='outfit'){
+   // spare tank + O2 regulator moved to the workshop's O2 GEAR division \u2014 crafted per environment now
+   if(envOfTier(T0)<1)h+='<div class="gearnote">no pollution in this environment \u2014 filter cartridges matter from the next one down</div>';
+   else{const fc=Math.round((player.filterBonus||0)/FILT_STEP),fcost=14+fc*9,fmax=(player.filterBonus||0)>=FILT_MAX-1e-6,fok=!fmax&&coins>=fcost;
+    h+='<div class="recipe '+(fok?'rok':'')+'"><div class="rout">'+filterIcon(30)+'<span class="nm">Filter cartridge <span style="color:#5b8095;font-size:9px">cuts pollution'+(fmax?' \u00b7 MAX':' \u00b7 '+fcost+' coin')+'</span></span></div><button class="cbtn '+(fok?'go':'')+'" data-craft="buy:filter"'+(fok?'':' disabled')+'>Buy</button></div>';}
+   const owned=!!player.hasMap,mok=!owned&&coins>=MAP_COST;
+   h+='<div class="recipe '+(owned?'rok':mok?'rok':'')+'"><div class="rout">'+mapIcon(30)+'<span class="nm">Sector-nav unit <span style="color:#5b8095;font-size:9px">'+(owned?'installed \u00b7 live HUD map':'live minimap on your HUD \u00b7 '+MAP_COST+' coin')+'</span></span></div>'+(owned?'<span style="color:#5dff8a;font-size:9px;align-self:center">OWNED</span>':'<button class="cbtn '+(mok?'go':'')+'" data-craft="buy:map"'+(mok?'':' disabled')+'>Buy</button>')+'</div>';
+  }
+  else if(div==='mechlab'){
+   if(!mech)h+='<div class="emptyhold">build the DV-8 “MULE” first — Machines, one shelf over</div>';
+   else{
+    const e=mechUpgEnv(T0);
+    h+='<div class="gearnote">one of each fitting per <b>environment</b> — all four layers of an environment share one slot, and every new environment opens a fresh set. permanent, welded to the MULE’s frame</div>';
+    const rows=[
+     ['bat','Battery cell +'+MECH_BAT_STEP+'s','cap '+mechBatMax().toFixed(0)+'s → '+(mechBatMax()+MECH_BAT_STEP).toFixed(0)+'s',mechUpgCost('bat',e),(player.mechBatUpg||{})[e],false,batIcon(30)],
+     ['boost','Coil capacity +'+MECH_BOOST_STEP.toFixed(1)+'s','how long you can hold \u2191 \u00b7 '+mechBoostMax().toFixed(1)+'s \u2192 '+(mechBoostMax()+MECH_BOOST_STEP).toFixed(1)+'s',mechUpgCost('boost',e),(player.mechBoostUpg||{})[e],false,machIcon('thruster',30)],
+     ['regen','Coil recharge +'+MECH_REGEN_STEP.toFixed(2)+'/s','how fast it winds back \u00b7 '+mechBoostRegen().toFixed(2)+'/s \u2192 '+(mechBoostRegen()+MECH_REGEN_STEP).toFixed(2)+'/s \u00b7 burnout '+mechBoostRebuild().toFixed(1)+'s \u2192 '+(mechBoostMax()*MECH_BOOST_RESET/(mechBoostRegen()+MECH_REGEN_STEP)).toFixed(1)+'s',mechUpgCost('regen',e),(player.mechRegenUpg||{})[e],false,scrapIcon('coil',30)],
+     ['hook','Hook drum +'+MECH_HOOK_STEP+'u','reach '+mechHookReach()+'u → '+Math.min(MECH_HOOK_MAX,mechHookReach()+MECH_HOOK_STEP)+'u',mechUpgCost('hook',e),(player.mechHookUpg||{})[e],mechHookReach()>=MECH_HOOK_MAX,ropeIcon(30)]];
+    for(const[kind,nm,sub,cost,fitted,maxed,icon]of rows){
+     const ok=!fitted&&!maxed&&coins>=cost;
+     h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+icon+'<span class="nm">'+nm+' <span style="color:#5b8095;font-size:9px">'+(maxed?'MAXED':fitted?'fitted this environment':sub+' · '+cost+' coin')+'</span></span></div><button class="cbtn '+(ok?'go':'')+'" data-craft="mup:'+kind+'"'+(ok?'':' disabled')+'>'+(fitted||maxed?'✓':'Fit')+'</button></div>';}
+   }
+  }
+  else if(div==='exch'){
+   for(let T=0;T<4;T++){const id='t'+(T+1)+'ra',price=5+T*4,ok=coins>=price;
+    h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+iconSVG(id,30)+'<span class="nm">'+RES[id].name+' <span style="color:#5b8095;font-size:9px">have '+invGet(id)+' \u00b7 '+price+' coin</span></span></div><button class="cbtn '+(ok?'go':'')+'" data-craft="buyres:'+T+'"'+(ok?'':' disabled')+'>Buy</button></div>';}
+  }
+ }
+ return '<div class="dback" data-craft="divback">\u25c2 '+(DIVTITLE[div]||'')+'</div>'+relevantResPanel(tab,div,T0)+h;
+}
+
+function buildCraft(){
+ const T0=tAt(player.y);
+ chTitle.textContent=craftTab==='shop'?'SCRAP SHOP':'WORKSHOP';
+ chSub.textContent=CITY_NAME+' \u00b7 CITY '+CITY+' \u00b7 DEPTH '+depthM(player.y)+'M \u00b7 '+TIERS[T0].name+' \u00b7 '+((gearLevel&&TIERS[gearLevel-1]&&TIERS[gearLevel-1].gear)?TIERS[gearLevel-1].gear.name:'NO SUIT');
+ if(ctabsEl)ctabsEl.innerHTML=
+   '<button class="ctab'+(craftTab==='work'?' on':'')+'" data-craft="tab:work">'+TABICON.craft+'<span>CRAFT</span></button>'+
+   '<button class="ctab'+(craftTab==='shop'?' on':'')+'" data-craft="tab:shop">'+TABICON.shop+'<span>SHOP \u00b7 '+coins+'</span></button>';
+ let h='';
+ if(mDiv==null){
+  h+='<div class="dgrid">';
+  for(const d of DIVS[craftTab])h+='<button class="dcell" data-craft="div:'+d.k+'">'+d.fn()+'<span class="dcl">'+d.label+'</span></button>';
+  h+='</div>';
+  cbodyEl.innerHTML=nextBasePanel(T0)+h+'<div class="vspace" data-spacer="bot"></div>';
+  const vs=cbodyEl.querySelectorAll('.vspace');for(const s of vs)s.style.height='10px';
+ } else {
+  h+=divContent(craftTab,mDiv,T0);
+  cbodyEl.innerHTML=h+'<div class="vspace" data-spacer="bot"></div>';
+  const vs=cbodyEl.querySelectorAll('.vspace');for(const s of vs)s.style.height='10px';
+ }
+ craftFocus();
+}
+
+function craftEls(){
+ if(mZone==='tab')return Array.prototype.slice.call(ctabsEl.querySelectorAll('[data-craft]'));
+ if(mZone==='grid')return Array.prototype.slice.call(cbodyEl.querySelectorAll('.dcell[data-craft]'));
+ return Array.prototype.slice.call(cbodyEl.querySelectorAll('[data-craft]'));
+}
+function craftFocus(){
+ ctabsEl.querySelectorAll('.tabfocus').forEach(e=>e.classList.remove('tabfocus'));
+ cbodyEl.querySelectorAll('.mfocus,.mpop,.dfocus').forEach(e=>e.classList.remove('mfocus','mpop','dfocus'));
+ const els=craftEls();if(!els.length)return;
+ mIdx=clamp(mIdx,0,els.length-1);
+ const el=els[mIdx];
+ if(mZone==='tab'){el.classList.add('tabfocus');cbodyEl.scrollTop=0;}
+ else if(mZone==='grid'){el.classList.add('dfocus');centerFocused(el);void el.offsetWidth;el.classList.add('mpop');}
+ else{el.classList.add('mfocus');centerFocused(el);void el.offsetWidth;el.classList.add('mpop');}
+}
+function openDivision(k){mGridIdx=mIdx;mDiv=k;mZone='opt';mIdx=0;sfx.uiopen();buildCraft();}
+function menuBackToGrid(){mDiv=null;mZone='grid';mIdx=clamp(mGridIdx,0,99);sfx.back();buildCraft();}
+function craftMove(dir){
+ const COLS=3;
+ if(mZone==='tab'){
+  if(dir==='right'&&craftTab==='work'){craftTab='shop';mDiv=null;mGridIdx=0;mIdx=1;buildCraft();}
+  else if(dir==='left'&&craftTab==='shop'){craftTab='work';mDiv=null;mGridIdx=0;mIdx=0;buildCraft();}
+  else if(dir==='down'){mZone='grid';mIdx=clamp(mGridIdx,0,craftEls().length-1);sfx.nav();craftFocus();}
+  else sfx.nav();
+  return;
+ }
+ if(mZone==='grid'){
+  const n=craftEls().length;
+  if(dir==='up'){if(mIdx<COLS){mZone='tab';mIdx=(craftTab==='shop'?1:0);sfx.nav();craftFocus();return;}mIdx-=COLS;}
+  else if(dir==='down')mIdx=Math.min(n-1,mIdx+COLS);
+  else if(dir==='left')mIdx=Math.max(0,mIdx-1);
+  else if(dir==='right')mIdx=Math.min(n-1,mIdx+1);
+  mGridIdx=mIdx;sfx.nav();craftFocus();return;
+ }
+ const n=craftEls().length;
+ if(dir==='up'){if(mIdx<=0){menuBackToGrid();return;}mIdx--;}
+ else if(dir==='down')mIdx=Math.min(n-1,mIdx+1);
+ else{sfx.nav();return;}
+ sfx.nav();craftFocus();
+}
+function craftConfirm(){const els=craftEls();if(!els.length)return;mIdx=clamp(mIdx,0,els.length-1);els[mIdx].click();}
+function menuBack(){
+ if(state.mode==='inv'){toggleInv(false);return;}
+ if(state.mode==='mine'){closeMine();return;}
+ if(state.mode==='crank'){closeCrank();return;}
+ if(state.mode==='flame'){closeFlame();return;}
+ if(state.mode==='hack'){closeHack();return;}
+ if(state.mode==='craft'){if(mZone==='opt'){menuBackToGrid();return;}toggleCraft(false);return;}
+}
+
+// ====== INVENTORY (carried resources, salvage + usable gear) ======
+const invEl=document.getElementById('inv'), invBody=document.getElementById('invBody');
+const invDock=document.getElementById('invDock'), invCoinEl=document.getElementById('invCoin');
+const KINDLBL={raw:'Raw ore',mix:'Mixer fluid',ref:'Refined part'};
+// build the ordered list of everything carried: crafted gear, then resources, then salvage
+function invDescriptors(){
+  const list=[];
+  list.push({key:'__med',cat:'gear',name:'Patch Kit',sub:'Restores 2 HP \u00b7 auto-applies if you\u2019d die',
+    qty:(player.medkits||0),iconHTML:medIcon(34),col:'#5dff8a',use:true});
+  for(const id in RES){const q=invGet(id);if(q<=0)continue;const r=RES[id],t=idTier(id);
+    list.push({key:id,cat:'res',name:r.name,sub:KINDLBL[r.kind]+' \u00b7 T'+t,qty:q,iconHTML:iconSVG(id,34),col:r.col,use:false,
+      hint:r.kind==='ref'?'fabricate gear at a base':'refine at a base mixer'});}
+  for(const s of SCRAP){const q=scrapInv[s.id]||0;if(q<=0)continue;
+    list.push({key:'scrap:'+s.id,cat:'salv',name:s.name,sub:s.coin+' coin each',qty:q,iconHTML:scrapIcon(s.id,34),col:s.col,use:false,
+      hint:'sell at the SHOP tab'});}
+  return list;
+}
+function invFind(list,key){for(const d of list)if(d.key===key)return d;return null;}
+function cell(d,sel){const cls='icell'+(d.cat==='gear'?' kit':'')+(sel?' sel':'');
+  const badge=d.qty>0?'<span class="qb">'+(d.qty>99?'99+':d.qty)+'</span>':'<span class="qb" style="color:#5b7080">0</span>';
+  return '<div class="'+cls+'" data-inv="sel:'+d.key+'"><span class="cnr" style="color:'+d.col+'"></span>'+d.iconHTML+badge+'</div>';}
+function emptyCell(){return '<div class="icell empty"></div>';}
+function gridOf(items,sel,minSlots){let h='<div class="igrid">';let n=0;
+  for(const d of items){h+=cell(d,d.key===sel);n++;}
+  let target=Math.max(minSlots||0,Math.ceil(n/4)*4);if(target<n)target=n;
+  for(let i=n;i<target;i++)h+=emptyCell();
+  return h+'</div>';}
+function buildInv(){
+  const list=invDescriptors();
+  // keep selection valid; default to the first thing actually carried (or the patch kit)
+  if(!invSel||!invFind(list,invSel)){const firstReal=list.find(d=>d.qty>0);invSel=firstReal?firstReal.key:'__med';}
+  if(invCoinEl)invCoinEl.textContent='\u25ce '+coins;
+  const gear=list.filter(d=>d.cat==='gear'),res=list.filter(d=>d.cat==='res'),salv=list.filter(d=>d.cat==='salv');
+  let h='';
+  h+='<div class="igcat">'+medIconMini()+'Gear</div>'+gridOf(gear,invSel,4);
+  h+='<div class="igcat">\u2b21 Resources</div>';
+  if(res.length)h+=gridOf(res,invSel,8);
+  else h+='<div class="invempty">hold\u2019s empty — crack outcrops and grab mixer canisters out in the dark</div>';
+  if(salv.length){h+='<div class="igcat">\u25c8 Salvage</div>'+gridOf(salv,invSel,4);}
+  invBody.innerHTML='<div class="vspace" data-spacer="top"></div>'+h+'<div class="vspace" data-spacer="bot"></div>';
+  padScroll(invBody);
+  // detail dock for the selected slot
+  const sel=invFind(list,invSel);
+  if(!sel){invDock.className='idockempty';invDock.innerHTML='tap an item to inspect it';refreshMenuFocus();return;}
+  invDock.className='idock';
+  let btn='';
+  if(sel.use){const can=(player.medkits||0)>0&&player.hearts<player.maxHearts;
+    btn='<button data-inv="usemed"'+(can?'':' disabled')+'>Use</button>';}
+  const right=sel.use?btn:'<span class="dsub" style="color:#7fa7bd;max-width:96px;text-align:right">'+(sel.hint||'')+'</span>';
+  invDock.innerHTML='<div class="dico">'+sel.iconHTML+'</div><div class="dtxt"><div class="dnm">'+sel.name+
+    ' <span class="dqty">\u00d7'+sel.qty+'</span></div><div class="dsub">'+sel.sub+'</div></div>'+right;
+  refreshMenuFocus();
+}
+// tiny medkit glyph for the section header
+function medIconMini(){return '<svg width="11" height="11" viewBox="0 0 16 16" style="vertical-align:-1px"><rect x="2" y="4" width="12" height="9" rx="1.5" fill="#1c3a2a" stroke="#5dff8a" stroke-width="1"/><rect x="6.8" y="6" width="2.4" height="5" fill="#5dff8a"/><rect x="5.5" y="7.6" width="5" height="1.8" fill="#5dff8a"/></svg>';}
+function toggleInv(open){if(open){if(state.mode!=='play')return;setMode('inv');invEl.classList.remove('hidden');buildInv();menuFocusKey='sel:'+invSel;menuFocusIdx=0;refreshMenuFocus();sfx.uiopen();}else{setMode('play');sfx.back();}}
+invEl.addEventListener('click',e=>{const b=e.target.closest('[data-inv]');if(!b)return;const v=b.dataset.inv;
+  if(v==='close'){toggleInv(false);return;}
+  if(v==='usemed'){useMedkit();buildInv();return;}
+  if(v.slice(0,4)==='sel:'){invSel=v.slice(4);sfx.pop();buildInv();return;}
+});
+(function(){const ib=document.getElementById('invbtn');
+  ib.addEventListener('pointerdown',e=>{e.preventDefault();audioInit();if(state.mode==='sub')subDropMine(1);else if(state.mode==='play')toggleInv(true);else if(state.mode==='inv')toggleInv(false);});
+})();
+
+// ====== D-PAD MENU NAVIGATION (works in craft + pack, just like the mining selector) ======
+let menuFocusKey=null, menuFocusIdx=0;
+function menuScopeEls(){
+  if(state.mode==='craft')return Array.prototype.slice.call(cbodyEl.querySelectorAll('[data-craft]'));
+  if(state.mode==='inv')return Array.prototype.slice.call(invBody.querySelectorAll('.icell[data-inv]'))
+    .concat(Array.prototype.slice.call(invDock.querySelectorAll('[data-inv]')));
+  return [];
+}
+function elKey(el){return el.getAttribute('data-craft')||el.getAttribute('data-inv')||'';}
+// pin the focused row to the dead-centre of the menu's scroll viewport (wheel-picker style)
+function centerFocused(el){
+  const sc=el.closest('.cbody,.invbody');if(!sc)return;
+  try{const er=el.getBoundingClientRect(),sr=sc.getBoundingClientRect();
+    const delta=(er.top-sr.top)-(sc.clientHeight/2-er.height/2);
+    if(Math.abs(delta)>0.5)sc.scrollTop+=delta;}catch(_){}
+}
+// half-viewport spacers top & bottom so the first/last items can also sit dead-centre
+function padScroll(sc){if(!sc)return;const sp=Math.max(0,Math.round(sc.clientHeight*0.5)-26);
+  const els=sc.querySelectorAll('.vspace');for(const s of els)s.style.height=sp+'px';}
+function applyMenuFocus(els,idx){
+  for(const e of els){e.classList.remove('mfocus');e.classList.remove('mpop');}
+  if(idx<0||idx>=els.length){menuFocusKey=null;return;}
+  const el=els[idx];el.classList.add('mfocus');menuFocusKey=elKey(el);menuFocusIdx=idx;
+  centerFocused(el);
+  void el.offsetWidth;el.classList.add('mpop');   // re-trigger the landing pop-flash
+}
+// re-find + re-highlight the focused control after a menu rebuild (keys are stable)
+function refreshMenuFocus(){
+  if(state.mode==='craft'){craftFocus();return;}
+  if(state.mode!=='craft'&&state.mode!=='inv')return;
+  const els=menuScopeEls();if(!els.length){menuFocusKey=null;return;}
+  let idx=-1;for(let i=0;i<els.length;i++)if(elKey(els[i])===menuFocusKey){idx=i;break;}
+  if(idx<0){idx=els.findIndex(e=>elKey(e).slice(0,4)!=='tab:');   // fresh open: skip the tab row
+    if(idx<0)idx=clamp(menuFocusIdx,0,els.length-1);}
+  applyMenuFocus(els,idx);
+}
+function menuMove(dir){
+  if(state.mode==='craft'){craftMove(dir);return;}
+  const els=menuScopeEls();if(!els.length)return;
+  let idx=-1;for(let i=0;i<els.length;i++)if(elKey(els[i])===menuFocusKey){idx=i;break;}
+  if(idx<0)idx=clamp(menuFocusIdx,0,els.length-1);
+  const step=(dir==='down'||dir==='right')?1:-1;
+  const nidx=clamp(idx+step,0,els.length-1);
+  menuFocusIdx=nidx;menuFocusKey=elKey(els[nidx]);
+  sfx.nav();
+  // in the pack, landing on a resource/scrap slot also selects it (updates the detail dock)
+  if(state.mode==='inv'){const dv=els[nidx].getAttribute('data-inv')||'';
+    if(dv.slice(0,4)==='sel:'){invSel=dv.slice(4);buildInv();return;}}   // buildInv() re-applies the highlight
+  applyMenuFocus(els,nidx);
+}
+function menuConfirm(){
+  if(state.mode==='craft'){craftConfirm();return;}
+  const els=menuScopeEls();if(!els.length)return;
+  let idx=-1;for(let i=0;i<els.length;i++)if(elKey(els[i])===menuFocusKey){idx=i;break;}
+  if(idx<0)return;
+  els[idx].click();   // reuse the existing tap handlers (disabled buttons swallow the click)
+}
+function menuResetFocus(){menuFocusKey=null;menuFocusIdx=0;}
+// denied action → buzz + rebuild + wiggle whatever card the cursor is on
+function craftDeny(){sfx.deny();buildCraft();const c=document.querySelector('.mfocus');const card=c?(c.closest('.recipe')||c):null;if(card){card.classList.remove('denyx');void card.offsetWidth;card.classList.add('denyx');}}
+craftEl.addEventListener('click',e=>{const b=e.target.closest('[data-craft]');if(!b)return;const v=b.dataset.craft;
+  if(v==='close'){toggleCraft(false);return;}
+  if(craftBusy)return;
+  const p=v.split(':');
+  if(p[0]==='div'){openDivision(p[1]);return;}
+  if(v==='divback'){menuBackToGrid();return;}
+  if(p[0]==='refine'){const id=p[1],r=RES[id];if(!canPay(r.in)){craftDeny();return;}
+    const ins=expandInputs(r.in);pay(r.in);addInv(id,1);sfx.mix();craftBusy=true;buildCraft();
+    playCraftAnim(ins,iconSVG(id,60),r.name,false,()=>{craftBusy=false;buildCraft();});}
+  else if(p[0]==='gear'){const idx=+p[1];if(idx!==nextGearTier())return;const g=TIERS[idx].gear;if(!canPay(g.in)){craftDeny();return;}
+    const ins=expandInputs(g.in);pay(g.in);craftBusy=true;
+    playCraftAnim(ins,gearIcon(60),g.name,true,()=>{applyGear(idx);craftBusy=false;buildCraft();});}
+  else if(v==='rope'){const bb=bases[tAt(player.y)];if(!bb||bb.ropeLen>=ROPE_MAX){craftDeny();return;}
+    const rc=ropeCost(tAt(player.y));if(!canPay(rc)){craftDeny();return;}
+    pay(rc);bb.ropeLen=Math.min(ROPE_MAX,bb.ropeLen+ROPE_STEP);sfx.build();
+    burst(player.x+4,player.y+4,14,120,0.6,'#c9a14a');
+    showMsg('air line extended to '+bb.ropeLen+'u');buildCraft();}
+  else if(p[0]==='sell'){const id=p[1];if((scrapInv[id]||0)>0){scrapInv[id]--;coins+=SCRAPBYID[id].coin;sfx.pop();buildCraft();}}
+  else if(v==='sellall'){let got=0;for(const id in scrapInv){got+=(scrapInv[id]||0)*SCRAPBYID[id].coin;scrapInv[id]=0;}if(got>0){coins+=got;sfx.build();showMsg('cashed in salvage · +'+got+' coin');}buildCraft();}
+  else if(p[0]==='buy'){buyUpgrade(p[1]);buildCraft();}
+  else if(p[0]==='o2tank'){const vv=+p[1],e=envOfTier(tAt(player.y)),tk=progFlags(player,'o2tank',e);
+    if(tk[vv]||(vv>0&&!tk[vv-1])||!canPay(o2TankCost(e,vv))){craftDeny();return;}
+    pay(o2TankCost(e,vv));tk[vv]=true;player.tankBonus=(player.tankBonus||0)+TANK_STEP;player.maxOxygen+=TANK_STEP;player.oxygen=player.maxOxygen;
+    sfx.build();showMsg('O₂ tank V'+(vv+1)+' fitted · +'+TANK_STEP+' max air');
+    burst(player.x+4,player.y+4,16,110,0.6,'#46d0ff');buildCraft();}
+  else if(p[0]==='o2reg'){const vv=+p[1],e=envOfTier(tAt(player.y)),rg=progFlags(player,'o2reg',e);
+    if(rg[vv]||(vv>0&&!rg[vv-1])||!canPay(o2RegCost(e,vv))){craftDeny();return;}
+    pay(o2RegCost(e,vv));rg[vv]=true;recalcOxyDrain();
+    sfx.build();showMsg('O\u2082 regulator V'+(vv+1)+' fitted \u00b7 air drain \u2212'+Math.round((1-player.oxyDrainMul)*100)+'%');
+    burst(player.x+4,player.y+4,16,110,0.6,'#46d0ff');buildCraft();}
+  else if(p[0]==='buyres'){const T=+p[1],id='t'+(T+1)+'ra',price=5+T*4;if(coins<price){showMsg('need '+price+' coin');craftDeny();return;}
+    coins-=price;addInv(id,1);sfx.pop();showMsg('bought 1\u00d7 '+RES[id].name);buildCraft();}
+  else if(p[0]==='tab'){if(craftTab!==p[1]){craftTab=p[1];mDiv=null;mGridIdx=0;}mZone='tab';mIdx=(craftTab==='shop'?1:0);sfx.pop();buildCraft();}
+  else if(v==='lens'){const e=envOfTier(tAt(player.y)),lf=progFlags(player,'lensUpg',e);
+    let lv=0;while(lv<4&&lf[lv])lv++;
+    if(lv>=4){buildCraft();return;}
+    const lc=lensCost(e,lv);if(!RES['t'+(envTier(e,lv)+1)+'fb']){craftDeny();return;}
+    if(canPay(lc)){pay(lc);lf[lv]=true;player.lanternLevel=(player.lanternLevel||0)+1;sfx.build();showMsg('lens V'+(lv+1)+' ground — the beam reaches '+(player.lanternLevel*10)+'% further');
+      burst(player.x+4,player.y+4,14,120,0.5,'#ffe27a');}buildCraft();}
+  else if(v==='seal'){const T0=tAt(player.y);if(envOfTier(T0)<1||(player.seals&&player.seals[T0])){buildCraft();return;}
+    const sc=sealCost(T0);
+    if(canPay(sc)){pay(sc);player.seals[T0]=true;sfx.build();showMsg('hazard seal V'+((SCHED[T0]?SCHED[T0].layerInEnv:T0%4)+1)+' fitted — this layer bites less now');
+      burst(player.x+4,player.y+4,16,110,0.6,'#7dff4a');}buildCraft();}
+  else if(v==='medkit'){const T0=tAt(player.y);const mc={};mc['t'+(T0+1)+'ra']=1;mc['t'+(T0+1)+'ma']=1;
+    if((player.medkits||0)<5&&canPay(mc)){pay(mc);player.medkits=(player.medkits||0)+1;sfx.build();showMsg('patch kit stowed ('+player.medkits+')');}buildCraft();}
+  else if(p[0]==='buypart'){buyPart(p[1]);buildCraft();}
+  else if(p[0]==='machine'){buildMachine(p[1]);buildCraft();}
+  else if(v==='mbat'){const t=tAt(player.y),bc=mechBatteryCost(t);
+    if(!mech||(player.mechBattery||0)>=1||!canPay(bc)){craftDeny();return;}
+    const ins=expandInputs(bc);pay(bc);player.mechBattery=1;craftBusy=true;buildCraft();
+    playCraftAnim(ins,batIcon(60),'Battery cell',true,()=>{craftBusy=false;buildCraft();});}
+  else if(v==='mcall'){const t=tAt(player.y),cc=mechCallCost(t);
+    if(!mech||!cc||!canPay(cc)){craftDeny();return;}
+    pay(cc);mechCallTo(bases[t]);buildCraft();}
+  else if(p[0]==='mup'){const kind=p[1],e=mechUpgEnv(tAt(player.y));
+    if(!mech){craftDeny();return;}
+    const key=kind==='bat'?'mechBatUpg':kind==='boost'?'mechBoostUpg':kind==='regen'?'mechRegenUpg':'mechHookUpg';
+    player[key]=player[key]||{};
+    if(player[key][e]||(kind==='hook'&&mechHookReach()>=MECH_HOOK_MAX)){craftDeny();return;}
+    const cost=mechUpgCost(kind,e);
+    if(coins<cost){showMsg('need '+cost+' coin');craftDeny();return;}
+    coins-=cost;player[key][e]=true;
+    if(kind==='bat'&&mech.battery>0)mech.battery=Math.min(mech.battery+MECH_BAT_STEP,mechBatMax());  // a bigger cell tops up a live one
+    sfx.build();burst(player.x+4,player.y+4,16,110,0.6,'#7fe6ff');
+    showMsg(kind==='bat'?'battery cell upgraded — '+mechBatMax().toFixed(0)+'s cap'
+           :kind==='boost'?'coil rewound deeper — '+mechBoostMax().toFixed(1)+'s of boost held'
+           :kind==='regen'?'coil charger uprated — '+mechBoostRegen().toFixed(2)+'/s back, '+mechBoostRebuild().toFixed(1)+'s to clear a burnout'
+           :'hook drum extended — '+mechHookReach()+'u reach');
+    buildCraft();}
+});
+function expandInputs(m){const a=[];for(const id in m)for(let i=0;i<m[id];i++)a.push(id);return a.slice(0,6);}
+function playCraftAnim(inputIds,outHTML,outName,isGear,done){
+  const stage=document.getElementById('stage'),W=stage.clientWidth,H=stage.clientHeight,cx=W/2,cy=H/2-8;
+  cfIn.innerHTML='';cfOut.innerHTML='';cfLabel.textContent='';cfLabel.classList.remove('show');
+  const n=inputIds.length,spread=Math.min(70+n*40,W*0.82),chips=[];
+  inputIds.forEach((id,i)=>{const d=document.createElement('div');d.className='cfchip';d.innerHTML=iconSVG(id,38);
+    d.style.left=(cx+(n>1?(i/(n-1)-0.5)*spread:0))+'px';d.style.top=cy+'px';cfIn.appendChild(d);chips.push(d);});
+  const out=document.createElement('div');out.className='cfres';out.style.left=cx+'px';out.style.top=cy+'px';out.innerHTML=outHTML;cfOut.appendChild(out);
+  const ring=document.createElement('div');ring.className='cfring';ring.style.left=cx+'px';ring.style.top=cy+'px';cfOut.appendChild(ring);
+  craftfxEl.classList.remove('hidden');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    chips.forEach(d=>{d.style.left=cx+'px';d.style.top=cy+'px';d.style.transform='translate(-50%,-50%) scale(.15)';d.style.opacity='0';});}));
+  setTimeout(()=>{out.classList.add('pop');ring.classList.add('go');cfLabel.textContent=(isGear?'FABRICATED · ':'+1 · ')+outName;cfLabel.classList.add('show');sfx.build();},440);
+  setTimeout(()=>{craftfxEl.classList.add('hidden');if(done)done();},1240);
+}
+function showReward(resId,count){
+  rwIcon.innerHTML=iconSVG(resId,74);rwName.textContent=RES[resId].name+' \u00d7'+count;
+  rewardEl.classList.remove('hidden','out');void rewardEl.offsetWidth;rewardEl.classList.add('show');sfx.pop();
+  clearTimeout(rewardTimer);
+  rewardTimer=setTimeout(()=>{rewardEl.classList.remove('show');rewardEl.classList.add('out');
+    setTimeout(()=>{rewardEl.classList.add('hidden');rewardEl.classList.remove('out');},340);},1050);
+}
+function _openCraft(){setMode('craft');craftEl.classList.remove('hidden');mDiv=null;mZone='tab';mIdx=(craftTab==='shop'?1:0);mGridIdx=0;buildCraft();sfx.uiopen();}
+function toggleCraft(open){if(open){if(tutorialsOn&&!baseIntroSeen){baseIntroSeen=true;startBaseIntro(_openCraft);return;}_openCraft();}else{setMode('play');sfx.back();}}
+
+// ============ DAMAGE ============
+// HP-bar damage flash: env=true shows radioactive yellow-green chunk + ☢ symbol; else red chunk
+function flashDmg(units,env){if(units<=0)return;player.dmgFx={chunk:units,t:0,env:!!env};}
+function drawRadSymbol(x,y,r,a){ctx.save();ctx.globalAlpha=a;
+  ctx.fillStyle='#ffd21f';ctx.beginPath();ctx.arc(x,y,r,0,6.2832);ctx.fill();
+  ctx.fillStyle='#ffe98a';ctx.beginPath();ctx.arc(x,y,r,0,6.2832);ctx.lineWidth=0;ctx.fill();
+  ctx.fillStyle='#ffd21f';ctx.beginPath();ctx.arc(x,y,r-0.7,0,6.2832);ctx.fill();
+  ctx.fillStyle='#0c0c0c';
+  for(let k=0;k<3;k++){const c=k*2.0944-1.5708,a0=c-0.5236,a1=c+0.5236;ctx.beginPath();ctx.moveTo(x,y);ctx.arc(x,y,r*0.92,a0,a1);ctx.closePath();ctx.fill();}
+  ctx.beginPath();ctx.arc(x,y,r*0.26,0,6.2832);ctx.fill();ctx.restore();}
+function hurt(dmg,fromX,fromY){
+  if(mech&&mech.piloted)return;   // the MULE's hull shrugs off contact damage — air is the only leak
+  if(player.invuln>0)return;
+  player.hearts-=dmg;player.invuln=INVULN;shake=8;sfx.hurt();flashDmg(dmg,false);
+  if(fromX!=null){const cx=player.x+player.w/2,cy=player.y+player.h/2;let dx=cx-fromX,dy=cy-fromY,d=Math.hypot(dx,dy)||1;player.vx+=dx/d*3.4;player.vy+=dy/d*3.4;}
+  burst(player.x+4,player.y+4,10,120,0.4,'#ff6a78');
+  if(player.hearts<=0)dieOrRevive('damage');
+}
+function dieOrRevive(reason){
+  if((player.medkits||0)>0){player.medkits--;player.hearts=2;player.invuln=INVULN;shake=8;player.rooted=0;
+    burst(player.x+4,player.y+4,16,120,0.6,'#5dff8a');
+    sfx.air();showMsg('patch kit auto-applied — back from the brink');return false;}
+  player.hearts=0;state.loseReason=reason;setMode('lose');sfx.lose();return true;
+}
+function useMedkit(){if((player.medkits||0)<=0){showMsg('no patch kits');return;}if(player.hearts>=player.maxHearts){showMsg('already at full health');return;}
+  player.medkits--;player.hearts=Math.min(player.maxHearts,player.hearts+2);sfx.build();
+  burst(player.x+4,player.y+4,12,90,0.5,'#5dff8a');
+  showMsg('patch kit used · +2');}
+
+// ============ OVERLAYS ============
+const TITLE_HTML=`
+  <div class="title">SEWER <span class="d">DIVER</span></div>
+  <div class="sub">descent // mine · refine · fabricate · ride the grid, city to city</div>
+  <div class="panel"><h3>The dive</h3>
+    <ul class="obj">
+      <li><b>Your lantern only lights the way you swim.</b> Vision is a narrow cone ahead — turn to look around, and grind <b>lantern lenses</b> in the workshop (each needs that level's ore + mix) to widen the beam, one level at a time.</li>
+      <li>You breathe through an <b>air line</b> clipped to the <b>base</b> on each level. <b>X</b> clips/unclips it. On the line: air is endless and you slowly heal. Unclip and it <b>stays where you drop it</b> — swim back to that spot (or to the base) to clip on again.</li>
+      <li>Off the line your tank drains. Ore within reach of the line can be dug <b>while clipped on</b> — the air keeps flowing, no breath-hold. But to reach far veins you must <b>detach</b>, and then your tank drains the whole time you're out, <b>including while you dig</b>. Read the gas (don't pop a pocket), grab <b>mixer canisters</b> and <b>glinting scrap</b>, and haul it back before your air runs out.</li>
+      <li>At the base, <b>E</b> opens the workshop: <b>refine</b> 2 raw + 1 mixer → a part, <b>fabricate</b> your suit, <b>extend the air line</b>, and <b>sell salvage</b> for coin to buy spare tanks &amp; filters.</li>
+      <li>Every layer's resources have a job: <b>#1 feeds life support</b> (O₂ tank &amp; regulator, and its composite throws the <b>bulkhead panel</b> + fits seals), <b>#2 is utility</b> (its composite powers the base below, grinds the lens, fits seals), and <b>#3's composite is reserved for the suit</b> — one from each of the environment's 4 layers. The first environment runs clean, but from the <b>second environment</b> down the water thickens with <b>pollution</b> that bites harder the deeper you go — the suit cuts it ~85%, never fully; <b>hazard seals</b> and coin-bought <b>filters</b> cut the rest. Each new base starts <b>dead</b>: haul the <b>#2 composite built one layer up</b> down to it and <b>power it on</b> (X) for air and crafting.</li>
+      <li><b>THE CITY UPDATE:</b> each city is a stack of environments, every environment with its own suit line. At the bottom of the final layer waits the <b>transit gate</b> — swim in, pick your next city on the <b>grid map</b>, and dive again, one environment deeper each time.</li>
+      <li><b>SECTOR OBJECTIVES</b> gate the last level of every environment. The pink readout under your depth names the current task and its machine, all worked with <b>F</b>: <b>HACK</b> glowing wall terminals (an octagon ICE puzzle — steer the cursor to each shining side to fold a glyph, then find it in the 3-row grid and input; break 3 glyphs), <b>STRIKE</b> pulsing spore pods (hit, dodge the toxin cloud, hit again), <b>CRANK</b> pressure valves (tap F while the gauge reads green — the vents scald). Clear the chain, then throw the <b>AIRLOCK</b> lever beside the sealed bulkhead — or ride the transit gate on a city's finale.</li>
+      <li><b>The dark deceives.</b> Eels coil on ledges, anglers and fungus fake the glow of treasure and ore, and "stranded divers" aren't. Craft <b>patch kits</b> (auto-saves you once if you'd die, or <b>Q</b> to top up), and in the <b>SHOP</b> tab sell salvage for coin to buy parts and build machines — even a <b>scrappy robot</b> that grabs loot for you.</li>
+      <li><b>THE MECH UPDATE:</b> assemble the <b>DV-8 "MULE"</b> in the shop's machine bay — a pilotable heavy frame with an <b>insta-drill</b> (no minigame, no gas), a <b>kill-saw</b> that removes eels and deceivers <b>permanently</b> (deceivers can spill valuable salvage), a <b>boost jump</b> and a <b>grappling hook</b> that hangs from ceilings. It runs on crafted <b>battery cells</b> (4× each of the layer's ores &amp; floats, one carried, drains <b>only while it works</b>). The cockpit is <b>sealed</b>: piloting costs <b>no oxygen at all</b> — your tank simply holds until you climb out. A dead MULE seizes in place until you bring another cell, and a base can <b>call</b> it over for 10× one floating kind. The thruster coil <b>recharges the moment you stop holding ↑</b> — in the air, on the hook, anywhere — but run it flat and the thruster <b>shuts down</b> until the coil has rebuilt in full, so watch the strip and pace your climbs. Mech Lab upgrades, one of each per environment: <b>+2s cell</b>, <b>+0.2s coil capacity</b>, <b>+0.15/s coil recharge</b> (two separate thruster branches — fly longer, or recover faster), <b>+hook reach</b>. Some layers are <b>INFESTED</b> — swarms the saw was made for.</li>
+    </ul>
+    <div class="legend"><span><b>JOYSTICK</b> swim · aim</span><span><b>F</b> mine · <b>X</b> clip / power base · <b>I</b> pack</span><span><b>E</b> ⚙ workshop (at base)</span></div>
+  </div>
+  <div class="prompt">press space to dive in</div>`;
+function winHTML(){return `<div class="win" style="display:contents"><div class="big">THE CORE</div>
+  <div class="stat">you reached the bottom in the <b>DIVE MECH</b></div>
+  <div class="stat" style="color:#6f93a6;font-size:12px;margin-top:6px">depth ${depthM(relic?relic.y:player.y)}m · the works fall silent below you</div>
+  <div class="prompt">press mine / space to dive again</div></div>`;}
+function loseHTML(){const r=state.loseReason;const T={air:['OUT OF AIR','your tank runs dry in the dark water.'],heat:['BOILED','the thermal vents cook you inside your suit.'],tox:['DISSOLVED','the polluted water eats through your seals.'],blast:['CAUGHT IN THE BLAST','a gas pocket detonates in your face.'],cavein:['BURIED','you lingered too long and the dig collapsed.'],damage:['SYSTEMS DOWN','the works claim another diver.'],crushed:['BOAT LOST','the main takes the U-552, and you with it, somewhere between cities.']}[r]||['CRUSHED','the pressure folds your suit like foil.'];
+  return `<div class="lose" style="display:contents"><div class="big">${T[0]}</div>
+  <div class="stat" style="color:#6f93a6;font-size:12px;margin-top:8px">${T[1]}</div>
+  <div class="stat" style="color:#7fd0ee;font-size:13px;margin-top:8px">you dived <b style="color:var(--tox)">${state.maxDepth||0}m</b> — ${tierTop.length} levels deep · city ${CITY} (${CITY_NAME})</div>
+  <div class="prompt">press mine / space to try again</div></div>`;}
+const ABORT_SVG='<svg class="bico" viewBox="0 0 16 16" width="100%" height="100%" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg"><g fill="currentColor"><rect x="7" y="0" width="2" height="1"/><rect x="7" y="1" width="2" height="1"/><rect x="6" y="2" width="4" height="1"/><rect x="6" y="3" width="4" height="1"/><rect x="5" y="4" width="6" height="1"/><rect x="5" y="5" width="6" height="1"/><rect x="4" y="6" width="8" height="1"/><rect x="4" y="7" width="8" height="1"/><rect x="3" y="8" width="10" height="1"/><rect x="3" y="9" width="10" height="1"/><rect x="2" y="10" width="12" height="1"/><rect x="2" y="11" width="12" height="1"/><rect x="1" y="12" width="14" height="1"/><rect x="1" y="13" width="14" height="1"/><rect x="0" y="14" width="16" height="1"/></g><g fill="#1a0a02"><rect x="7" y="5" width="2" height="5"/><rect x="7" y="11" width="2" height="2"/></g></svg>';
+// the four right-hand action buttons mean different things depending on what's being
+// piloted: on foot they're mine/clip/craft/pack, in the sub they're torpedo/boost/mine
+// bay, in the MULE they're drill/exit/hook (pack stays inventory). Called on every mode
+// change and on entering/leaving the mech, since piloting toggles without a mode change.
+function updateActionLabels(){
+  const lbls=document.querySelectorAll('#right-controls .ab .lbl');
+  if(lbls.length!==4)return;
+  if(!lbls[0].dataset.def)for(const L of lbls)L.dataset.def=L.textContent;
+  const piloted=state.mode==='play'&&mech&&mech.piloted;
+  const sub=['torpedo · F','boost · X','mine ▲ · Q','mine ▼ · E'];
+  const mechL=['drill · F','exit · X','hook · SPACE','pack · I'];
+  const set=(state.mode==='sub')?sub:(piloted?mechL:null);
+  for(let i=0;i<4;i++)lbls[i].textContent=set?set[i]:lbls[i].dataset.def;
+}
+function setMode(m){state.mode=m;
+  if(m!=='play'&&m!=='mine'&&m!=='flame'&&m!=='sub'){mineEdge=false;input.joy=false;input.jx=0;input.jy=0;}if(m!=='play')clipEdge=false;
+  if(m!=='play'&&m!=='flame'&&m!=='sub'){input.joy=false;input.jx=0;input.jy=0;const dp=document.getElementById('dpad');if(dp)dp.classList.remove('active');}
+  if(m!=='sub'){subBoostTrig=false;input.up=false;input.down=false;}
+  const dpad=document.getElementById('dpad'),mpad=document.getElementById('minepad');
+  const padMenu=(m==='mine'||m==='craft'||m==='inv'||m==='hack');   // discrete arrow pad drives mining, menus AND the ICE ring
+  const cluster=(padMenu||m==='crank'||m==='flame');    // uses the confirm/back cluster
+  const canvasGame=(m==='mine'||m==='crank'||m==='flame'||m==='hack'); // a full-canvas minigame (abort button + CRT off)
+  const menuOnly=(m==='craft'||m==='inv');               // true menus (not a minigame)
+  const showJoy=(m==='play'||m==='flame'||m==='sub');    // analog stick aims in play, the flame minigame AND the boat
+  if(dpad)dpad.classList.toggle('hidden',!showJoy);
+  if(mpad)mpad.classList.toggle('hidden',!padMenu);
+  // right-hand cluster: 4 play buttons ↔ two action buttons. EXIT pill is for true menus only; minigames use Do/Abort.
+  const rc=document.getElementById('right-controls'),mc=document.getElementById('menu-controls'),cc=document.getElementById('center-controls'),ctl=document.getElementById('controls');
+  if(rc)rc.classList.toggle('hidden',cluster);
+  if(mc)mc.classList.toggle('hidden',!cluster);
+  if(cc)cc.classList.toggle('hidden',!menuOnly);
+  if(ctl)ctl.classList.toggle('menumode',cluster);
+  const cl=document.getElementById('confirmLbl');if(cl)cl.textContent=(m==='mine')?'mine':(m==='crank')?'crank':(m==='flame')?'fire':(m==='hack')?'select':'select';
+  const bl=document.getElementById('backLbl');if(bl){bl.textContent=canvasGame?'ABORT':'back';bl.classList.toggle('abortlbl',canvasGame);}
+  const bb=document.getElementById('backbtn');if(bb){if(canvasGame){if(!bb.dataset.def)bb.dataset.def=bb.innerHTML;bb.innerHTML=ABORT_SVG;bb.classList.add('abortbtn');}else{if(bb.dataset.def)bb.innerHTML=bb.dataset.def;bb.classList.remove('abortbtn');}}
+  const crt=document.getElementById('crt');if(crt)crt.style.display=(m==='play'||canvasGame||m==='sub')?'none':'';   // CRT on menu screens only
+  // the transversal / the piloted MULE keep the four play buttons but they mean
+  // different things in a boat or a mech — see updateActionLabels()
+  updateActionLabels();
+  overlayEl.classList.toggle('hidden',!(m==='title'||m==='win'||m==='lose'||m==='pause'||m==='objectives'));
+  mineEl.classList.toggle('hidden',m!=='mine');
+  if(m!=='craft')craftEl.classList.add('hidden');
+  if(m!=='inv')invEl.classList.add('hidden');
+  {const cme=document.getElementById('citymap');if(cme)cme.classList.toggle('hidden',m!=='citymap');}
+  {const dde=document.getElementById('drydock');if(dde)dde.classList.toggle('hidden',m!=='drydock');}
+  const pb=document.getElementById('pausebtn');if(pb)pb.classList.toggle('hidden',m!=='play'&&m!=='sub');
+  // canvas minigames redraw the whole screen, so the play-mode DOM overlays (context prompt + HUD
+  // readout) must be dismissed on entry — their own hide logic lives in the play render, which no
+  // longer runs. Missing this leaves a stray "CRAFT"/"MINE" pill and the depth readout on top.
+  if(m!=='play'){if(orePrompt)orePrompt.style.display='none';if(m!=='craft'&&m!=='inv'&&readout)readout.style.display='none';}
+  if(m==='title')overlayEl.innerHTML=TITLE_HTML;else if(m==='win')overlayEl.innerHTML=winHTML();else if(m==='lose')overlayEl.innerHTML=loseHTML();else if(m==='pause')overlayEl.innerHTML=pauseHTML();else if(m==='objectives')overlayEl.innerHTML=objectivesHTML();
+  if(m==='win'||m==='lose')clearSave();}
+
+// ============ PAUSE + SAVE/RESUME (close the tab and pick back up later) ============
+const SAVE_KEY='sewerDiverSave_v2';   // v3 payload: layer quests + dry decks — v2 worlds predate the 4-layer envs and can't resume
+function clearSave(){try{localStorage.removeItem(SAVE_KEY);}catch(e){}}
+function saveGame(){
+  if(!player||!map)return;
+  try{
+    const attachedIdx=player.attachedBase?bases.indexOf(player.attachedBase):-1;
+    const data={v:3,
+      st:{loseReason:state.loseReason,tick:state.tick,maxDepth:state.maxDepth||0},
+      player:Object.assign({},player,{attachedBase:attachedIdx}),
+      inv,gearLevel,scrapInv,coins,partsInv,companion,respT,craftTab,camera,
+      MW,MH,map,tierTop,tierBot,
+      oreCells,mixers,bases,nodes,blobs,bulkheads,scraps,creatures,kelp,scenery,debris,relic,
+      RES,TIERS,ALLRAW,generatedTiers,lastArchKey,THEME,ICONSHAPE,RUN_SEED,
+      CITY,CITY_ID,CITY_NAME,cityExit,layerMissions,missionObjs,tierDry,mech,tierInfested};
+    localStorage.setItem(SAVE_KEY,JSON.stringify(data));
+  }catch(e){}
+}
+function loadSaveRaw(){
+  try{const raw=localStorage.getItem(SAVE_KEY);if(!raw)return null;
+    const d=JSON.parse(raw);if(!d||d.v!==3||!d.player||!d.map)return null;return d;
+  }catch(e){return null;}
+}
+// restore every mutable world/save global from a parsed save blob — mirrors what genWorld()+startGame() build fresh
+function applySave(d){
+  MW=d.MW;MH=d.MH;map=d.map;tierTop=d.tierTop;tierBot=d.tierBot;
+  oreCells=d.oreCells;mixers=d.mixers;bases=d.bases;nodes=d.nodes;blobs=d.blobs;
+  bulkheads=d.bulkheads;scraps=d.scraps;creatures=d.creatures;
+  kelp=d.kelp;scenery=d.scenery;debris=d.debris;relic=d.relic;
+  ALLRAW=d.ALLRAW;generatedTiers=d.generatedTiers;lastArchKey=d.lastArchKey;
+  TIERS=d.TIERS;THEME=d.THEME;ICONSHAPE=d.ICONSHAPE;RUN_SEED=d.RUN_SEED;
+  CITY=d.CITY||1;CITY_ID=d.CITY_ID||0;CITY_NAME=d.CITY_NAME||cityNameFor(CITY_ID);
+  SCHED=cityScheduleFor(CITY,CITY_ID);   // before anything can growTier
+  cityExit=d.cityExit||null;
+  layerMissions=d.layerMissions||{};
+  missionObjs=d.missionObjs||[];sporeFx=[];podBlasts=[];nearMission=null;
+  tierDry=Array.isArray(d.tierDry)?d.tierDry:[];
+  tierInfested=Array.isArray(d.tierInfested)?d.tierInfested:[];lastInfestTier=-1;
+  mech=d.mech||null;
+  if(mech){mech.piloted=false;mech.hookAnchor=null;mech.hanging=false;}   // resume on foot, beside the frame
+  floodFx=null;bulkAnims=[];       // a flood/opening caught mid-animation restarts from the control unit
+  verifyMissionIntegrity();        // failsafe: rebuild any quest or machine the save came in without
+  for(const k in RES)delete RES[k];
+  Object.assign(RES,d.RES);
+  inv=d.inv;gearLevel=d.gearLevel;scrapInv=d.scrapInv;coins=d.coins;partsInv=d.partsInv;
+  companion=d.companion;respT=d.respT;craftTab=d.craftTab;camera=d.camera;
+  player=d.player;
+  // migrate pre-rework saves: coin-era oxyUpg becomes env-0 regulators, lanternLevel maps to env-0 grinds
+  player.o2tank=player.o2tank||{};player.o2reg=player.o2reg||{};player.lensUpg=player.lensUpg||{};
+  player.mechBattery=player.mechBattery||0;
+  player.mechBatUpg=player.mechBatUpg||{};player.mechBoostUpg=player.mechBoostUpg||{};player.mechRegenUpg=player.mechRegenUpg||{};player.mechHookUpg=player.mechHookUpg||{};
+  // the boat's fittings ride on the player object, so they save with it — a save written
+  // before the transversal existed just comes back with an unmodified U-552 and no salvage
+  player.subUpg=player.subUpg||{torpSpd:0,torpSplash:0,torpRl:0,boostRegen:0,mineDef:0,mineAmmo:0,hull:0};
+  player.subScrap=player.subScrap||0;
+  pendingCity=null;   // a live pipe run is never serialized: you resume standing at the exit gate
+  if(player.oxyUpg){const a=progFlags(player,'o2reg',0);for(let i=0;i<4;i++)if(player.oxyUpg[i])a[i]=true;delete player.oxyUpg;}
+  if((player.lanternLevel||0)>0&&!Object.keys(player.lensUpg).length){const a=progFlags(player,'lensUpg',0);for(let i=0;i<Math.min(4,player.lanternLevel);i++)a[i]=true;}
+  recalcOxyDrain();
+  player.attachedBase=(player.attachedBase>=0)?(bases[player.attachedBase]||null):null;
+  Object.assign(state,{loseReason:d.st.loseReason,tick:d.st.tick,maxDepth:d.st.maxDepth});
+  particles=[];glows=[];shake=0;lockMsgCD=0;miningCell=null;mgOre=null;
+  // rendering caches aren't saved (canvases can't be JSON'd) — rebuilt lazily per band (see bgBands)
+  bgTex=[];bgGlowTex=[];prerenderTiles={};_oreCanv={};_oreLv={};
+}
+function pauseHTML(){
+  if(pausedFrom==='sub')return `<div style="display:contents"><div class="title" style="font-size:clamp(22px,5.5vw,38px)">PAUSED</div>
+  <div class="stat" style="color:#6f93a6;font-size:12px;margin-top:8px">transversal held · <b style="color:var(--tox)">${Math.round(subS.dist/subS.len*100)}%</b> down the main to <b style="color:var(--gold)">${pendingCity?pendingCity.name:'the next city'}</b></div>
+  <div class="stat" style="color:#6f93a6;font-size:12px;margin-top:2px">hull <b style="color:var(--gold)">${subS.hull}/${subS.maxHull}</b> · salvage aboard <b style="color:var(--gold)">${subS.scrap}</b></div>
+  <div class="stat" style="color:#6f93a6;font-size:12px;margin-top:2px">the crossing is not saved — the last checkpoint is the exit gate you launched from</div>
+  <div class="prompt">press space to resume</div>
+  <div class="pause-actions"><button class="pause-abandon" onclick="window.__sdAbandon()">abandon dive &amp; start fresh<span class="pconly"> · shift+a</span></button></div></div>`;
+  return `<div style="display:contents"><div class="title" style="font-size:clamp(22px,5.5vw,38px)">PAUSED</div>
+  <div class="stat" style="color:#6f93a6;font-size:12px;margin-top:8px">dive suspended · depth <b style="color:var(--tox)">${depthM(player.y)}m</b> · deepest <b style="color:var(--tox)">${state.maxDepth||0}m</b></div>
+  <div class="stat" style="color:#6f93a6;font-size:12px;margin-top:2px">${CITY_NAME} · city <b style="color:var(--gold)">${CITY}</b> · layer <b style="color:var(--gold)">${tAt(player.y)+1}/${SCHED.length}</b></div>
+  <div class="stat" style="color:#6f93a6;font-size:12px;margin-top:2px">progress is saved — close the tab any time and pick up right here</div>
+  <div class="prompt">press space to resume</div>
+  <div class="pause-actions"><button class="pause-abandon" onclick="window.__sdAbandon()">abandon dive &amp; start fresh<span class="pconly"> · shift+a</span></button></div></div>`;
+}
+// The transversal pauses too, and comes back to the boat rather than to the diver — the
+// pipe run is long enough that locking the player out of the pause menu would be cruel.
+let pausedFrom='play';
+function pauseGame(){if(state.mode!=='play'&&state.mode!=='sub')return;
+  pausedFrom=state.mode;if(state.mode==='play')saveGame();setMode('pause');sfx.back();}
+function resumeGame(){if(state.mode!=='pause')return;setMode(pausedFrom==='sub'?'sub':'play');sfx.uiopen();}
+function abandonDive(){clearSave();startGame();}
+window.__sdAbandon=abandonDive;
+
+// ============ OBJECTIVES SCREEN (control-unit briefing) ============
+// Tripping a layer's control unit before its quest is done opens this read-only briefing
+// listing every task in the layer — cleared, current and still-locked — so the diver can see
+// the whole chain ahead. The current task also stays pinned to the HUD readout as always.
+let objectivesTier=0;
+function openObjectives(tier){if(state.mode!=='play')return;objectivesTier=tier;setMode('objectives');sfx.uiopen();}
+function closeObjectives(){if(state.mode!=='objectives')return;setMode('play');sfx.back();}
+window.__sdCloseObjectives=closeObjectives;
+overlayEl.addEventListener('click',e=>{if(state.mode==='objectives'&&!e.target.closest('button'))closeObjectives();});
+const _objKindLabel={term:'HACK TERMINAL',pod:'BURST SPORE POD',valve:'VENT PRESSURE VALVE'};
+const _objKindCol={term:'#7fe6ff',pod:'#c2ff5f',valve:'#ff9a5c'};
+function objectivesHTML(){
+  const tier=objectivesTier,m=layerMissions[tier];
+  if(!m||!SCHED[tier])return '<div style="display:contents"><div class="title">OBJECTIVES</div><div class="prompt">press space to close</div></div>';
+  let rows='';
+  for(let k=0;k<m.steps.length;k++){
+    const st=m.steps[k],isDone=k<m.progress,isCur=k===m.progress;
+    const doneCt=isDone?st.count:(isCur?missionStepDone(tier,k):0);
+    const mark=isDone?'<b style="color:#5dff8a">✓</b>':isCur?'<b style="color:#ffd23c">▶</b>':'<span style="color:#3a4a58">•</span>';
+    const titleCol=isDone?'#6f93a6':isCur?'#ffffff':'#8fb6c2';
+    const nameCss=isDone?'text-decoration:line-through;opacity:.7':'';
+    rows+='<li style="margin:5px 0;'+(isCur?'text-shadow:0 0 6px rgba(255,210,60,.3)':'')+'">'
+      +mark+' <b style="color:'+titleCol+';'+nameCss+'">'+st.title+'</b>'
+      +'<span style="color:'+(_objKindCol[st.kind]||'#8fb6c2')+';font-size:10px;letter-spacing:1px"> · '+(_objKindLabel[st.kind]||'')+(st.count>1?' ×'+st.count:'')+'</span>'
+      +' <span style="color:#6f93a6;font-size:10px">'+doneCt+'/'+st.count+'</span></li>';
+  }
+  const exitTitle=(m.exit&&m.exit.title)?m.exit.title:'AIRLOCK',allDone=m.complete;
+  return '<div style="display:contents">'
+   +'<div class="title" style="font-size:clamp(19px,4.6vw,32px);color:var(--cyan)">SECTOR OBJECTIVES</div>'
+   +'<div class="sub">'+CITY_NAME+' · CITY '+CITY+' · LAYER '+(tier+1)+'/'+SCHED.length+' · '+TIERS[tier].name+'</div>'
+   +'<div class="panel" style="max-width:560px"><h3>tasks in this layer</h3>'
+   +'<ul class="obj">'+rows+'</ul>'
+   +'<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--line);font-size:11px;letter-spacing:1px;color:'+(allDone?'#ffd23c':'#6f93a6')+';text-transform:uppercase">'
+   +(allDone?'◆ all tasks done — the '+exitTitle+' panel takes 1× '+((RES['t'+(tier+1)+'fa']&&RES['t'+(tier+1)+'fa'].name)||'this layer’s #1 composite')+' to throw':'◇ '+exitTitle+' — locked until every task above is cleared')+'</div></div>'
+   +'<div class="legend"><span><b style="color:#7fe6ff">HACK</b> terminal</span><span><b style="color:#c2ff5f">BURST</b> spore pod</span><span><b style="color:#ff9a5c">VENT</b> valve</span></div>'
+   +'<div class="prompt">press F / space / esc to close</div>'
+   +'<div class="pause-actions"><button class="pause-abandon" onclick="window.__sdCloseObjectives()">close panel</button></div></div>';
+}
+
+function startGame(){
+  CITY=1;CITY_ID=0;CITY_NAME='OLD MIRE';cityExit=null;   // a fresh dive starts back at the founding city
+  inv={};gearLevel=0;coins=0;partsInv={};companion=null;mech=null;craftTab='work';respT=0;genWorld();
+  player={x:(MW/2)*TS,y:(tierTop[0]+3)*TS,w:9,h:9,vx:0,vy:0,dir:1,
+    oxygen:110,maxOxygen:110,hearts:5,maxHearts:5,invuln:0,dashCD:0,drown:0,bub:0,accMul:1,maxvMul:1,lightRadius:80,thermalR:0,pollutionR:0,sensitivity:1,burn:0,tint:0,tintCol:'',attached:true,attachedBase:null,regen:0,tankBonus:0,filterBonus:0,rooted:0,medkits:0,lightBonus:0,mvBonus:0,builtFloodlight:false,builtThruster:false,seals:[false,false,false,false],lookX:1,lookY:0,lanternLevel:0,oxyDrainMul:1,o2tank:{},o2reg:{},lensUpg:{},hasMap:false,dmgFx:null,mechBattery:0,mechBatUpg:{},mechBoostUpg:{},mechRegenUpg:{},mechHookUpg:{},
+    subUpg:{torpSpd:0,torpSplash:0,torpRl:0,boostRegen:0,mineDef:0,mineAmmo:0,hull:0},subScrap:0};
+  pendingCity=null;
+  particles=[];camera.x=clamp(player.x-VW/2,0,MW*TS-VW);camera.y=clamp(player.y-VH/2,0,MH*TS-VH);
+  shake=0;lockMsgCD=0;miningCell=null;state.maxDepth=0;sfx.start();setMode('play');
+}
+
+// ============ CITY TRANSIT (exit gate → grid map → next city) ============
+const citymapEl=document.getElementById('citymap');
+let cmChoices=[],cmSel=0;
+function openCityMap(){
+  if(state.mode!=='play')return;
+  cmChoices=nextCityChoices();cmSel=0;
+  saveGame();setMode('citymap');buildCityMap();sfx.uiopen();
+}
+function closeCityMap(){if(cityExit)cityExit.cool=true;setMode('play');sfx.back();}
+// the grid chart: current city node on the left, the three transit lines fanning right
+function cmNodeSVG(){
+  const W=340,H=150,x0=52,y0=75,x1=288,ys=[30,75,120],mx=170;
+  let s='<svg class="cmmap" viewBox="0 0 '+W+' '+H+'" xmlns="http://www.w3.org/2000/svg">';
+  s+='<g stroke="rgba(70,208,255,0.08)" stroke-width="1">';
+  for(let x=10;x<W;x+=20)s+='<line x1="'+x+'" y1="4" x2="'+x+'" y2="'+(H-4)+'"/>';
+  for(let y=10;y<H;y+=20)s+='<line x1="6" y1="'+y+'" x2="'+(W-6)+'" y2="'+y+'"/>';
+  s+='</g>';
+  for(let i=0;i<cmChoices.length;i++){const sel=i===cmSel,y=ys[i];
+    s+='<polyline points="'+x0+','+y0+' '+mx+','+y0+' '+mx+','+y+' '+(x1-14)+','+y+'" fill="none" stroke="'+(sel?'#ffd23c':'#1e4a5e')+'" stroke-width="'+(sel?2.5:1.5)+'"'+(sel?' style="filter:drop-shadow(0 0 4px rgba(255,210,60,.8))"':'')+' stroke-dasharray="'+(sel?'none':'4 3')+'"/>';
+    if(sel)s+='<circle r="3" fill="#fff2c8"><animateMotion dur="1.6s" repeatCount="indefinite" path="M '+x0+' '+y0+' H '+mx+' V '+y+' H '+(x1-14)+'"/></circle>';}
+  s+='<g><rect x="'+(x0-9)+'" y="'+(y0-9)+'" width="18" height="18" transform="rotate(45 '+x0+' '+y0+')" fill="#0e3a4a" stroke="#46d0ff" stroke-width="2"/>'
+   +'<circle cx="'+x0+'" cy="'+y0+'" r="3.5" fill="#7fe6ff"/>'
+   +'<text x="'+x0+'" y="'+(y0+26)+'" text-anchor="middle" fill="#7fd0ee" font-size="9" letter-spacing="1" font-family="Courier New,monospace" font-weight="bold">'+CITY_NAME+'</text>'
+   +'<text x="'+x0+'" y="'+(y0+37)+'" text-anchor="middle" fill="#46d0ff" font-size="7" letter-spacing="2" font-family="Courier New,monospace">YOU ARE HERE</text></g>';
+  for(let i=0;i<cmChoices.length;i++){const c=cmChoices[i],sel=i===cmSel,y=ys[i];
+    s+='<g class="cmnode" data-cm="sel:'+i+'">'
+     +'<rect x="'+(x1-9)+'" y="'+(y-9)+'" width="18" height="18" transform="rotate(45 '+x1+' '+y+')" fill="'+(sel?'#3a300c':'#0a1620')+'" stroke="'+(sel?'#ffd23c':'#2c5e72')+'" stroke-width="2"'+(sel?' style="filter:drop-shadow(0 0 6px rgba(255,210,60,.7))"':'')+'/>'
+     +(sel?'<circle cx="'+x1+'" cy="'+y+'" r="3" fill="#ffd23c"/>':'')
+     +'<rect x="'+(x1-120)+'" y="'+(y-22)+'" width="130" height="30" fill="rgba(0,0,0,0)"/>'
+     +'<text x="'+(x1-16)+'" y="'+(y-12)+'" text-anchor="end" fill="'+(sel?'#ffd23c':'#8fb6c2')+'" font-size="9" letter-spacing="1" font-family="Courier New,monospace" font-weight="bold">'+c.name+'</text>'
+     +'</g>';}
+  return s+'</svg>';
+}
+function buildCityMap(){
+  const c=cmChoices[cmSel];if(!c)return;
+  citymapEl.innerHTML='<div class="cmwrap">'
+   +'<div class="cmhead"><span class="cmtitle">TRANSIT GRID</span><span class="cmsub">CITY '+CITY+' → CITY '+(CITY+1)+'</span></div>'
+   +cmNodeSVG()
+   +'<div class="cminfo"><div class="cminame">'+c.name+'</div>'
+   +'<div class="cmirow"><b>'+c.envs+'</b> environments · <b>'+c.layers+'</b> layers · a suit line at every environment</div>'
+   +'<div class="cmirow">new down there: <b>'+c.newArch+'</b></div>'
+   +'<div class="cmirow">finale: <b>'+c.finale+'</b></div></div>'
+   +'<div class="cmbtns"><button class="cmgo" data-cm="go">RIDE THE GRID → '+c.name+'</button>'
+   +'<button class="cmstay" data-cm="close">stay</button></div>'
+   +'<div class="cmhint">◂ ▸ choose line · F / space — ride · esc — stay</div>'
+   +'</div>';
+}
+citymapEl.addEventListener('click',e=>{const b=e.target.closest('[data-cm]');if(!b)return;audioInit();const v=b.getAttribute('data-cm');
+  if(v==='close'){closeCityMap();return;}
+  if(v==='go'){cityMapConfirm();return;}
+  if(v.slice(0,4)==='sel:'){cmSel=(+v.slice(4))||0;sfx.nav();buildCityMap();}});
+function cityMapMove(d){
+  if(d==='up'||d==='left')cmSel=(cmSel+cmChoices.length-1)%cmChoices.length;
+  else cmSel=(cmSel+1)%cmChoices.length;
+  sfx.nav();buildCityMap();
+}
+// Choosing a line no longer teleports: it launches the pipe run. travelToCity is now
+// called at the far end, from the dry dock, once the boat has actually made the crossing.
+function cityMapConfirm(){const c=cmChoices[cmSel];if(c)subLaunch(c);}
+function travelToCity(ch){
+  CITY=ch.city;CITY_ID=ch.id;CITY_NAME=ch.name;
+  gearLevel=0;cityExit=null;                 // D1: the suit ladder resets; cargo, coin, salvage, parts carry
+  // deep cargo has no market in the next city — the gate broker buys it out
+  let sold=0;for(const id in inv){if(inv[id]>0&&idTier(id)>4){sold+=inv[id]*2;delete inv[id];}}
+  if(sold>0)coins+=sold;
+  const keepScrap=scrapInv;
+  genWorld();
+  scrapInv=keepScrap;                        // genWorld wipes salvage for fresh runs; transit keeps it
+  // the MULE doesn't fit through the gate — it stays behind, exactly as it was left, until
+  // it's quick-spawned to a base in the new city (10× one floating kind, MECH bay)
+  if(mech){mech.off=true;mech.piloted=false;mech.hookAnchor=null;mech.hanging=false;}
+  const p=player;
+  p.x=(MW/2)*TS;p.y=(tierTop[0]+3)*TS;p.vx=0;p.vy=0;
+  p.maxOxygen=110+(p.tankBonus||0);p.oxygen=p.maxOxygen;p.maxHearts=5;p.hearts=5;
+  p.accMul=1;p.maxvMul=1+(p.mvBonus||0);p.lightRadius=80+(p.lightBonus||0);
+  p.thermalR=0;p.pollutionR=0;p.sensitivity=1;p.burn=0;p.drown=0;p.invuln=90;
+  p.attached=true;p.attachedBase=null;p.rooted=0;p.seals=[false,false,false,false];p.dmgFx=null;
+  if(companion){companion.x=p.x;companion.y=p.y;}
+  particles=[];shake=0;lockMsgCD=0;miningCell=null;mgOre=null;
+  camera.x=clamp(p.x-VW/2,0,MW*TS-VW);camera.y=clamp(p.y-VH/2,0,MH*TS-VH);
+  setMode('play');saveGame();sfx.build();
+  showMsg('CITY '+CITY+' — '+CITY_NAME+' · '+envCount(CITY)+' environments down there'+(sold?' · deep cargo sold for '+sold+' coin':''));
+}
+
+// ============ UPDATE ============
+function breakOre(o){
+  map[o.y][o.x]=EMPTY;const idx=oreCells.indexOf(o);if(idx>=0)oreCells.splice(idx,1);
+  addInv(o.resId,1);sfx.pop();oreFlash=8;miningCell=null;
+  const ox=o.x*TS+8,oy=o.y*TS+8;
+  burst(ox,oy,10,100,0.5,RES[o.resId].col);
+}
+function update(dt){
+  const p=player;
+  ensureDepth();   // fabricate the next tier down before the diver can break into it
+  missionSim(dt);  // task machines: hack sweeps, valve vent cycles, spore clouds, proximity pick
+  const dm=depthM(p.y); if(dm>(state.maxDepth||0))state.maxDepth=dm;   // peak depth = endless-run score
+  // bound the per-frame cost of the world-entity arrays to tiers near the diver (see entTierLo/Hi) —
+  // independent of how many tiers the run has generated in total
+  const elo=entTierLo(),ehi=entTierHi();
+  // destabilised veins from aborted digs: tick up the pulse, then blast at the ore (radius ≈ the player's own hitbox)
+  for(let i=oreCells.length-1;i>=0;i--){const o=oreCells[i];if(o.tier<elo||o.tier>ehi)continue;if(!(o.fuse>0))continue;
+    o.fuse-=dt;o.fuseTick=(o.fuseTick||0)+dt;
+    const fr=Math.max(0,o.fuse/(o.fuseMax||ABORT_FUSE));
+    if(o.fuseTick>=0.07+fr*0.5){o.fuseTick=0;sfx.fuse();}     // Geiger-style ticking accelerates toward detonation
+    if(o.fuse<=0){const ox=o.x*TS+8,oy=o.y*TS+8;
+      shake=Math.max(shake,11);sfx.boom();
+      burst(ox,oy,30,210,()=>0.55+Math.random()*0.35,()=>Math.random()<.5?'#ff5a3c':'#ffd23c',2,0.9);
+      const pcx=p.x+p.w/2,pcy=p.y+p.h/2;
+      if(Math.hypot(pcx-ox,pcy-oy)<BLAST_R)hurt(BLAST_DMG,ox,oy);
+      removeOre(o);}
+  }
+  // infested-layer callout, first time the diver (or the MULE) drops into one
+  {const it=tAt(p.y);
+   if(it!==lastInfestTier){lastInfestTier=it;
+     if(tierInfested[it])showMsg('⚠ infested layer — nests everywhere. the MULE’s saw clears them for good');}}
+  // ===== MECH: piloted mode replaces the diver's movement/hazard block wholesale =====
+  nearMech=null;
+  if(mech&&!mech.off){
+    if(mech.piloted){updateMechPiloted(dt);return;}
+    updateMechIdle(dt);
+    if(Math.hypot(p.x+p.w/2-mech.x,p.y+p.h/2-mech.y)<MECH_R)nearMech=mech;
+  }
+  let ax=0,ay=0;
+  if(input.joy&&(input.jx||input.jy)){ax=input.jx;ay=input.jy;if(ax<-0.05)p.dir=-1;else if(ax>0.05)p.dir=1;}
+  else{if(input.left){ax-=1;p.dir=-1;} if(input.right){ax+=1;p.dir=1;}
+       if(input.up)ay-=1; if(input.down)ay+=1;}
+  {const mag=Math.hypot(ax,ay);if(mag>1){ax/=mag;ay/=mag;}}
+  if(ax||ay){const ll=Math.hypot(ax,ay)||1;p.lookX=ax/ll;p.lookY=ay/ll;}  // lantern aims where you move; holds last dir when still
+  if(p.rooted>0){p.rooted--;ax=0;ay=0;p.vx*=0.55;p.vy*=0.55;}
+  const inSludge=tileTypePx(p.x+p.w/2,p.y+p.h/2)===SLUDGE;
+  const drag=inSludge?SLDRAG:DRAG, acc=(inSludge?ACC*0.6:ACC)*p.accMul;
+  const cx=p.x+p.w/2, cy=p.y+p.h/2;
+
+  // ore proximity — generous: touching the ore tile from ANY side (inflated hitbox) counts
+  let target=null,bestd=1e9;
+  for(const o of oreCells){if(o.tier<elo||o.tier>ehi)continue;const orx=o.x*TS,ory=o.y*TS;
+    if(p.x+p.w+MINE_PAD>orx&&p.x-MINE_PAD<orx+TS&&p.y+p.h+MINE_PAD>ory&&p.y-MINE_PAD<ory+TS){
+      const d=Math.hypot(cx-(orx+8),cy-(ory+8));if(d<bestd){bestd=d;target=o;}}}
+  nearOre=target;
+  // fungus trap disguised as ore — shows a MINE prompt, but bites
+  let fung=null,fbd=1e9;for(const c of creatures){if(c.tier<elo||c.tier>ehi)continue;if(c.type==='fungus'&&c.state==='idle'){const d=Math.hypot(cx-c.x,cy-c.y);if(d<24&&d<fbd){fbd=d;fung=c;}}}
+  nearFungus=fung;
+  // base in this tier (for docking / clipping / activating)
+  const _tb=bases[tAt(p.y)];
+  nearBase=(_tb&&Math.hypot(cx-_tb.x,cy-_tb.y)<=DOCK_R)?_tb:null;
+
+  // city transit gate — swim into it and the grid map comes up (locked until the finale sector's objectives clear)
+  if(cityExit){
+    const ed=Math.hypot(cx-cityExit.x,cy-cityExit.y);
+    if(ed<15&&!cityExit.cool){
+      if(missionComplete(cityExit.tier)){openCityMap();return;}
+      const m=missionFor(cityExit.tier),st=m&&m.steps[m.progress];
+      showMsg('finale sector sealed — objective pending: '+(st?st.title:'unknown'));
+      cityExit.cool=true;
+    }
+    if(ed>44)cityExit.cool=false;
+  }
+
+  // MINE (F): excavate any ore you're touching; a disguised fungus bites instead
+  if(mineEdge){mineEdge=false;
+    if(nearMission){missionInteract(nearMission);return;}
+    if(nearFungus){fungusGrab(nearFungus);return;}
+    if(target){openMine(target);return;}
+    showMsg('move onto ore to mine it');}
+  // CLIP (X): board the mech, power a dead base, else clip / unclip the air line
+  if(clipEdge){clipEdge=false;
+    if(nearMech){mechInteract();return;}
+    if(nearBase&&!nearBase.active){activateBase(nearBase);return;}
+    if(p.attached){p.attached=false;const cb=p.attachedBase||curBase();if(cb){cb.endX=p.x+4;cb.endY=p.y+4;}p.attachedBase=null;sfx.air();showMsg('unclipped — the line stays where you dropped it');}
+    else{const cb=curBase();
+      if(cb&&clipReach(cb)){p.attached=true;p.attachedBase=cb;sfx.air();showMsg('clipped to the air line');}
+      else showMsg('get near the base or the dropped line to clip');}}
+
+  // physics
+  p.vx+=ax*acc; p.vy+=ay*acc+GRAV;
+  p.vx*=drag; p.vy*=drag;
+  const sp=Math.hypot(p.vx,p.vy), MAXV=(inSludge?1.4:2.6)*p.maxvMul;
+  if(sp>MAXV){p.vx*=MAXV/sp;p.vy*=MAXV/sp;}
+  p.x+=p.vx;
+  if(rectHit(p.x,p.y,p.w,p.h)){p.x-=p.vx;const s=Math.sign(p.vx)||0;let gg=0;while(gg<18&&!rectHit(p.x+s,p.y,p.w,p.h)){p.x+=s;gg++;}p.vx=0;}
+  p.y+=p.vy;
+  if(rectHit(p.x,p.y,p.w,p.h)){p.y-=p.vy;const s=Math.sign(p.vy)||0;let gg=0;while(gg<18&&!rectHit(p.x,p.y+s,p.w,p.h)){p.y+=s;gg++;}p.vy=0;}
+
+  // rope tether — clamp inside reach of the base you actually clipped to (not whatever tier you drift into)
+  if(p.attached){const b=p.attachedBase||curBase();
+    if(b){const dx=(p.x+4)-b.x,dy=(p.y+4)-b.y,d=Math.hypot(dx,dy);
+      if(d>b.ropeLen&&d>0){const k=b.ropeLen/d;p.x=b.x+dx*k-4;p.y=b.y+dy*k-4;
+        const nx=dx/d,ny=dy/d,vo=p.vx*nx+p.vy*ny;if(vo>0){p.vx-=vo*nx;p.vy-=vo*ny;}}}
+    else p.attached=false;}
+
+  if(p.invuln>0)p.invuln--;
+  p.bub-=1;if(p.bub<=0){p.bub=18+Math.random()*16;particles.push({type:'bubble',x:p.x+(p.dir>0?8:1),y:p.y+1,vx:(Math.random()-.5)*8,vy:-22-Math.random()*14,life:1.4,max:1.4,size:1+Math.random()*1.5});}
+
+  // mixer pickups
+  collectNear(mixers,cx,cy,12,m=>{addInv(m.resId,1);sfx.pop();burst(m.x,m.y,8,90,0.5,RES[m.resId].col);});
+  // valuable scrap pickup
+  collectNear(scraps,cx,cy,12,s=>{const sd=SCRAPBYID[s.kind];scrapInv[s.kind]=(scrapInv[s.kind]||0)+1;sfx.pop();
+    burst(s.x,s.y,12,110,0.6,sd.col);showMsg('salvage · '+sd.name+' ('+sd.coin+' coin)');});
+  updateCreatures(dt);
+  updateCompanion(dt);
+
+  // oxygen — full while clipped to the air line, finite when off it
+  const tier=tAt(p.y);
+  if(p.attached){p.oxygen=p.maxOxygen;p.drown=0;
+    p.regen+=dt;if(p.regen>=REGEN_T){p.regen=0;if(p.hearts<p.maxHearts)p.hearts++;}
+    if(state.tick%14===0)sfx.air();}
+  else{p.regen=0;p.oxygen-=OXY_RATE*pressureAt(tier)*(p.oxyDrainMul||1);if(p.oxygen<0)p.oxygen=0;
+    if(p.oxygen<=0){p.drown++;if(p.drown>=DROWN){p.drown=0;p.hearts--;flashDmg(1,true);shake=6;sfx.hurt();if(p.hearts<=0)dieOrRevive('air');}}
+    else p.drown=0;}
+
+  // elemental exposure — only when off the air line.
+  // the first environment is clean; from the 2nd environment down there is continuous
+  // ambient pollution (rising per environment). the suit cuts it ~85%+ but never to zero.
+  let dps=0,tcol='';
+  if(!p.attached){
+    const presR=p.pollutionR+(p.filterBonus||0)+((p.seals&&p.seals[tier])?SEAL_R:0);
+    const amb=ambientAt(tier);
+    if(amb>0){dps+=amb/(1+presR*RES_SCALE);tcol='80,255,60';}
+    const tt=tileTypePx(cx,cy);
+    if(tt===SLUDGE){dps+=BASE_POLL/(1+presR*RES_SCALE);tcol='80,255,60';}
+    if(tt===THERMAL){dps+=BASE_THERM/(1+p.thermalR*RES_SCALE);tcol='255,120,40';}
+  }
+  if(dps>0){p.burn+=dps*dt;p.tint=Math.min(1,p.tint+0.12);p.tintCol=tcol;
+    if(p.burn>=1){p.burn-=1;p.hearts--;flashDmg(1,true);shake=4;sfx.hurt();
+      if(p.hearts<=0)dieOrRevive(tcol==='255,120,40'?'heat':'tox');}}
+  if(p.tint>0)p.tint=Math.max(0,p.tint-0.03);
+
+  // electric nodes
+  for(const n of nodes){if(n.tier<elo||n.tier>ehi)continue;n.ph+=1;const c2=n.ph%180;n.st=c2<110?0:c2<140?1:2;
+    if(n.st===2){if(Math.hypot(cx-n.x,cy-n.y)<n.r)hurt(1,n.x,n.y);if(c2===141)sfx.zap();}}
+
+  // blobs
+  for(const b of blobs){if(b.tier<elo||b.tier>ehi)continue;b.ph+=dt*2;b.x+=b.dir*0.5;if(b.x<b.minx){b.x=b.minx;b.dir=1;}if(b.x>b.maxx){b.x=b.maxx;b.dir=-1;}
+    const by=b.y+Math.sin(b.ph)*10;
+    if(cx+p.w/2>b.x-7&&cx-p.w/2<b.x+7&&cy+p.h/2>by-7&&cy-p.h/2<by+7)hurt(1,b.x,by);}
+
+  // relic = win
+  if(relic&&!relic.taken&&Math.hypot(cx-relic.x,cy-relic.y)<14){relic.taken=true;setMode('win');sfx.win();}
+
+  // soft resource respawn so the dive can never dead-end
+  respT+=dt;if(respT>=RESP_INT){respT=0;doRespawn();}
+
+  // camera
+  const tx=clamp(cx-VW/2,0,MW*TS-VW), ty=clamp(cy-VH/2,0,MH*TS-VH);
+  camera.x+=(tx-camera.x)*0.16;camera.y+=(ty-camera.y)*0.16;
+  if(shake>0)shake-=dt*60;
+  if(lockMsgCD>0)lockMsgCD--;
+}
+
+// ============ AMBIENT ============
+function updateAmbient(dt){
+  if(particles.length<600){
+    if(Math.random()<0.4){const mx=camera.x+Math.random()*VW,my=camera.y+Math.random()*VH;
+      if(tileTypePx(mx,my)===EMPTY)particles.push({type:'mote',x:mx,y:my,vx:(Math.random()-.5)*6,vy:-2-Math.random()*6,life:3+Math.random()*3,max:6,size:Math.random()<.3?2:1});}
+    if(Math.random()<0.1){const bx=camera.x+Math.random()*VW,by=camera.y+VH-1;   // gentle ambient bubbles rising from below
+      if(tileTypePx(bx,by)===EMPTY)particles.push({type:'bubble',x:bx,y:by,vx:(Math.random()-.5)*5,vy:-13-Math.random()*15,life:2.6+Math.random()*2,max:4.6,size:Math.random()<.4?2:1,col:'#9ed3e6'});}
+  }
+  for(let i=particles.length-1;i>=0;i--){const q=particles[i];q.life-=dt;q.x+=q.vx*dt;q.y+=q.vy*dt;
+    if(q.type==='bubble'){q.x+=Math.sin((q.max-q.life)*8)*0.4;q.vy*=0.99;if(solidPx(q.x,q.y))q.life=Math.min(q.life,0.08);}
+    if(q.type==='spark'){q.vx*=0.9;q.vy*=0.9;}
+    if(q.life<=0)particles.splice(i,1);}
+  if(oreFlash>0)oreFlash--;
+}
+
+// ============ RENDER ============
+const readout=document.createElement('div');
+readout.style.cssText='position:absolute;top:8px;right:10px;z-index:3;text-align:right;pointer-events:none;font-family:"Courier New",monospace;line-height:1.25;';
+document.getElementById('stage').appendChild(readout);
+const orePrompt=document.createElement('div');
+orePrompt.id='oreprompt';
+orePrompt.textContent='MINE';
+orePrompt.style.cssText='position:absolute;z-index:4;pointer-events:none;font-family:"Courier New",monospace;font-size:9px;letter-spacing:2px;font-weight:bold;color:#ffe27a;background:rgba(9,17,26,.85);border:1px solid #6a5a1f;border-radius:3px;padding:1px 5px;transform:translate(-50%,-100%);text-shadow:0 0 5px rgba(255,210,60,.5);display:none;white-space:nowrap;';
+document.getElementById('stage').appendChild(orePrompt);
+/* ---- what to press, drawn next to the verb -------------------------------------
+ * Three of the four thumb buttons drive every world interaction: MINE works ore, fungus
+ * and every mission machine; CLIP boards the MULE, slots its cell and powers a dead base;
+ * CRAFT opens a live base. The chip is a clone of that button's own pixel SVG in its own
+ * bezel colour, so the prompt and the thing under your thumb are the same picture. In PC
+ * mode there is no thumb button on screen, so the binding's keycap (or pad face) shows. */
+const IP_SRC={mine:'minebtn',clip:'clipbtn',craft:'ropebtn'};
+const IP_KEY={mine:'F',clip:'X',craft:'E'};
+const IP_PAD={mine:'X',clip:'Y',craft:'RB'};
+const _ipCache={};
+function ipChip(kind){
+  if(_ipCache[kind]!==undefined)return _ipCache[kind];
+  const src=document.getElementById(IP_SRC[kind]);let inner='';
+  if(src){const svg=src.querySelector('svg');if(svg){const cl=svg.cloneNode(true);cl.removeAttribute('class');inner=cl.outerHTML;}}
+  return (_ipCache[kind]='<span class="ip-btn tb-'+kind+'">'+inner+'</span>');
+}
+function ipMark(kind){
+  if(!kind)return '';
+  if(pcMode)return '<span class="ip-key">'+((pcSrc==='pad'?IP_PAD:IP_KEY)[kind]||'')+'</span>';
+  return ipChip(kind);
+}
+function gl(x,y,r,col,a){glows.push({x:Math.round(x-RCX),y:Math.round(y-RCY),r,col,a,k:GLK});}
+
+function render(){
+  if(TH)TH.frameKind='flat';
+  if(state.mode==='mine'){renderMine();return;}
+  if(state.mode==='crank'){renderCrank();return;}
+  if(state.mode==='flame'){renderFlame();return;}
+  if(state.mode==='hack'){renderHack();return;}
+  if(state.mode==='sub'){if(TH){TH.frameKind='sub';glows.length=0;}renderSub();if(TH){TH.atlas.end();ctx=flatCtx;TH.subFrame();}return;}
+  if(TH)TH.frameKind='world';
+  const sh=shake>0?(Math.random()-.5)*shake:0, sv=shake>0?(Math.random()-.5)*shake:0;
+  RCX=Math.round(camera.x+sh);RCY=Math.round(camera.y+sv);glows.length=0;
+  const tier=tAt(player.y), w=TIERS[tier].water;
+  if(TH){TH.atlas.ensure(VW,VH);TH.atlas.beginWorld();TM=TH.margin;}
+  sw(0);ctx.fillStyle=w[2];ctx.fillRect(-TM,-TM,VW+2*TM,VH+2*TM);
+  drawBgWall();
+  if(TH){ctx=TH.atlas.em();drawBgGlow();}
+  sw(1);drawScenery();
+  sw(2);
+  // blit the static wall/rock canvas for each on-screen tier band; drop bands far from the diver
+  for(let i=0;i<tierTop.length;i++){const sy=bandStart(i)*TS-RCY,ey=bandEnd(i)*TS-RCY;if(ey<-TM||sy>VH+TM)continue;ctx.drawImage(getBandCanvas(i),-RCX,sy);}
+  const pti=tAt(player.y);
+  for(const k in prerenderTiles){const i=+k;if(i<pti-2||i>pti+2)delete prerenderTiles[i];}
+  // P4: band background textures ride the same eviction window (rebuilt lazily by bgBands)
+  for(let bi=0;bi<bgTex.length;bi++)if(bgTex[bi]&&(bi<pti-2||bi>pti+2)){bgTex[bi]=null;bgGlowTex[bi]=null;}
+  // ore-canvas/ore-level caches are 100% deterministic from (id, variant[, face]), so — same as the
+  // band canvases above — entries for tiers far from the diver are cheap to drop and rebuild on revisit
+  evictFarCache(_oreCanv,pti);evictFarCache(_oreLv,pti);
+  drawKelp();
+
+  // world-entity arrays hold every tier ever generated; only draw what's near the diver (see entTierLo/Hi)
+  const elo=entTierLo(),ehi=entTierHi();
+  const y0=Math.floor(RCY/TS)-1,y1=Math.floor((RCY+VH)/TS)+1,x0=Math.floor(RCX/TS)-1,x1=Math.floor((RCX+VW)/TS)+1;
+  for(let ty=y0;ty<=y1;ty++)for(let tx=x0;tx<=x1;tx++){if(ty<0||tx<0||ty>=MH||tx>=MW)continue;const tt2=map[ty][tx];if(tt2===SLUDGE)drawSludge(tx,ty);else if(tt2===THERMAL)drawThermal(tx,ty);}
+  for(const b of bulkheads)if(!b.open)drawBulkhead(b);
+  sw(3);
+  for(const o of oreCells){if(o.tier<elo||o.tier>ehi)continue;drawOre(o);}
+  for(const m of mixers){if(m.tier<elo||m.tier>ehi)continue;drawMixer(m);}
+  for(const s of scraps){if(s.tier<elo||s.tier>ehi)continue;drawScrap(s);}
+  for(const o of missionObjs){if(o.tier<elo||o.tier>ehi)continue;drawMissionObj(o);}
+  drawSporeFx();
+  for(const b of bases)drawBase(b);
+  if(cityExit)drawCityExit();
+  for(const n of nodes){if(n.tier<elo||n.tier>ehi)continue;drawNode(n);}
+  for(const b of blobs){if(b.tier<elo||b.tier>ehi)continue;drawBlob(b);}
+  for(const c of creatures){if(c.tier<elo||c.tier>ehi)continue;drawCreature(c);}
+  drawCompanion();
+  if(relic&&!relic.taken)drawRelic();
+  drawDebris();
+  drawMissionFx();   // dry-deck haze, flood fill, bulkhead-opening flashes — over the world, under the murk
+  for(const b of bases){if(!b.active)continue;
+    if(player.attached&&b===(player.attachedBase||curBase()))drawRope(b,player.x+4,player.y+4,true);
+    else if(b.endX!==undefined)drawRope(b,b.endX,b.endY,false);}
+
+  if(mech&&!mech.off)drawMech();
+  const blink=player.invuln>0&&(Math.floor(player.invuln/4)%2===0);
+  if(!(mech&&mech.piloted)&&!blink)drawDiver();
+  for(const q of particles){if(TH&&q.type!=='spark')continue;drawParticle(q);}
+
+  const pgx=player.x+4-RCX,pgy=player.y+4-RCY;
+  const lx=player.lookX||1,ly=player.lookY||0,LR=lanternRadius();
+  const flick=1+Math.sin(state.tick*0.5)*0.015+Math.sin(state.tick*0.21)*0.02;  // subtle lantern flicker
+  if(TH){sw(4);TH.drawForeground(ctx);TH.atlas.end();ctx=flatCtx;
+    TH.lantern={x:pgx,y:pgy,lx,ly,R:LR*flick,half:LANT_HALF,self:SELF_R,mech:!!(mech&&mech.piloted)};}
+  else{
+  mctx.globalCompositeOperation='source-over';const mw=hex2rgb(w[2]);mctx.fillStyle='rgba('+(mw[0]*0.55|0)+','+(mw[1]*0.55|0)+','+(mw[2]*0.55|0)+',0.66)';mctx.fillRect(0,0,VW,VH);
+  mctx.globalCompositeOperation='destination-out';
+  radial(mctx,pgx,pgy,SELF_R,'rgba(0,0,0,1)','rgba(0,0,0,0)');                   // small pool around you
+  cutCone(mctx,pgx-lx*5,pgy-ly*5,lx,ly,LR*flick,LANT_HALF);                       // forward lantern cone
+  for(const g of glows)radial(mctx,g.x,g.y,g.r*1.35,'rgba(0,0,0,0.8)','rgba(0,0,0,0)');
+  mctx.globalCompositeOperation='source-over';
+  ctx.drawImage(murk,0,0);
+  drawBgGlow();
+  ctx.globalCompositeOperation='lighter';
+  for(const g of glows)radial(ctx,g.x,g.y,g.r,'rgba('+g.col+','+g.a+')','rgba('+g.col+',0)');
+  beamCone(ctx,pgx-lx*5,pgy-ly*5,lx,ly,LR*flick,LANT_HALF,'150,200,255',0.07);    // visible light shaft
+  radial(ctx,pgx,pgy,26,'rgba(120,175,235,0.10)','rgba(120,175,235,0)');
+  ctx.globalCompositeOperation='source-over';
+  }
+
+  // floating context prompt (mech, then base dock, then mission machine, then ore).
+  // `pk` is the control that fires it — see ipMark(); null means there is nothing to press
+  // yet (a dead MULE with no cell in the pack, a valve mid-purge you are meant to back off).
+  let pt=null,pk=null,ptx=0,pty=0;
+  if(nearMech){
+    if(mech.battery<=0){
+      // a spare cell in the pack: CLIP slots it. Nothing to slot: the prompt is a diagnosis, not an action.
+      if((player.mechBattery||0)>0){pt='INSERT CELL';pk='clip';} else pt='DEAD MECH';
+    } else {pt='PILOT';pk='clip';}
+    ptx=mech.x;pty=mech.y-16;}
+  else if(nearBase){pt=nearBase.active?'CRAFT':'ACTIVATE';pk=nearBase.active?'craft':'clip';ptx=nearBase.x;pty=nearBase.y-22;}
+  else if(nearMission){pt=missionVerb(nearMission);pk=(pt==='BACK OFF')?null:'mine';ptx=nearMission.x;pty=nearMission.y-26;}
+  else if(nearOre){pt=(mech&&mech.piloted)?'DRILL':'MINE';pk='mine';ptx=nearOre.x*TS+8;pty=nearOre.y*TS;}
+  else if(nearFungus){pt='MINE';pk='mine';ptx=nearFungus.x;pty=nearFungus.y-10;}
+  if(state.mode==='play'&&pt){
+    let sx,sy;
+    if(TH&&TH.ready){const q=TH.viewToStage(3,ptx-RCX,pty-RCY);sx=q[0];sy=q[1];}
+    else{const cw=canvas.clientWidth,ch=canvas.clientHeight;
+    sx=(ptx-camera.x)/VW*cw+canvas.offsetLeft;
+    sy=(pty-camera.y)/VH*ch+canvas.offsetTop;}
+    // rebuilt only when the verb, the control or the input source actually changes — this runs every frame
+    const sig=pt+'|'+(pk||'')+'|'+(pcMode?pcSrc:'touch');
+    if(orePrompt._sig!==sig){orePrompt._sig=sig;orePrompt.innerHTML=ipMark(pk)+'<span class="ip-lbl">'+pt+'</span>';}
+    orePrompt.style.left=Math.round(sx)+'px';orePrompt.style.top=Math.round(sy)+'px';orePrompt.style.display='flex';
+  }else orePrompt.style.display='none';
+  if(TH)ctx=TH.atlas.beginHud();
+  if(player.tint>0&&player.tintCol){ctx.fillStyle='rgba('+player.tintCol+','+(player.tint*0.22).toFixed(3)+')';ctx.fillRect(0,0,VW,VH);}
+  drawHUD(tier);
+  if(TH){ctx=flatCtx;TH.worldFrame();}
+}
+
+function drawSludge(tx,ty){const X=tx*TS-RCX,Y=ty*TS-RCY;
+  const surf=ty>0&&map[ty-1][tx]!==SLUDGE&&!solid(tx,ty-1);
+  px(ctx,X,Y,16,16,'#2c7a16');px(ctx,X,Y+10,16,6,'#1f5810');
+  if(surf){for(let i=0;i<16;i++){const yy=Math.round(Math.sin((tx*16+i)*0.5+state.tick*0.08)*1.6);px(ctx,X+i,Y+1+yy,1,2,'#8cff3c');}
+    px(ctx,X,Y+3,16,1,'#5dd62a');gl(tx*TS+8,ty*TS+4,16,'127,255,60',0.4);}}
+
+function drawThermal(tx,ty){const X=tx*TS-RCX,Y=ty*TS-RCY;
+  const surf=ty>0&&map[ty-1][tx]!==THERMAL&&!solid(tx,ty-1);
+  px(ctx,X,Y,16,16,'#7a2e12');px(ctx,X,Y+9,16,7,'#5a1f0c');
+  for(let i=0;i<4;i++){const hx=(hash(tx*5+i,ty*9+i)*15)|0,yy=((state.tick*0.4+i*5)%16)|0;px(ctx,X+hx,Y+16-yy,1,2,'#ff8a3c');}
+  if(surf){for(let i=0;i<16;i++){const yy=Math.round(Math.sin((tx*16+i)*0.5+state.tick*0.1)*1.6);px(ctx,X+i,Y+1+yy,1,2,'#ffb35c');}
+    px(ctx,X,Y+3,16,1,'#ff8a3c');gl(tx*TS+8,ty*TS+5,19,'255,120,40',0.42);}
+  else gl(tx*TS+8,ty*TS+8,13,'255,90,30',0.16);}
+
+function drawBulkhead(b){
+  let minx=1e9,maxx=-1e9,miny=1e9,maxy=-1e9;
+  for(const c of b.cells){if(c.x<minx)minx=c.x;if(c.x>maxx)maxx=c.x;if(c.y<miny)miny=c.y;if(c.y>maxy)maxy=c.y;}
+  const X=Math.round(minx*TS-RCX),Y=Math.round(miny*TS-RCY),W=(maxx-minx+1)*TS,H=(maxy-miny+1)*TS;
+  if(Y>VH||Y+H<0)return;
+  px(ctx,X,Y,W,H,'#1a2735');px(ctx,X,Y,W,3,'#2e4356');px(ctx,X,Y+H-3,W,3,'#0e1722');
+  for(let i=0;i*16<W;i++)px(ctx,X+i*16,Y+4,1,H-8,'#0e1722');
+  for(let i=0;i*24<W;i++){ctx.fillStyle='rgba(255,204,46,0.45)';ctx.fillRect(X+i*24+4,Y+H/2-2,12,4);}
+  const cxm=X+W/2;
+  px(ctx,cxm-7,Y+H/2-7,14,14,'#0e1722');px(ctx,cxm-5,Y+H/2-5,10,10,'#3a0c14');
+  px(ctx,cxm-3,Y+H/2-1,6,5,'#ff4d5e');px(ctx,cxm-2,Y+H/2-4,4,4,'#0e1722');
+  gl((minx+(maxx-minx)/2)*TS+8,miny*TS+8,42,'255,77,94',0.18);
+}
+
+function plotO(X,Y,f,u0,len,vc,w,col){let rx,ry,rw,rh;
+  if(f==='up'){rw=w;rh=len;rx=X+8+vc-(w>>1);ry=Y+16-u0-len;}
+  else if(f==='down'){rw=w;rh=len;rx=X+8+vc-(w>>1);ry=Y+u0;}
+  else if(f==='left'){rw=len;rh=w;rx=X+16-u0-len;ry=Y+8+vc-(w>>1);}
+  else{rw=len;rh=w;rx=X+u0;ry=Y+8+vc-(w>>1);}
+  px(ctx,rx,ry,rw,rh,col);}
+function drawOre(o){
+  const X=Math.round(o.x*TS-RCX),Y=Math.round(o.y*TS-RCY);
+  if(X<-16||X>VW||Y<-16||Y>VH)return;
+  const R0=RES[o.resId],col=R0.col,rgb=R0.rgb,f=o.face||'up';
+  // procedural ore mass (rock base baked in); variant picked per-instance like the map tiles
+  const variant=(Math.abs((o.x*7+o.y*13))%ORE_VARIANTS);
+  ctx.drawImage(getOreCanvas(o.resId,variant,f),X,Y);
+  const tier=R0.tier-1;
+  if((state.tick+o.x*7+o.y*3)%(64-tier*12)<6)plotShimmer(X,Y,f,10,0,'#ffffff');
+  if(tier>=2&&(state.tick+o.x*5)%48<4)plotShimmer(X,Y,f,8,-3,shade(col,1.6));
+  gl(o.x*TS+8,o.y*TS+8,12,rgb,0.26);
+  if(o===nearOre){const pulse=0.34+Math.sin(state.tick*0.18)*0.2;gl(o.x*TS+8,o.y*TS+8,17,'255,226,128',Math.max(0,pulse));}
+  if(o.fuse>0){const fr=Math.max(0,o.fuse/(o.fuseMax||ABORT_FUSE));
+    const freq=0.14+(1-fr)*0.78,pp=0.5+Math.sin(state.tick*freq)*0.5;   // pulse quickens as the fuse burns down
+    gl(o.x*TS+8,o.y*TS+8,15+(1-fr)*11,'255,80,48',Math.min(1,(0.45+(1-fr)*0.7)*pp));
+    if(pp>0.8){const fl=pp>0.93?'#fff2c8':'#ff7a4a';plotShimmer(X,Y,f,9,0,fl);plotShimmer(X,Y,f,9,-1,fl);plotShimmer(X,Y,f,7,-3,fl);plotShimmer(X,Y,f,7,3,fl);}}
+  if(o.grid&&o.got>0){const fr=o.total?o.got/o.total:0;px(ctx,X+3,Y+14,10,1,'#0a1a22');px(ctx,X+3,Y+14,Math.round(10*fr),1,'#ffd23c');}
+}
+
+// ---- FRGen floating-resource sprites -------------------------------------
+// Each mixer pickup is rendered by the procedural generator (window.FRGen):
+//   archetypeKey  <- THEME[tier].key   (the layer's environment, 1:1 with FRGen's 65 keys)
+//   variant 0..2  <- the resource slot (mixer ids end in a|b|c), so a layer's 3
+//                    mixer types get 3 distinct-but-related looks.
+//   seed          <- derived from the mixer's map cell, so it's stable, unique per
+//                    spot, deterministic, and needs nothing extra in the save blob.
+// Sprites are baked once to a small offscreen canvas (keyed by key|variant|seed and
+// shared across identical pickups), then drawn shrunk to fit the world's tile scale.
+const FR_R=2;                 // integer render scale of the offscreen bake (30x34 -> 60x68)
+const FR_DISP=0.6;            // on-screen px per grid cell -> sprite ≈ 18x20 (tile-ish)
+const _frCache=new Map();
+function mixerSprite(m){
+  const key=(THEME[m.tier]&&THEME[m.tier].key&&FRGen.BY_KEY[THEME[m.tier].key])?THEME[m.tier].key:'cybersewer';
+  const slot='abc'.indexOf(String(m.resId).slice(-1)), variant=slot<0?0:slot;
+  const seed=(FRGen._hash(key+':'+variant)^Math.imul(m.x|0,73856093)^Math.imul(m.y|0,19349663))>>>0;
+  const ck=key+'|'+variant+'|'+seed;
+  let e=_frCache.get(ck);
+  if(!e){
+    if(_frCache.size>512)_frCache.clear();   // bound memory on very deep runs; cheap to rebake
+    const spec=FRGen.make(key,variant,seed);
+    const cv=document.createElement('canvas');
+    cv.width=spec.w*FR_R; cv.height=spec.h*FR_R;
+    const c=cv.getContext('2d'); c.imageSmoothingEnabled=false;
+    FRGen.blit(c,spec,0,0,FR_R);
+    e={spec,cv}; _frCache.set(ck,e);
+  }
+  return e;
+}
+function drawMixer(m){
+  const sc=m.x-RCX,sr=m.y-RCY;if(sc<-30||sc>VW+30||sr<-30||sr>VH+30)return;
+  const R0=RES[m.resId],rgb=R0.rgb;
+  const spr=mixerSprite(m),spec=spr.spec;
+  const t=performance.now()/1000;
+  const dy=FRGen.bobY(spec,t,FR_DISP);
+  const dw=spec.w*FR_DISP,dh=spec.h*FR_DISP;
+  const ox=Math.round(m.x-RCX-dw/2),oy=Math.round(m.y-RCY-dh/2+dy);
+  // resource-coloured attract glow (unchanged tuning; pulses like the rest of the world)
+  gl(m.x,m.y,13,rgb,0.3*((THEME[m.tier]&&THEME[m.tier].glowMul)||1));
+  // shrink the baked sprite with smoothing on so the detail survives the downscale,
+  // then restore the world's crisp-pixel default
+  const sm=ctx.imageSmoothingEnabled; ctx.imageSmoothingEnabled=true;
+  ctx.drawImage(spr.cv,ox,oy,dw,dh);
+  ctx.imageSmoothingEnabled=sm;
+}
+function drawScrap(s){
+  const sc=s.x-RCX,sr=s.y-RCY;if(sc<-24||sc>VW+24||sr<-24||sr>VH+24)return;
+  const yb=Math.round(Math.sin(state.tick*0.05+s.ph)*2);
+  const X=Math.round(s.x-RCX),Y=Math.round(s.y-RCY+yb),col=SCRAPBYID[s.kind].col,rgb=hex2rgb(col).join(',');
+  const pulse=0.45+Math.sin(state.tick*0.1+s.ph)*0.22;
+  // strong attract-glow (two layers)
+  gl(s.x,s.y+yb,18,rgb,pulse*0.5);gl(s.x,s.y+yb,9,rgb,pulse);
+  // little salvage nugget
+  px(ctx,X-3,Y-2,6,5,shade(col,0.5));px(ctx,X-2,Y-1,4,3,col);px(ctx,X-2,Y+3,6,1,'#0c141b');
+  px(ctx,X-1,Y-1,1,1,shade(col,1.8));
+  // rotating sparkle + cross rays
+  const sp=(state.tick*0.06+s.ph);
+  for(let i=0;i<4;i++){const a=sp+i*1.57,rr=4+Math.sin(state.tick*0.12+i)*1.5;px(ctx,X+Math.round(Math.cos(a)*rr),Y+Math.round(Math.sin(a)*rr),1,1,'#ffffff');}
+  if(((state.tick+s.ph*10)|0)%50<7){px(ctx,X,Y-5,1,1,'#fff');px(ctx,X,Y-6,1,1,'#fff');px(ctx,X+5,Y,1,1,'#fff');}
+}
+
+function drawBase(b){
+  const sc=b.x-RCX,sr=b.y-RCY;if(sc<-40||sc>VW+40||sr<-40||sr>VH+40)return;
+  const X=Math.round(b.x-RCX),Y=Math.round(b.y-RCY),lit=b.active;
+  // housing
+  px(ctx,X-9,Y-17,18,15,'#1b2530');px(ctx,X-8,Y-16,16,13,'#26333f');px(ctx,X-8,Y-16,16,2,'#33424f');
+  px(ctx,X-7,Y-15,2,11,'#33424f');px(ctx,X+5,Y-15,2,11,'#1b2530');
+  // ceiling mounts
+  px(ctx,X-8,Y-20,3,4,'#1b2530');px(ctx,X+5,Y-20,3,4,'#1b2530');
+  // panel lights
+  const lc=lit?'#1c6a82':'#5a2230';
+  for(let i=0;i<3;i++){const on=lit&&(((state.tick>>3)+i)%3===0);px(ctx,X-6+i*5,Y-14,3,2,on?'#bfefff':lc);}
+  // core window
+  px(ctx,X-5,Y-11,10,6,'#0c1620');px(ctx,X-4,Y-10,8,4,lit?'#0e3a4a':'#241016');
+  if(lit){const pu=2+Math.round(Math.abs(Math.sin(state.tick*0.08))*2);px(ctx,X-1,Y-9,2,pu,'#7fe6ff');px(ctx,X-3,Y-8,6,1,'#46d0ff');}
+  else px(ctx,X-3,Y-8,6,1,'#7a2030');
+  // pump / nozzle at the rope anchor (b.y)
+  px(ctx,X-3,Y-3,6,4,'#3a4a57');px(ctx,X-4,Y-2,1,3,'#2a3742');px(ctx,X+3,Y-2,1,3,'#2a3742');
+  px(ctx,X-1,Y-1,2,3,lit?'#ffd23c':'#4a4a4a');
+  if(lit){gl(b.x,b.y-9,22,'70,208,255',0.30);}
+  else{gl(b.x,b.y-9,15,'150,50,50',0.12);if((state.tick%34)<2)px(ctx,X-3+((Math.random()*7)|0),Y-9,1,1,'#ff9a3c');}
+  // dock prompt ring
+  if(b===nearBase){const a=0.45+Math.sin(state.tick*0.18)*0.25;ctx.save();ctx.strokeStyle='rgba('+(lit?'70,208,255':'255,180,60')+','+a.toFixed(2)+')';ctx.lineWidth=1;ctx.strokeRect(X-10.5,Y-20.5,21,23);ctx.restore();}
+}
+// ====== SECTOR-OBJECTIVE MACHINES (terminals / spore pods / pressure valves / air-lock controls) ======
+// Beacon for whichever machine is the CURRENT live step: a big soft gold halo (visible from across the
+// screen, well beyond each machine's small type-specific glow) plus a pulsing ring, so the player is
+// pulled toward the one thing they can actually interact with instead of hunting the whole layer for it.
+// dry decks (dark, airless haze), the rising flood fill, and bulkhead-opening flashes
+function drawMissionFx(){
+  for(let t=0;t<generatedTiers;t++){
+    const isFl=floodFx&&floodFx.tier===t;
+    if(!tierDry[t]&&!isFl)continue;
+    const topY=tierTop[t]*TS,botY=(tierBot[t]+1)*TS;
+    if(botY<RCY||topY>RCY+VH)continue;
+    let lvl=botY;                                             // fully dry: haze covers the whole deck
+    if(isFl)lvl=botY-(botY-topY)*Math.min(1,floodFx.t/floodFx.dur);   // water rises floor-to-ceiling
+    const y0=Math.max(topY,RCY),y1=Math.min(lvl,RCY+VH);
+    if(y1>y0){ctx.fillStyle='rgba(30,22,10,0.55)';ctx.fillRect(0,Math.round(y0-RCY),VW,Math.round(y1-y0));}
+    if(isFl&&lvl>RCY&&lvl<RCY+VH){const ly=Math.round(lvl-RCY);       // the churning surface line
+      ctx.fillStyle='rgba(159,216,239,0.85)';ctx.fillRect(0,ly,VW,2);
+      ctx.fillStyle='rgba(159,216,239,0.25)';ctx.fillRect(0,ly+2,VW,5);
+      for(let x=-8+((state.tick>>1)%8);x<VW;x+=8)ctx.fillRect(x,ly-1,3,1);
+    }
+  }
+  for(const a of bulkAnims){const b=bulkheads[a.tier];if(!b)continue;
+    const k=a.t/a.dur,fl=0.35+0.65*Math.abs(Math.sin(a.t*18));
+    for(const c of b.cells){const X=c.x*TS-RCX,Y=c.y*TS-RCY;
+      if(X<-TS||X>VW||Y<-TS||Y>VH)continue;
+      ctx.fillStyle='rgba(255,210,60,'+(0.18+0.3*fl*k).toFixed(2)+')';ctx.fillRect(X,Y,TS,TS);}
+    const mid=b.cells[(b.cells.length/2)|0];
+    gl(mid.x*TS+8,mid.y*TS+8,40+k*30,'255,210,60',0.25+k*0.3);
+  }
+  // fused gas-sac warning: an accelerating flash + swelling ring at the doomed sac
+  for(const b of podBlasts){
+    const X=Math.round(b.x-RCX),Y=Math.round(b.y-RCY);
+    if(X<-40||X>VW+40||Y<-40||Y>VH+40)continue;
+    const k=clamp(b.t/b.fuse,0,1),fl=Math.abs(Math.sin(b.t*(7+k*24)));
+    const rgb=b.win?'194,255,95':'255,110,60';
+    gl(b.x,b.y,14+k*22,rgb,0.18+0.5*fl);
+    ctx.save();ctx.strokeStyle='rgba('+rgb+','+(0.4+0.45*fl).toFixed(2)+')';ctx.lineWidth=1;
+    ctx.beginPath();ctx.arc(X,Y,6+k*12,0,Math.PI*2);ctx.stroke();ctx.restore();
+  }
+}
+function drawMissionBeacon(o,t){
+  const pulse=0.5+Math.sin(t*0.06+o.ph)*0.5;               // slow breathing pulse, phase-offset per object
+  gl(o.x,o.y,34+pulse*10,'255,214,90',0.16+pulse*0.10);     // big halo — readable well off-screen-center
+  const rr=6+pulse*3;
+  ctx.save();ctx.strokeStyle='rgba(255,214,90,'+(0.35+pulse*0.35).toFixed(2)+')';ctx.lineWidth=1;
+  ctx.beginPath();ctx.arc(Math.round(o.x-RCX),Math.round(o.y-RCY),rr,0,Math.PI*2);ctx.stroke();ctx.restore();
+}
+function drawMissionObj(o){
+  const X=Math.round(o.x-RCX),Y=Math.round(o.y-RCY);
+  if(X<-40||X>VW+40||Y<-40||Y>VH+40)return;
+  const act=missionObjActive(o),t=state.tick;
+  const pal=(THEME[o.tier]&&THEME[o.tier].pal)||{},acc=pal.accent||'#46d0ff',acc2=pal.acc2||'70,208,255';
+  if(act&&!o.done)drawMissionBeacon(o,t);
+  if(o.type==='term'){ // wall console — dormant screens wake when their step goes live
+    px(ctx,X-7,Y-8,14,15,'#10161f');px(ctx,X-6,Y-7,12,13,'#1b2530');
+    px(ctx,X-5,Y-6,10,7,o.done?'#0e2a16':act?'#04121a':'#0c1218');
+    if(o.done){px(ctx,X-3,Y-4,2,2,'#5dff8a');px(ctx,X-1,Y-2,3,1,'#5dff8a');gl(o.x,o.y,9,'93,255,138',0.18);}
+    else if(act){px(ctx,X-5,Y-6+((t>>2)%7),10,1,'rgba('+acc2+',0.3)');
+      px(ctx,X-4+((t>>3)%8),Y-4,1,3,acc);
+      gl(o.x,o.y-2,14,acc2,0.28+Math.sin(t*0.1+o.ph)*0.1);}
+    else px(ctx,X-3,Y-4,1,1,'#3a4a58');
+    for(let i=0;i<4;i++)px(ctx,X-5+i*3,Y+3,2,2,(act&&(((t>>3)+i)%4===0))?acc:'#1c2530');
+    if(o.hk){const H=o.hk,bw=30,bx=X-15,by=Y-16; // ICE sweep bar
+      px(ctx,bx-1,by-1,bw+2,6,'#05080c');px(ctx,bx,by,bw,4,'#0e1d28');
+      const w0=Math.max(0,Math.round((H.win-0.10)*bw)),w1=Math.min(bw,Math.round((H.win+0.10)*bw));
+      px(ctx,bx+w0,by,w1-w0,4,'#3a300c');px(ctx,bx+w0,by+1,w1-w0,2,'#ffd23c');
+      px(ctx,bx+Math.round(H.pos*(bw-1)),by-1,1,6,'#7fe6ff');
+      for(let i=0;i<3;i++)px(ctx,bx+i*5,by+6,3,2,i<H.hits?'#5dff8a':'#1c2a34');
+      gl(o.x,o.y-8,16,acc2,0.3);}
+  } else if(o.type==='pod'){ // fleshy sac, pulsing while live; strikes crack it, three burst it
+    const pu=act?Math.sin(t*0.09+o.ph)*0.18:0;
+    const r=Math.max(3,Math.round((5+(3-o.hp))*(1+pu)));
+    const col=o.done?'#3a4a2e':act?'#8fdf3f':'#4a6a3a',dark=o.done?'#242e1e':'#3a5a22';
+    if(o.done){px(ctx,X-5,Y+1,10,3,dark);px(ctx,X-3,Y,6,2,col);px(ctx,X-1,Y-1,2,1,'#5a7a3a');}
+    else{
+      px(ctx,X-r,Y-r+2,r*2,r*2-2,dark);px(ctx,X-r+1,Y-r+1,r*2-2,r*2-2,col);
+      px(ctx,X-r+2,Y-r+2,2,2,'#e8ffb0');
+      for(let i=0;i<3-o.hp;i++)px(ctx,X-2+i*2,Y-1+((i*3)%4)-1,2,1,'#243018');
+      if(act){px(ctx,X-1,Y-r-1,2,2,'#c2ff5f');gl(o.x,o.y,12+pu*10,'150,230,70',0.3);}
+    }
+  } else if(o.type==='valve'){ // pressure valve: wheel + gauge + scalding vent mouth
+    const venting=act&&(o.cyc%VALVE_CYCLE)>VALVE_CALM;
+    const warn=act&&!venting&&(o.cyc%VALVE_CYCLE)>VALVE_CALM-0.5;
+    px(ctx,X-3,Y-3,6,11,'#4a4030');px(ctx,X-3,Y-3,6,1,'#6a5c42');px(ctx,X-4,Y+6,8,2,'#2e2614');
+    const an=o.ph*0.4+(o.prog/100)*3;
+    for(let i=0;i<6;i++){const a=an+i/6*6.283;px(ctx,(X+Math.cos(a)*6)|0,(Y-5+Math.sin(a)*6)|0,2,2,o.done?'#4a8a4a':'#8a6a3a');}
+    px(ctx,X-1,Y-6,2,2,o.done?'#5dff8a':'#a98a3a');
+    px(ctx,X+7,Y-12,8,8,'#10161f');px(ctx,X+8,Y-11,6,6,'#1b2530'); // gauge
+    px(ctx,X+10,Y-9,2,2,o.done?'#5dff8a':venting?'#ff4d5e':warn?(((t>>2)&1)?'#ffcc2e':'#7a5c14'):'#5dff8a');
+    if(!o.done&&act){px(ctx,X-8,Y+9,16,2,'#0e1d28');px(ctx,X-8,Y+9,Math.round(16*o.prog/100),2,'#46d0ff');}
+    if(venting)gl(o.x,o.y-8,17,'255,120,40',0.4+Math.sin(t*0.3)*0.15);
+    else if(act)gl(o.x,o.y-5,12,acc2,0.18);
+    else if(o.done)gl(o.x,o.y-5,9,'93,255,138',0.15);
+  } else if(o.type==='gate'){ // air-lock control by the sector bulkhead — the chain's EXIT node made physical
+    px(ctx,X-4,Y-12,8,14,'#1a2735');px(ctx,X-3,Y-11,6,12,'#26333f');
+    px(ctx,X-2,Y-10,4,3,o.done?'#0e3a1a':act?'#3a300c':'#241016');
+    px(ctx,X-1,Y-9,2,1,o.done?'#5dff8a':act?((((t>>3)&1))?'#ffd23c':'#7a5c14'):'#ff4d5e');
+    px(ctx,X-1,Y-5,2,6,'#3a4a57');
+    px(ctx,X-1+(o.done?3:-3),Y-7,3,3,'#8a96a2');   // lever arm flips when thrown
+    pxText(ctx,'AIRLOCK',X-14,Y-21,act?'#ffd23c':o.done?'#5dff8a':'#4a5a68');
+    if(act)gl(o.x,o.y-7,18,'255,210,60',0.25+Math.sin(t*0.09)*0.12);
+  }
+}
+function drawSporeFx(){
+  for(const s of sporeFx){const a=Math.max(0,1-s.t/s.life);
+    const X=s.x-RCX,Y=s.y-RCY;if(X<-40||X>VW+40||Y<-40||Y>VH+40)continue;
+    ctx.fillStyle='rgba(140,220,60,'+(0.16*a).toFixed(3)+')';
+    ctx.beginPath();ctx.arc(X,Y,s.r*(0.6+0.4*(s.t/s.life)),0,6.2832);ctx.fill();
+    gl(s.x,s.y,s.r,'150,230,70',0.22*a);}
+}
+// the city transit gate — a sealed hatch in the final layer; swimming into it opens the grid map
+function drawCityExit(){
+  const e=cityExit,X=Math.round(e.x-RCX),Y=Math.round(e.y-RCY);
+  if(X<-48||X>VW+48||Y<-48||Y>VH+48)return;
+  const t=state.tick,pu=0.5+Math.sin(t*0.07)*0.5;
+  // gate housing
+  px(ctx,X-15,Y-14,30,24,'#101820');px(ctx,X-13,Y-12,26,20,'#182838');
+  px(ctx,X-15,Y-14,30,2,'#2e4356');px(ctx,X-15,Y+8,30,2,'#0b1118');
+  px(ctx,X-15,Y-14,2,24,'#223444');px(ctx,X+13,Y-14,2,24,'#0e1722');
+  // hazard chevrons along the sill
+  for(let i=0;i<7;i++)px(ctx,X-14+i*4,Y+5,2,3,i%2?'#181818':'#ffcf3a');
+  // portal aperture + iris sweep
+  px(ctx,X-9,Y-9,18,13,'#04121a');px(ctx,X-8,Y-8,16,11,'#062430');
+  px(ctx,X-7,Y-7,14,9,'#0a3346');
+  const sw=((t>>2)%14);px(ctx,X-7+sw,Y-7,1,9,pu>0.5?'#7fe6ff':'#46d0ff');
+  px(ctx,X-7,Y-7+((t>>3)%9),14,1,'rgba(127,230,255,0.35)');
+  // beacon on top + label
+  px(ctx,X-2,Y-17,4,3,'#101820');px(ctx,X-1,Y-16,2,2,pu>0.6?'#ffd23c':'#7a5c14');
+  pxText(ctx,'EXIT',X-11,Y-26,pu>0.4?'#ffd23c':'#8f7016');
+  gl(e.x,e.y-3,30,'70,208,255',0.22+pu*0.2);
+  gl(e.x,e.y-14,14,'255,210,60',0.12+pu*0.22);
+  if(((t+3)%9)===0)particles.push({type:'bubble',x:e.x-6+Math.random()*12,y:e.y-8,vx:(Math.random()-.5)*6,vy:-14-Math.random()*10,life:1.2,max:1.2,size:1+Math.random()*1.4});
+}
+function drawRope(b,ex,ey,held){
+  const ax=b.x,ay=b.y,bx=ex,by=ey;
+  const d=Math.hypot(bx-ax,by-ay),slack=Math.max(0,b.ropeLen-d),sag=Math.min(slack*0.45,26);
+  const mx=(ax+bx)/2,my=(ay+by)/2+sag,N=14;
+  for(let i=0;i<=N;i++){const t=i/N,it=1-t;
+    const x=it*it*ax+2*it*t*mx+t*t*bx,y=it*it*ay+2*it*t*my+t*t*by;
+    px(ctx,Math.round(x-RCX)-1,Math.round(y-RCY)-1,2,2,(i&1)?'#9a7a38':'#c9a14a');}
+  px(ctx,Math.round(ax-RCX)-1,Math.round(ay-RCY)-1,2,2,'#ffd23c');
+  if(held){if(d>b.ropeLen-10)gl(bx,by,10,'255,120,60',0.25);}
+  else{const EX=Math.round(bx-RCX),EY=Math.round(by-RCY);
+    px(ctx,EX-2,EY-2,5,5,'#3a4a57');px(ctx,EX-1,EY-1,3,3,'#ffd23c');px(ctx,EX,EY,1,1,'#fff4c2');
+    const near=Math.hypot(player.x+4-bx,player.y+4-by)<=GRAB_R;
+    gl(bx,by,near?13:9,'255,210,60',near?0.6:0.3+Math.sin(state.tick*0.16)*0.2);}
+}
+function ropeIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><circle cx="8" cy="3.2" r="2" fill="none" stroke="#c9a14a" stroke-width="1.5"/><path d="M8 5.2 V13" stroke="#c9a14a" stroke-width="1.5"/><path d="M2.6 9 a5.4 5.4 0 0 0 10.8 0" fill="none" stroke="#c9a14a" stroke-width="1.5"/><path d="M1.4 9 H4 M12 9 H14.6" stroke="#c9a14a" stroke-width="1.5"/></svg>';}
+function scrapIcon(id,sz){const c=SCRAPBYID[id].col,d=shade(c,0.55),l=shade(c,1.6);
+  return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><path d="M3 6 L7 3 L13 5 L12 11 L6 13 L2 10 Z" fill="'+c+'" stroke="'+d+'" stroke-width="1"/><path d="M7 3 L8 8 L13 5" fill="none" stroke="'+d+'" stroke-width="0.8"/><circle cx="6" cy="6" r="1" fill="'+l+'"/></svg>';}
+function coinIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#ffd23c" stroke="#a9791a" stroke-width="1.2"/><circle cx="8" cy="8" r="3.4" fill="none" stroke="#a9791a" stroke-width="1"/><path d="M6 4.5 L10 11.5" stroke="#fff4c2" stroke-width="0.8" opacity="0.7"/></svg>';}
+function tankIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><rect x="5" y="3" width="6" height="11" rx="3" fill="#2c8fae" stroke="#16586e" stroke-width="1"/><rect x="6.5" y="1.5" width="3" height="2" fill="#9fe8ff"/><rect x="6" y="5" width="2" height="6" fill="#9fe8ff" opacity="0.7"/></svg>';}
+function filterIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#1f5f2a" stroke="#0e3a18" stroke-width="1"/><path d="M5 8 h6 M8 5 v6" stroke="#7dff4a" stroke-width="1.2"/><circle cx="8" cy="8" r="2.4" fill="none" stroke="#7dff4a" stroke-width="0.9"/></svg>';}
+function medIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><rect x="2" y="4" width="12" height="9" rx="1.5" fill="#e8eef2" stroke="#9aa6b2" stroke-width="1"/><rect x="6.5" y="6" width="3" height="5" fill="#ff4d5e"/><rect x="5" y="7.5" width="6" height="2" fill="#ff4d5e"/></svg>';}
+function sealIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><path d="M8 1.5 L13.5 4 V8 C13.5 11.5 11 13.5 8 14.5 C5 13.5 2.5 11.5 2.5 8 V4 Z" fill="#2a5a3a" stroke="#7dff4a" stroke-width="1.1"/><path d="M5.5 8 L7.2 9.8 L10.5 6" fill="none" stroke="#7dff4a" stroke-width="1.4"/></svg>';}
+function lensIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><defs><radialGradient id="lg"><stop offset="0" stop-color="#fff7d6"/><stop offset="1" stop-color="#ffcf4a"/></radialGradient></defs><ellipse cx="8" cy="8" rx="3.4" ry="5.6" fill="url(#lg)" stroke="#b8862a" stroke-width="1"/><path d="M8 2.6 V13.4" stroke="#b8862a" stroke-width=".8" opacity=".6"/><path d="M2 8 L0.6 5 M2 8 L0.6 11 M14 8 L15.4 5 M14 8 L15.4 11" stroke="#ffe27a" stroke-width="1.2"/></svg>';}
+function buyUpgrade(kind){
+  // spare tank left the shop — O2 tanks are crafted in the workshop's O2 GEAR division now
+  if(kind==='filter'){if(envOfTier(tAt(player.y))<1){showMsg('no pollution in this environment — filters matter deeper down');return;}
+    if((player.filterBonus||0)>=FILT_MAX-1e-6){showMsg('filters maxed');return;}
+    const cnt=Math.round((player.filterBonus||0)/FILT_STEP),cost=14+cnt*9;
+    if(coins<cost){showMsg('need '+cost+' coin');return;}
+    coins-=cost;player.filterBonus=(player.filterBonus||0)+FILT_STEP;
+    sfx.build();showMsg('filter cartridge fitted · pollution down');}
+  else if(kind==='map'){if(player.hasMap){showMsg('sector-nav already installed');return;}
+    if(coins<MAP_COST){showMsg('need '+MAP_COST+' coin');return;}
+    coins-=MAP_COST;player.hasMap=true;
+    burst(player.x+4,player.y+4,18,120,0.6,'#46d0ff');
+    sfx.build();showMsg('sector-nav online — minimap live on your HUD');}
+}
+function mapIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><rect x="2.5" y="2" width="11" height="12" rx="1.5" fill="#0c2230" stroke="#2c6f8c" stroke-width="1"/><path d="M5 3 V13 M11 3 V13" stroke="#1d4456" stroke-width="0.8"/><path d="M3 5.5 H13 M3 10.5 H13" stroke="#1d4456" stroke-width="0.8"/><rect x="7" y="6.5" width="2.4" height="2.4" fill="none" stroke="#46d0ff" stroke-width="1"/><circle cx="8.2" cy="7.7" r="0.7" fill="#7dffc0"/><circle cx="5" cy="4" r="0.8" fill="#5fe6ff"/><circle cx="11" cy="12" r="0.8" fill="#ffd23c"/></svg>';}
+function partIcon(id,sz){
+  if(id==='core')return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" fill="#0e3a4a" stroke="#46d0ff" stroke-width="1.2"/><circle cx="8" cy="8" r="2.2" fill="#9fe8ff"/><path d="M8 2.5V5 M8 11V13.5 M2.5 8H5 M11 8H13.5" stroke="#46d0ff" stroke-width="1"/></svg>';
+  if(id==='frame')return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" fill="none" stroke="#9aa6b2" stroke-width="2"/><rect x="6" y="6" width="4" height="4" fill="none" stroke="#6f7d89" stroke-width="1"/></svg>';
+  return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><rect x="6.5" y="4" width="3" height="9" fill="#b8c2cc"/><path d="M5 4 L8 1.5 L11 4 Z" fill="#cdd6df"/><rect x="5.5" y="12" width="5" height="2" fill="#8a96a2"/></svg>';
+}
+function batIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><rect x="4" y="3" width="8" height="11" rx="1.5" fill="#3a300c" stroke="#a9791a" stroke-width="1"/><rect x="6.5" y="1.5" width="3" height="2" fill="#a9791a"/><rect x="5" y="6" width="6" height="7" fill="#ffd23c"/><path d="M8.6 6.5 L6.8 9.6 H8.2 L7.4 12.4 L9.6 8.9 H8.1 Z" fill="#3a300c"/></svg>';}
+function machIcon(id,sz){
+  if(id==='robot')return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><rect x="3" y="5" width="10" height="7" rx="2" fill="#566a78" stroke="#2a3742" stroke-width="1"/><circle cx="6.5" cy="8.5" r="1.4" fill="#46d0ff"/><circle cx="10" cy="8.5" r="1" fill="#ffd23c"/><path d="M8 5V2 M8 2h2" stroke="#8a96a2" stroke-width="1"/></svg>';
+  if(id==='mech')return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><rect x="3" y="4" width="10" height="7" rx="1.5" fill="#566a78" stroke="#2a3742" stroke-width="1"/><rect x="5" y="5" width="5" height="3" rx="1" fill="#0e3a4a"/><circle cx="7" cy="6.5" r="1" fill="#7fe6ff"/><rect x="3" y="11" width="3" height="3" fill="#2a3742"/><rect x="10" y="11" width="3" height="3" fill="#2a3742"/><circle cx="14" cy="9" r="1.8" fill="none" stroke="#cdd6de" stroke-width="1"/><rect x="12.5" y="4.5" width="3" height="1.6" fill="#8a96a2"/></svg>';
+  if(id==='floodlight')return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><path d="M5 3 H11 L13 6 H3 Z" fill="#3a4a57"/><rect x="5" y="6" width="6" height="2" fill="#ffe27a"/><path d="M4 9 L8 14 L12 9 Z" fill="#ffe27a" opacity="0.4"/></svg>';
+  return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><rect x="5" y="3" width="6" height="7" rx="2" fill="#566a78"/><path d="M6 10 L8 15 L10 10 Z" fill="#ff9a3c"/><path d="M7 10 L8 13 L9 10 Z" fill="#ffe27a"/></svg>';
+}
+function canPayParts(c){for(const id in c)if((partsInv[id]||0)<c[id])return false;return true;}
+function payParts(c){for(const id in c)partsInv[id]=(partsInv[id]||0)-c[id];}
+function buyPart(id){const pt=PARTBYID[id];if(coins<pt.coin){showMsg('need '+pt.coin+' coin');return;}coins-=pt.coin;partsInv[id]=(partsInv[id]||0)+1;sfx.pop();}
+function buildMachine(id){const m=MACHBYID[id];if(!m)return;
+  if(id==='robot'&&companion){showMsg('you already have a scrappy robot');return;}
+  if(id==='floodlight'&&player.builtFloodlight){showMsg('floodlight already fitted');return;}
+  if(id==='thruster'&&player.builtThruster){showMsg('thruster pack already fitted');return;}
+  if(id==='mech'&&mech){showMsg('you already own the MULE');return;}
+  if(!canPayParts(m.cost)){showMsg('not enough parts — buy them above');return;}
+  payParts(m.cost);sfx.build();
+  burst(player.x+4,player.y+4,18,120,0.6,'#46d0ff');
+  if(id==='robot'){companion={x:player.x+4,y:player.y+4,ph:0};showMsg('scrappy robot online — it grabs loot for you');}
+  else if(id==='floodlight'){player.builtFloodlight=true;player.lightBonus=(player.lightBonus||0)+40;player.lightRadius+=40;showMsg('floodlight rig fitted — the dark pulls back');}
+  else if(id==='thruster'){player.builtThruster=true;player.mvBonus=(player.mvBonus||0)+0.18;player.maxvMul+=0.18;showMsg('thruster pack fitted — faster swimming');}
+  else if(id==='mech'){const b=bases[tAt(player.y)];
+    mech={x:player.x+4,y:player.y+4,vx:0,vy:0,dir:1,battery:0,piloted:false,off:false,boostT:0,boostOut:false,hookAnchor:null,hanging:false};
+    if(b)mechCallTo(b);
+    showMsg('DV-8 “MULE” assembled — its battery bay is EMPTY. craft a cell in the workshop’s MECH bay');}
+}
+
+function drawNode(n){
+  const sc=n.x-RCX,sr=n.y-RCY;if(sc<-30||sc>VW+30||sr<-30||sr>VH+30)return;
+  const X=Math.round(n.x-RCX),Y=Math.round(n.y-RCY);
+  px(ctx,X-2,Y-8,4,4,'#7a8a9a');px(ctx,X-2,Y+5,4,4,'#7a8a9a');px(ctx,X-1,Y-7,2,2,'#cdd6de');px(ctx,X-1,Y+6,2,2,'#cdd6de');
+  if(n.st===0){px(ctx,X-1,Y-1,2,2,'#2c6f8c');gl(n.x,n.y,10,'70,160,200',0.08);}
+  else if(n.st===1){const f=((n.ph%180)-110)/30;px(ctx,X-1,Y-1,2,2,'#9fe8ff');gl(n.x,n.y,8+f*10,'140,230,255',0.2+f*0.2);
+    if(Math.random()<0.5)px(ctx,X+((Math.random()*6-3)|0),Y+((Math.random()*8-4)|0),1,1,'#bff2ff');}
+  else{ctx.strokeStyle='#dffaff';ctx.lineWidth=1;ctx.beginPath();let yy=Y-6;ctx.moveTo(X,yy);while(yy<Y+6){yy+=2;ctx.lineTo(X+(Math.random()*6-3),yy);}ctx.stroke();
+    ctx.globalCompositeOperation='lighter';radial(ctx,X,Y,n.r,'rgba(180,240,255,0.25)','rgba(180,240,255,0)');ctx.globalCompositeOperation='source-over';
+    gl(n.x,n.y,n.r,'200,245,255',0.4);for(let i=0;i<3;i++)px(ctx,X+((Math.random()*n.r-n.r/2)|0),Y+((Math.random()*n.r-n.r/2)|0),1,1,'#bff2ff');}
+}
+
+function drawBlob(b){
+  const by=b.y+Math.sin(b.ph)*10,X=Math.round(b.x-RCX),Y=Math.round(by-RCY),wob=Math.sin(b.ph*2);
+  if(X<-24||X>VW+24||Y<-24||Y>VH+24)return;
+  ctx.fillStyle='#2f8f12';ctx.beginPath();ctx.ellipse(X,Y,8+wob,8-wob,0,0,6.3);ctx.fill();
+  ctx.fillStyle='rgba(93,214,42,0.92)';ctx.beginPath();ctx.ellipse(X,Y,6.5+wob,6.5-wob,0,0,6.3);ctx.fill();
+  ctx.fillStyle='rgba(160,255,100,0.55)';ctx.beginPath();ctx.ellipse(X-1,Y-2,2.5,2.5,0,0,6.3);ctx.fill();
+  const ex=b.dir>0?2:-5;px(ctx,X+ex,Y-2,3,3,'#eafff0');px(ctx,X+ex+4,Y-2,3,3,'#eafff0');
+  px(ctx,X+ex+1,Y-1,1,1,'#0a1a05');px(ctx,X+ex+5,Y-1,1,1,'#0a1a05');gl(b.x,by,16,'127,255,60',0.16);
+}
+function drawCreature(c){const X=Math.round(c.x-RCX),Y=Math.round(c.y-RCY);
+  if(X<-32||X>VW+32||Y<-32||Y>VH+32)return;
+  if(c.type==='eel')drawEel(c,X,Y);else if(c.type==='angler')drawAngler(c,X,Y);
+  else if(c.type==='fungus')drawFungus(c,X,Y);else if(c.type==='mermaid')drawMermaid(c,X,Y);}
+function drawEel(c,X,Y){const AX=Math.round(c.ax-RCX),AY=Math.round(c.ay-RCY);
+  if(c.state==='hide'){
+    for(let i=0;i<4;i++){const a=i*1.6+Math.sin(state.tick*0.04)*0.3,r=4+i;px(ctx,X+Math.round(Math.cos(a)*r)-1,Y+Math.round(Math.sin(a)*r)-1,3,3,i<2?'#1c2a22':'#24352a');}
+    px(ctx,X-1,Y-1,3,3,'#1a261e');
+    if(c.cd<0.6&&(state.tick>>2)%2===0)px(ctx,X,Y,1,1,'#ffd23c');
+    gl(c.x,c.y,8,'40,70,50',0.10);
+  }else{const N=6;for(let i=0;i<=N;i++){const t=i/N,x=AX+(X-AX)*t,y=AY+(Y-AY)*t,w=Math.max(2,4-Math.round(t));px(ctx,Math.round(x-w/2),Math.round(y-w/2),w,w,(i&1)?'#26402e':'#1d3324');}
+    px(ctx,X-3,Y-3,7,6,'#2c4a34');px(ctx,X-2,Y-2,5,4,'#365e40');
+    const fx=c.lvx>=0?1:-1;px(ctx,X+fx,Y-2,2,2,'#ff3c3c');px(ctx,X+fx,Y+1,2,2,'#ff3c3c');
+    px(ctx,X+fx*3,Y-1,1,1,'#fff');px(ctx,X+fx*3,Y+1,1,1,'#fff');
+    gl(c.x,c.y,12,'90,200,120',0.18);}
+}
+function drawAngler(c,X,Y){const bob=Math.sin(state.tick*0.08+c.ph)*2;
+  if(c.state==='attack'){px(ctx,X-6,Y-5,12,10,'#241a2a');px(ctx,X-5,Y-4,10,8,'#3a2440');
+    for(let i=0;i<5;i++){px(ctx,X-4+i*2,Y-4,1,2,'#fff');px(ctx,X-4+i*2,Y+2,1,2,'#fff');}
+    px(ctx,X-1,Y-1,2,2,'#ff3c6a');gl(c.x,c.y,14,'255,60,90',0.22);
+  }else{px(ctx,X-4,Y-3,8,7,'#1e2630');px(ctx,X-3,Y-2,6,5,'#2a3744');px(ctx,X+2,Y-1,2,2,'#6f93a6');
+    const lx=X-6,ly=Y-6+Math.round(bob);
+    px(ctx,X-4,Y-2,2,1,'#3a4a57');px(ctx,X-5,Y-4,1,2,'#3a4a57');
+    px(ctx,lx,ly,2,2,'#ffe27a');px(ctx,lx,ly,1,1,'#fff4c2');
+    gl(lx+1,ly+1,9,'255,210,60',0.45+Math.sin(state.tick*0.12)*0.15);}
+}
+function drawFungus(c,X,Y){const col=RES[c.fake].col;
+  for(let i=0;i<6;i++){const a=i/6*6.28+Math.sin(state.tick*0.02+c.ph)*0.2,r=7,vx=X+Math.round(Math.cos(a)*r),vy=Y+Math.round(Math.sin(a)*r);
+    px(ctx,vx-1,vy-1,2,2,'#5a6a52');px(ctx,vx+Math.round(Math.cos(a)*2),vy+Math.round(Math.sin(a)*2),1,1,'#6a7a60');}
+  px(ctx,X-3,Y-3,6,6,shade(col,0.4));px(ctx,X-2,Y-2,4,4,col);px(ctx,X-1,Y-2,1,3,shade(col,1.6));
+  if((state.tick%7)<2){const gc=RES[ALLRAW[state.tick%ALLRAW.length]].col;px(ctx,X-2,Y-2,4,1,gc);}
+  gl(c.x,c.y,9,hex2rgb(col).join(','),0.2+Math.sin(state.tick*0.3+c.ph)*0.18);
+  if(c.state==='grab'){const PX=player.x+4-RCX,PY=player.y+4-RCY;
+    for(let i=0;i<6;i++){const a=i/6*6.28,sx=X+Math.cos(a)*7,sy=Y+Math.sin(a)*7,N=5;
+      for(let k=0;k<=N;k++){const t=k/N,x=sx+(PX-sx)*t,y=sy+(PY-sy)*t;px(ctx,Math.round(x)-1,Math.round(y)-1,2,2,k===N?'#7fae3a':'#4f7a2a');}}
+    gl(player.x+4,player.y+4,12,'127,174,58',0.25);}
+}
+function drawMermaid(c,X,Y){
+  if(c.state==='distress'){px(ctx,X-3,Y-4,6,6,'#2a6a86');px(ctx,X-2,Y-3,4,4,'#3a8fb0');px(ctx,X-2,Y-3,3,2,'#bfefff');
+    const wav=Math.sin(state.tick*0.18)>0?-3:-1;px(ctx,X+3,Y-4+wav,2,2,'#2a6a86');
+    px(ctx,X-3,Y+2,2,3,'#2a6a86');px(ctx,X+1,Y+2,2,3,'#2a6a86');
+    gl(c.x,c.y,11,'120,200,255',0.28);if((state.tick%24)<2)px(ctx,X-4,Y-6,1,1,'#fff');
+  }else if(c.state==='reveal'){const f=(state.tick>>1)%2===0;px(ctx,X-4,Y-5,8,10,f?'#7a2a5a':'#2a6a86');gl(c.x,c.y,14,'255,90,140',0.3);
+  }else{px(ctx,X-3,Y-5,6,6,'#caa0b8');px(ctx,X-2,Y-4,4,3,'#e6c0d4');
+    px(ctx,X-2,Y-4,1,1,'#ff2a6a');px(ctx,X,Y-4,1,1,'#ff2a6a');
+    px(ctx,X-2,Y+1,4,4,'#3a7a5a');px(ctx,X-3,Y+5,6,2,'#2a6a4a');
+    px(ctx,X-4,Y-5,2,5,'#7a2a4a');px(ctx,X+2,Y-5,2,5,'#7a2a4a');
+    if(c.state==='slash'){const PX=player.x+4-RCX,PY=player.y+4-RCY;ctx.strokeStyle='rgba(255,90,140,0.9)';ctx.lineWidth=2;ctx.beginPath();ctx.arc((X+PX)/2,(Y+PY)/2,8,0,3.2);ctx.stroke();gl(player.x+4,player.y+4,12,'255,90,140',0.3);}
+    gl(c.x,c.y,12,'200,120,160',0.2);}
+}
+function drawCompanion(){if(!companion)return;const co=companion,X=Math.round(co.x-RCX),Y=Math.round(co.y-RCY);
+  if(X<-20||X>VW+20||Y<-20||Y>VH+20)return;
+  const bob=Math.round(Math.sin((co.ph||0)*(co.busy?7:4))),d=co.dir||1,gf=co.grabFx||0;
+  px(ctx,X-4,Y-3+bob,8,6,'#3a4a57');px(ctx,X-3,Y-2+bob,6,4,'#566a78');
+  px(ctx,X-2,Y-1+bob,2,2,co.busy?'#ffd23c':'#46d0ff');px(ctx,X+2,Y-1+bob,1,1,'#ffd23c');
+  px(ctx,X-5,Y+2+bob,2,1,'#2a3742');px(ctx,X+3,Y+2+bob,2,1,'#2a3742');
+  px(ctx,X+d*5,Y+bob,1,2,'#8a96a2');                       // the claw, out front on its heading
+  gl(co.x,co.y,gf>0?18:12,'70,208,255',0.22+gf*0.5);
+}
+
+// ---- DV-8 "MULE" mech: one sprite, three moods (piloted / parked-live / dead) ----
+function drawMech(){const m=mech,X=Math.round(m.x-RCX),Y=Math.round(m.y-RCY);
+  if(X<-34||X>VW+34||Y<-34||Y>VH+34)return;
+  const t=state.tick,on=m.battery>0,pil=m.piloted;
+  // hook line + anchor glint (absolute coords, under the body)
+  if(m.hookAnchor){const AX=Math.round(m.hookAnchor.x-RCX),AY=Math.round(m.hookAnchor.y-RCY),
+    HX=X,HY=Y-4,N=10;
+    for(let i=0;i<=N;i++){const k=i/N,x=HX+(AX-HX)*k,y=HY+(AY-HY)*k;
+      px(ctx,Math.round(x)-1,Math.round(y)-1,2,2,(i&1)?'#9a7a38':'#c9a14a');}
+    px(ctx,AX-1,AY-1,3,3,'#ffd23c');gl(m.hookAnchor.x,m.hookAnchor.y,8,'255,210,60',0.3);}
+  const walk=pil&&Math.abs(m.vx)>0.3?Math.round(Math.sin(t*0.3)*2):0;
+  ctx.save();ctx.translate(X,Y);if((m.dir||1)<0){ctx.scale(-1,1);}
+  // boost flame under the frame
+  if((m.boostFx||0)>0){const fl=(t>>1)%2;px(ctx,-3,8,2,3+fl,'#7fe6ff');px(ctx,1,8,2,4-fl,'#bfefff');px(ctx,-1,9,2,2,'#fff');}
+  // legs — splayed digitigrade struts, alternating on the walk cycle
+  px(ctx,-6,4,3,4+(walk>0?1:0),'#2a3742');px(ctx,3,4,3,4+(walk<0?1:0),'#2a3742');
+  px(ctx,-7,7+(walk>0?1:0),5,2,'#1b2530');px(ctx,2,7+(walk<0?1:0),5,2,'#1b2530');
+  px(ctx,-6,4,1,3,'#3d4f5e');px(ctx,3,4,1,3,'#3d4f5e');
+  // hull
+  px(ctx,-7,-7,14,11,'#2f3d49');px(ctx,-6,-6,12,9,pil?'#5a7080':'#4a5a66');px(ctx,-6,-6,12,2,pil?'#75909f':'#5d707c');
+  px(ctx,-6,2,12,1,'#222d38');
+  // cockpit dome — lit with the diver inside, dark glass otherwise
+  px(ctx,-4,-6,8,5,'#0c1620');px(ctx,-3,-5,6,3,pil?'#0e3a4a':'#12181f');
+  if(pil){px(ctx,-2,-5,2,2,'#7fe6ff');px(ctx,1,-4,1,1,'#bfefff');}
+  // battery bay LED: green pulse alive, dead-red blink when the cell is spent
+  px(ctx,-7,-1,2,4,'#10181f');
+  px(ctx,-7,-1,2,1,on?(((t>>3)%2)?'#5dff8a':'#2f8f4a'):(((t>>3)%2)?'#ff4d5e':'#5a1a20'));
+  // drill arm (front upper) — chatters while drilling
+  const dj=(m.drillFx||0)>0?(t%2):0;
+  px(ctx,6,-4,3,3,'#3a4a57');px(ctx,9,-4+((dj)?1:0),3,1,'#8a96a2');px(ctx,9,-2-((dj)?1:0),3,1,'#8a96a2');
+  px(ctx,12,-3,2,1,(m.drillFx||0)>0?'#ffe27a':'#aab6c2');
+  // kill-saw disc (front lower) — teeth spin while the cell has charge
+  px(ctx,6,1,3,2,'#3a4a57');
+  if(on){for(let i=0;i<4;i++){const an=t*0.45+i*1.5708;
+      px(ctx,Math.round(10+Math.cos(an)*3)-1,Math.round(2+Math.sin(an)*3)-1,2,2,(m.sawFx||0)>0?'#ffb3c0':'#cdd6de');}
+    px(ctx,9,1,2,2,'#6f7d89');}
+  else px(ctx,9,1,2,2,'#39434d');
+  ctx.restore();
+  // glows
+  if(pil)gl(m.x,m.y-3,18,'127,230,255',0.25);
+  else if(on)gl(m.x,m.y-3,11,'127,230,255',0.12);
+  else if((t%36)<4)gl(m.x-5,m.y,7,'255,77,94',0.25);
+  if((m.sawFx||0)>0)gl(m.x+m.dir*10,m.y+2,14,'255,120,150',0.4);
+  if((m.boostFx||0)>0)gl(m.x,m.y+10,13,'127,230,255',0.35);
+}
+
+function drawRelic(){
+  const yb=Math.round(Math.sin(state.tick*0.05)*2),X=Math.round(relic.x-RCX),Y=Math.round(relic.y-RCY+yb);
+  ctx.globalCompositeOperation='lighter';radial(ctx,X,Y,32,'rgba(255,210,60,0.12)','rgba(255,210,60,0)');ctx.globalCompositeOperation='source-over';
+  for(let r=8;r>0;r-=2)px(ctx,X-r,Y-r,r*2,r*2,shade('#ffd23c',0.5+(8-r)/8));
+  px(ctx,X-2,Y-2,4,4,'#fff6cf');
+  for(let i=0;i<8;i++){const an=i/8*6.28+state.tick*0.04;px(ctx,Math.round(X+Math.cos(an)*11),Math.round(Y+Math.sin(an)*11),2,2,'#ffe27a');}
+  gl(relic.x,relic.y,26,'255,210,60',0.4);
+}
+
+function drawParticle(q){
+  const X=Math.round(q.x-RCX),Y=Math.round(q.y-RCY);if(X<-4||X>VW+4||Y<-4||Y>VH+4)return;
+  const a=clamp(q.life/q.max,0,1);
+  if(q.type==='bubble'){ctx.globalAlpha=a*0.7;const s=Math.max(1,Math.round(q.size*a));ctx.fillStyle=q.col||'#bfeaff';ctx.fillRect(X,Y,s,s);ctx.fillStyle='#ffffff';ctx.fillRect(X,Y,1,1);ctx.globalAlpha=1;}
+  else if(q.type==='mote'){ctx.globalAlpha=a*0.4;ctx.fillStyle='#7fb8d0';ctx.fillRect(X,Y,q.size,q.size);ctx.globalAlpha=1;}
+  else if(q.type==='spark'){ctx.globalAlpha=a;ctx.fillStyle=q.col||'#fff';ctx.fillRect(X,Y,q.size,q.size);ctx.globalAlpha=1;}
+}
+
+// ---- diver: five distinct, animated dive suits ----
+function drawDiver(){
+  const dir=player.dir,t=state.tick,g=gearLevel;
+  const moving=Math.hypot(player.vx,player.vy)>0.4,kick=Math.round(Math.sin(t*0.35)*(moving?2:0.9));
+  const bob=Math.round(Math.sin(t*0.09)*1.2);
+  const sx=Math.round(player.x-RCX-4),sy=Math.round(player.y-RCY-6+bob);
+  ctx.save();ctx.translate(sx,sy);if(dir<0){ctx.translate(17,0);ctx.scale(-1,1);}
+  diverBody(g,moving,kick);
+  ctx.restore();
+  const vx=player.x+4, vy=player.y-2+bob;
+  if(g===0){if((t>>3)%4===0)gl(vx,vy,5,'90,200,220',0.10);}
+  else if(g===1){gl(vx,vy,9,'120,210,255',0.16+Math.sin(t*0.12)*0.05);}
+  else if(g===2){gl(vx,vy,9,'255,170,70',0.15);gl(player.x-2,player.y+2+bob,5,'255,150,60',0.10+Math.sin(t*0.2)*0.05);}
+  else if(g===3){const tw=0.16+Math.sin(t*0.18)*0.06;gl(vx,vy,13,'150,235,255',tw);gl(vx+dir*12,player.y+bob,20,'170,230,255',0.14);gl(player.x+4,player.y+9+bob,7,'120,220,255',0.10+Math.sin(t*0.1)*0.05);}
+  else if(g>=4){const pc=0.22+Math.sin(t*0.16)*0.10;gl(player.x+4,player.y+5+bob,11,'120,255,235',pc);gl(vx,vy,12,'150,235,255',0.18);gl(vx+dir*13,player.y+bob,22,'170,230,255',0.13);if(moving)gl(player.x+1-dir*2,player.y+10+bob,15,'120,200,255',0.32);}
+}
+function diverBody(g,moving,kick){
+  const t=state.tick, DK='#161d24', HM='#9aa6b2',HMD='#5e6a76',HML='#c6d2de', yel='#ffd23c',yelD='#c89414';
+  if(g===0){ // PATCH DIVER — ragged scavenger, cracked helmet, leaking, dim flicker visor
+    const su='#5d6b62',suD='#3d4942',suL='#76897e';
+    px(ctx,2,7,3,6,'#69786e');px(ctx,3,7,1,6,'#86968c');px(ctx,3,7,1,1,'#aebcb2');px(ctx,4,6,1,2,suD);
+    px(ctx,4,5,1,2,'#4a564e');
+    px(ctx,4,15+(kick>0?1:0),3,2,suD);px(ctx,3,16+(kick>0?1:0),2,1,suD);
+    px(ctx,9,15+(kick<0?1:0),3,2,suD);px(ctx,12,16+(kick<0?1:0),1,1,suD);
+    px(ctx,6,13,2,2,suD);px(ctx,9,13,2,2,suD);
+    px(ctx,5,7,8,7,suD);px(ctx,5,7,7,6,su);px(ctx,5,7,7,1,suL);
+    px(ctx,6,9,2,2,suL);px(ctx,9,11,2,1,'#46524a');px(ctx,8,8,1,1,'#46524a');
+    px(ctx,7,9,3,3,yelD);px(ctx,7,9,3,1,'#cdb24a');px(ctx,8,10,1,1,DK);
+    px(ctx,11,9,3,2,su);px(ctx,13,9,1,2,suD);
+    px(ctx,6,1,7,6,HMD);px(ctx,6,1,7,5,'#7f8b90');px(ctx,7,0,5,1,'#98a4a0');px(ctx,12,1,1,5,'#4f5b57');
+    px(ctx,9,2,1,4,'#56625e');px(ctx,8,4,2,1,'#56625e');
+    const f=(Math.sin(t*0.27)>-.35);px(ctx,7,3,4,2,DK);if(f){px(ctx,7,3,4,1,'#3aa6c4');px(ctx,8,3,2,1,'#74d6e6');}
+    if((t>>2)%5<2)px(ctx,9,Math.max(-2,-((t>>1)%5)),1,1,'#bfe9ff');
+    return;}
+  if(g===1){ // TIDAL — clean teal wetsuit, pulsing cyan visor, hazard chest, bubble stream
+    const su='#2f8d77',suD='#1d5a4b',suL='#4fc2a4', tk='#c9d2da',tkD='#7e8a96';
+    px(ctx,1,6,4,8,tkD);px(ctx,2,6,2,8,tk);px(ctx,2,6,2,1,'#eef3f7');px(ctx,2,9,2,1,'#aeb8c0');px(ctx,2,12,2,1,'#aeb8c0');
+    px(ctx,4,5,1,2,'#6a7682');px(ctx,5,4,1,1,'#6a7682');
+    px(ctx,4,15+(kick>0?1:0),4,2,suD);px(ctx,3,16+(kick>0?1:0),2,1,'#16463a');
+    px(ctx,9,15+(kick<0?1:0),4,2,suD);px(ctx,12,16+(kick<0?1:0),2,1,'#16463a');
+    px(ctx,6,13,2,2,suD);px(ctx,9,13,2,2,suD);
+    px(ctx,4,7,9,7,suD);px(ctx,5,7,8,6,su);px(ctx,5,7,8,1,suL);px(ctx,5,8,1,4,suL);px(ctx,12,8,1,4,suD);
+    px(ctx,6,8,4,4,yelD);px(ctx,6,8,4,3,yel);px(ctx,6,8,4,1,'#ffe98a');px(ctx,7,9,1,1,DK);px(ctx,8,10,1,1,DK);
+    px(ctx,12,9,3,2,su);px(ctx,12,9,3,1,suL);px(ctx,14,9,1,2,suD);
+    px(ctx,6,1,7,6,HMD);px(ctx,6,1,7,5,HM);px(ctx,7,0,5,1,HML);px(ctx,6,1,1,4,HML);px(ctx,12,1,1,5,HMD);px(ctx,8,0,2,1,'#e8f0f6');
+    px(ctx,6,6,7,2,HMD);px(ctx,7,7,5,1,HM);
+    const vb=Math.sin(t*0.12)>0;px(ctx,7,2,5,3,DK);px(ctx,7,3,5,1,vb?'#5cdcff':'#46d0ff');px(ctx,8,3,3,1,'#dffaff');px(ctx,7,2,4,1,'#46d0ff');px(ctx,8,4,2,1,'#a9e2ff');
+    if((t>>3)%3===0)px(ctx,3,Math.max(0,5-((t>>2)%5)),1,1,'#cdeeff');
+    return;}
+  if(g===2){ // DREDGER — industrial rig, mech claw + tread boots + venting exhaust
+    const su='#46586a',suD='#2c3a48',suL='#6a8092', or='#ff9a3c',orD='#c96a1e', steel='#aab6c2',steelD='#6a7682';
+    px(ctx,1,6,3,5,'#3a4450');px(ctx,1,6,3,1,'#5e6a76');px(ctx,2,5,1,1,'#2a3038');
+    const puff=(t>>2)%6;if(puff<3)px(ctx,1,Math.max(0,4-puff),2,1,'#b4b8be');
+    px(ctx,2,11,2,4,'#3a4450');
+    const seg=(t>>2)%3;
+    for(let s=0;s<2;s++){const bx=s?9:4,ky=s?(kick<0?1:0):(kick>0?1:0);
+      px(ctx,bx,14+ky,4,3,'#39434f');px(ctx,bx,14+ky,4,1,'#5a6672');px(ctx,bx,16+ky,4,1,'#23292f');
+      for(let w=0;w<3;w++)px(ctx,bx+((w+seg)%4),16+ky,1,1,'#7e8a96');}
+    px(ctx,6,13,2,1,suD);px(ctx,9,13,2,1,suD);
+    px(ctx,4,7,9,7,suD);px(ctx,5,7,8,6,su);px(ctx,5,7,8,1,suL);
+    px(ctx,4,7,2,4,steel);px(ctx,4,7,2,1,'#cdd6de');
+    px(ctx,6,8,4,4,orD);px(ctx,6,8,4,3,or);px(ctx,6,8,4,1,'#ffc078');px(ctx,7,9,3,1,'#2a1a08');px(ctx,7,11,3,1,'#2a1a08');
+    const op=(Math.sin(t*0.16)>0)?1:0;
+    px(ctx,12,8,2,3,steelD);px(ctx,12,8,2,1,steel);
+    px(ctx,14,7-op,2,2,steel);px(ctx,14,10+op,2,2,steel);px(ctx,16,7-op,1,1,steelD);px(ctx,16,11+op,1,1,steelD);px(ctx,14,9,1,1,'#3a4450');
+    px(ctx,6,1,7,6,HMD);px(ctx,6,1,7,5,'#8390a0');px(ctx,7,0,5,1,'#b6c2ce');px(ctx,12,1,1,5,'#5a6672');
+    px(ctx,6,6,7,2,HMD);
+    px(ctx,7,2,5,3,DK);px(ctx,7,3,5,1,'#ffb13c');px(ctx,8,3,3,1,'#ffe0a0');px(ctx,7,2,4,1,'#ff9a3c');
+    px(ctx,12,2,1,2,'#fff1c0');
+    return;}
+  if(g===3){ // BEACON — sleek explorer, multi-lamp halo, glowing spine + wide visor band
+    const su='#35617a',suD='#21404f',suL='#5a9ab6', steel='#aab6c2',steelD='#6a7682', en='#7fe6ff';
+    px(ctx,1,6,4,8,'#2c3a44');px(ctx,2,6,2,8,'#c9d2da');px(ctx,2,6,2,1,'#eef3f7');px(ctx,2,10,2,1,'#aeb8c0');
+    px(ctx,4,5,1,2,steelD);
+    px(ctx,4,15+(kick>0?1:0),4,2,suD);px(ctx,3,16+(kick>0?1:0),2,1,'#19384a');
+    px(ctx,9,15+(kick<0?1:0),4,2,suD);px(ctx,12,16+(kick<0?1:0),2,1,'#19384a');
+    const seg=(t>>2)%4;
+    for(let s=0;s<2;s++){const bx=s?9:4,ky=s?(kick<0?1:0):(kick>0?1:0);px(ctx,bx,14+ky,4,3,'#33414e');px(ctx,bx,14+ky,4,1,'#5a6672');px(ctx,bx+(seg%4),16+ky,1,1,en);}
+    px(ctx,6,13,2,1,suD);px(ctx,9,13,2,1,suD);
+    px(ctx,4,7,9,7,suD);px(ctx,5,7,8,6,su);px(ctx,5,7,8,1,suL);px(ctx,5,8,1,4,suL);
+    const sp=(t>>2)%5;for(let s=0;s<5;s++)px(ctx,8,8+s,1,1,(s===sp)?'#dffaff':en);
+    px(ctx,6,8,3,3,'#1d3a48');px(ctx,6,8,3,1,en);
+    px(ctx,12,8,2,3,steelD);px(ctx,12,8,2,1,steel);px(ctx,14,7,2,2,steel);px(ctx,14,10,2,2,steel);px(ctx,16,7,1,1,steelD);px(ctx,16,11,1,1,steelD);
+    px(ctx,6,1,7,6,HMD);px(ctx,6,1,7,5,HM);px(ctx,7,0,5,1,HML);px(ctx,6,1,1,4,HML);px(ctx,12,1,1,5,HMD);
+    px(ctx,6,6,7,2,HMD);px(ctx,7,7,5,1,HM);
+    px(ctx,6,3,7,2,DK);px(ctx,6,3,7,1,'#8ff0ff');px(ctx,7,3,5,1,'#dffaff');px(ctx,6,4,7,1,'#5cdcff');
+    const lamp=(t>>3)%4,lps=[[5,1],[8,-1],[11,1],[13,3]];
+    for(let i=0;i<4;i++)px(ctx,lps[i][0],lps[i][1],1,1,(i===lamp)?'#ffffff':'#bfe9ff');
+    return;}
+  // LEVIATHAN — elite bio-armor: twin tanks, reactor core, energy veins, big claw, crest, thrusters
+  const su='#3f6b6a',suD='#274846',suL='#5fa0a0', steel='#aab6c2',steelD='#6a7682', en='#8fffe6', gold='#ffd23c';
+  px(ctx,0,5,5,10,'#2c3a40');px(ctx,1,5,3,10,'#c9d2da');px(ctx,1,5,3,1,'#eef3f7');px(ctx,1,8,3,1,'#aeb8c0');px(ctx,1,11,3,1,'#aeb8c0');px(ctx,4,6,1,2,gold);
+  const fin=Math.round(Math.sin(t*0.1)*1);px(ctx,0,8+fin,1,3,suL);px(ctx,0,12,1,2,suD);
+  px(ctx,4,4,1,2,steelD);
+  for(let s=0;s<2;s++){const bx=s?10:3,ky=s?(kick<0?1:0):(kick>0?1:0);px(ctx,bx,14+ky,5,3,'#2f3b44');px(ctx,bx,14+ky,5,1,'#5a6672');px(ctx,bx,16+ky,5,1,'#20262c');px(ctx,bx+1,16+ky,1,1,en);px(ctx,bx+3,16+ky,1,1,en);}
+  px(ctx,5,13,3,1,suD);px(ctx,9,13,3,1,suD);
+  px(ctx,3,7,11,8,suD);px(ctx,4,7,9,7,su);px(ctx,4,7,9,1,'#c6d2de');
+  px(ctx,3,7,2,6,'#8a9aa2');px(ctx,12,7,2,6,'#324a48');
+  const pc=(Math.sin(t*0.16)>0);px(ctx,7,8,4,4,pc?'#0a3434':'#0a2a2a');px(ctx,8,9,2,2,pc?'#cffff4':en);px(ctx,8,9,2,1,'#ffffff');
+  const v=(t>>2)%3;px(ctx,6,8+v,1,1,en);px(ctx,11,9+v,1,1,en);px(ctx,7,7,4,1,gold);
+  const op=(Math.sin(t*0.14)>0)?1:0;
+  px(ctx,13,7,3,5,steelD);px(ctx,13,7,3,1,steel);
+  px(ctx,16,6-op,2,2,steel);px(ctx,16,11+op,2,2,steel);px(ctx,18,6-op,1,2,'#dfe6ee');px(ctx,18,11+op,1,2,'#dfe6ee');px(ctx,15,9,2,1,'#324a48');
+  px(ctx,6,1,7,6,HMD);px(ctx,6,1,7,5,HM);px(ctx,7,0,5,1,HML);px(ctx,6,1,1,4,HML);px(ctx,12,1,1,5,HMD);
+  px(ctx,6,6,7,2,HMD);px(ctx,7,7,5,1,HM);
+  px(ctx,8,-1,2,2,gold);px(ctx,6,0,7,1,HML);px(ctx,5,3,1,1,gold);px(ctx,12,3,1,1,gold);
+  px(ctx,6,3,7,2,DK);px(ctx,6,3,7,1,'#8ffff0');px(ctx,7,3,5,1,'#ffffff');px(ctx,6,4,7,1,'#5cf0dc');
+  px(ctx,5,2,1,2,'#fffbe0');px(ctx,13,2,1,2,'#fffbe0');
+  if(moving){const j=(t>>1)%3;px(ctx,2,15+j,1,2,'#bfeaff');px(ctx,11,15+((j+1)%3),1,2,'#bfeaff');}
+}
+
+// ---- HUD ----
+// 3x5 segmented pixel font (most glyphs). B/C/D/F/S/T/U/M added (beyond the original HUD-label
+// subset) so the same in-game font can also spell the boot logo / title / first-time-prompt text.
+// W is a wider 5x5 cell — a 3-wide W with one crossbar reads as an H, so it gets its own width.
+const FONT3={O:['111','101','101','101','111'],X:['101','101','010','101','101'],Y:['101','101','010','010','010'],G:['111','100','101','101','111'],E:['111','100','111','100','111'],N:['101','111','111','111','101'],H:['101','101','111','101','101'],P:['111','101','111','100','100'],A:['010','101','111','101','101'],I:['111','010','010','010','111'],R:['110','101','110','101','101'],L:['100','100','100','100','111'],V:['101','101','101','101','010'],
+  B:['110','101','111','101','110'],C:['111','100','100','100','111'],D:['110','101','101','101','110'],F:['111','100','111','100','100'],S:['111','100','111','001','111'],T:['111','010','010','010','010'],U:['101','101','101','101','111'],M:['101','111','101','101','101'],
+  W:['10001','10001','10101','10101','10101'],  // two full-height outer legs + a shorter centre leg — no crossbar, so it can't read as H
+  '0':['111','101','101','101','111'],'1':['010','110','010','010','111'],'2':['111','001','111','100','111'],'3':['111','001','111','001','111'],'4':['101','101','111','001','001'],'5':['111','100','111','001','111'],'6':['111','100','111','101','111'],'7':['111','001','010','010','010'],'8':['111','101','111','101','111'],'9':['111','101','111','001','111'],
+  '%':['101','001','010','100','101'],'/':['001','001','010','100','100'],'.':['000','000','000','000','010'],'-':['000','000','111','000','000'],':':['000','010','000','010','000'],'>':['100','010','001','010','100'],'<':['001','010','100','010','001'],
+  ' ':['000','000','000','000','000']};
+function glyphW(ch){const g=FONT3[ch];return g?g[0].length:3;}
+function pxText(c,str,x,y,col){let cx=x;for(const ch of str){const g=FONT3[ch];if(g){const w=g[0].length;for(let r=0;r<5;r++)for(let i=0;i<w;i++)if(g[r][i]==='1')px(c,cx+i,y+r,1,1,col);cx+=w+1;}else cx+=4;}}
+// big segmented-LCD text: same FONT3 glyphs, blown up `scale`x and centred on (cx,cy)
+function lcdWidth(str,scale,gap){gap=gap==null?1:gap;let w=0;for(const ch of str)w+=(glyphW(ch.toUpperCase())+gap)*scale;return w-gap*scale;}
+function pxTextXL(c,str,cx,cy,scale,col,gap){
+  gap=gap==null?1:gap;
+  let x=Math.round(cx-lcdWidth(str,scale,gap)/2), y=Math.round(cy-2.5*scale);
+  for(const ch of str){const u=ch.toUpperCase(),g=FONT3[u],gw=glyphW(u);
+    if(g){for(let r=0;r<5;r++)for(let i=0;i<gw;i++)if(g[r][i]==='1')px(c,x+i*scale,y+r*scale,scale,scale,col);}
+    x+=(gw+gap)*scale;}
+}
+// dim "all segments" ghost backdrop — the classic unlit-LCD-cell look, sits behind pxTextXL
+function pxTextGhost(c,str,cx,cy,scale,col,gap){
+  gap=gap==null?1:gap;
+  let x=Math.round(cx-lcdWidth(str,scale,gap)/2), y=Math.round(cy-2.5*scale);
+  for(const ch of str){const u=ch.toUpperCase(),gw=glyphW(u);if(ch!==' ')px(c,x,y,gw*scale,5*scale,col);x+=(gw+gap)*scale;}
+}
+function pxDisc(c,cx,cy,r,col){
+  for(let yy=-r;yy<=r;yy++){const hw=Math.sqrt(Math.max(0,r*r-yy*yy));px(c,Math.round(cx-hw),Math.round(cy+yy),Math.max(1,Math.round(hw*2)),1,col);}
+}
+function drawHeart(c,x,y,on){const col=on?'#ff4d5e':'#33272c';const p=['0110110','1111111','1111111','0111110','0011100','0001000'];
+  for(let r=0;r<6;r++)for(let i=0;i<7;i++)if(p[r][i]==='1')px(c,x+i,y+r,1,1,col);if(on)px(c,x+1,y+1,1,1,'#ff97a1');}
+function drawHUD(tier){
+  // ===== HP BAR (continuous, like oxygen) with damage flash =====
+  pxText(ctx,'HP',6,4,'#ff9aa6');
+  const hbx=6,hby=11,hbw=118,hbh=8;
+  px(ctx,hbx-1,hby-1,hbw+2,hbh+2,'#081019');px(ctx,hbx,hby,hbw,hbh,'#1c0e12');
+  const hf=clamp(player.hearts/player.maxHearts,0,1),lowHP=player.hearts<=2;
+  const hpcol=lowHP?'#ff4d5e':'#46e06a';
+  const hpW=Math.round(hbw*hf);
+  px(ctx,hbx,hby,hpW,hbh,hpcol);px(ctx,hbx,hby,hpW,1,'rgba(255,255,255,0.22)');px(ctx,hbx,hby+hbh-1,hpW,1,'rgba(0,0,0,0.25)');
+  if(lowHP&&player.hearts>0&&(state.tick>>3)%2===0)px(ctx,hbx,hby,hpW,hbh,'rgba(255,255,255,0.18)');
+  // damage flash: the points about to vanish glow radioactive, drain off the end of the bar, then ☢ appears
+  if(player.dmgFx){const D=player.dmgFx,x0=hbx+hpW,fullW=Math.max(2,Math.round(hbw*D.chunk/player.maxHearts));
+    if(D.t<0.35){const blink=(state.tick>>1)&1;const col=D.env?(blink?'#d9ff35':'#7dff4a'):(blink?'#ff7a7a':'#ff4040');
+      px(ctx,x0,hby,fullW,hbh,col);px(ctx,x0,hby,fullW,1,'rgba(255,255,255,0.5)');}
+    else if(D.t<0.7){const k=1-(D.t-0.35)/0.35,w=Math.round(fullW*k);const col=D.env?'#9be03a':'#d65a5a';
+      if(w>0){px(ctx,x0,hby,w,hbh,col);px(ctx,x0,hby,w,1,'rgba(255,255,255,0.35)');}}
+    else if(D.env){const st=D.t-0.7,a=st<0.18?st/0.18:clamp(1-(st-0.55)/0.35,0,1);drawRadSymbol(hbx+hbw+10,hby+4,5.5,a);}}
+  // (no segment dividers — HP reads as one continuous bar)
+  // ===== OXYGEN BAR =====
+  pxText(ctx,'OXYGEN',6,23,'#7fd0ee');
+  const bx=6,by=30,bw=118,bh=8;
+  px(ctx,bx-1,by-1,bw+2,bh+2,'#081019');px(ctx,bx,by,bw,bh,'#0e1d28');
+  const f=clamp(player.oxygen/player.maxOxygen,0,1);
+  px(ctx,bx,by,Math.round(bw*f),bh,f>0.5?'#46d0ff':f>0.25?'#ffcc2e':'#ff4d5e');
+  px(ctx,bx,by,Math.round(bw*f),1,'rgba(255,255,255,0.25)');
+  const sealed=!!(mech&&mech.piloted);   // sealed cockpit: the tank is held, so no low-air panic blink
+  if(!sealed&&player.oxygen<=player.maxOxygen*0.2&&(state.tick>>3)%2===0)px(ctx,bx,by,bw,bh,'rgba(255,77,94,0.25)');
+  if(sealed)px(ctx,bx,by,Math.round(bw*f),bh,'rgba(127,230,255,0.20)');   // frosted: the bar is frozen, not draining
+  // ===== MECH BATTERY + BOOST (only while piloting the MULE) =====
+  if(mech&&mech.piloted){
+    pxText(ctx,'BATTERY',6,42,'#ffd23c');
+    const mbx=6,mby=49,mbw=118,mbh=8,bf=clamp(mech.battery/mechBatMax(),0,1);
+    px(ctx,mbx-1,mby-1,mbw+2,mbh+2,'#081019');px(ctx,mbx,mby,mbw,mbh,'#241d08');
+    px(ctx,mbx,mby,Math.round(mbw*bf),mbh,bf>0.5?'#ffd23c':bf>0.25?'#ff9a3c':'#ff4d5e');
+    px(ctx,mbx,mby,Math.round(mbw*bf),1,'rgba(255,255,255,0.25)');
+    if(bf<=0.25&&(state.tick>>3)%2===0)px(ctx,mbx,mby,mbw,mbh,'rgba(255,77,94,0.25)');
+    // boost coil: thin strip under the battery — recharges whenever it isn't firing,
+    // amber and blinking while burnt out so a dead thruster is never a surprise
+    const bof=clamp((mech.boostT||0)/mechBoostMax(),0,1),bout=!!mech.boostOut;
+    px(ctx,mbx-1,mby+mbh+1,mbw+2,4,'#081019');px(ctx,mbx,mby+mbh+2,mbw,2,'#0e1d28');
+    px(ctx,mbx,mby+mbh+2,Math.round(mbw*bof),2,bout?((state.tick>>2)%2?'#ff9a3c':'#7a3a10'):'#7fe6ff');
+  }
+  // air-line status chip beside the oxygen bar — the sealed cockpit reads as "breathing" too
+  const onLine=player.attached||sealed;
+  px(ctx,bx+bw+5,by-1,9,8,'#081019');px(ctx,bx+bw+6,by,7,6,onLine?'#0e3a4a':'#3a2e0e');
+  px(ctx,bx+bw+7,by+1,3,3,onLine?'#46d0ff':'#ffcc2e');px(ctx,bx+bw+11,by+1,1,4,onLine?'#7fe6ff':'#ffe27a');
+  const show=(state.mode==='play'||state.mode==='craft'||state.mode==='inv');
+  readout.style.display=show?'block':'none';
+  if(show){const poll=(!player.attached&&ambientAt(tier)>0);
+    readout.innerHTML='<div style="color:#ffd23c;font-size:13px;letter-spacing:2px;font-weight:bold;text-shadow:0 0 6px rgba(255,210,60,.4)">'+depthM(player.y)+'M</div>'+
+    '<div style="color:#9fe8c0;font-size:8px;letter-spacing:1.5px;text-transform:uppercase;text-shadow:0 0 5px rgba(125,255,192,.35)">'+CITY_NAME+' · CITY '+CITY+'</div>'+
+    '<div style="color:#7fd0ee;font-size:8px;letter-spacing:2px;text-transform:uppercase">L'+(tier+1)+'/'+SCHED.length+' · '+TIERS[tier].name+'</div>'+
+    (function(){const mm=missionFor(tier);if(!mm)return'';
+      if(mm.complete){const lv=missionObjs.find(q=>q.type==='gate'&&q.tier===tier&&!q.done);
+        return lv?'<div style="color:#ffd23c;font-size:8px;letter-spacing:1px;text-transform:uppercase;margin-top:1px;text-shadow:0 0 5px rgba(255,210,60,.4)">◆ '+mm.exit.title+' — control unit by the bulkhead</div>':'';}
+      const st=mm.steps[mm.progress];if(!st)return'';
+      const done=missionStepDone(tier,mm.progress),verb={term:'HACK',pod:'BURN',valve:'CRANK'}[st.kind]||'';
+      return '<div style="color:#ff9ad0;font-size:8px;letter-spacing:1px;text-transform:uppercase;margin-top:1px;text-shadow:0 0 5px rgba(255,154,208,.4)">◆ '+st.title+' '+done+'/'+st.count+' · '+verb+'</div>';})()+
+    '<div style="color:#ffd23c;font-size:10px;letter-spacing:1px;margin-top:1px">◎ '+coins+(((player.medkits||0)>0)?'   <span style="color:#5dff8a">✚'+player.medkits+'</span>':'')+(((player.mechBattery||0)>0)?'   <span style="color:#ffd23c">▮CELL</span>':'')+'</div>'+
+    ((mech&&mech.piloted)?'<div style="color:#7fe6ff;font-size:8px;letter-spacing:1px;text-transform:uppercase;text-shadow:0 0 5px rgba(127,230,255,.4)">◈ MULE · F drill · space hook · ↑ boost · X out</div>':'')+
+    (tierInfested[tier]?'<div style="color:#ff7a5a;font-size:8px;letter-spacing:1px;text-transform:uppercase;text-shadow:0 0 5px rgba(255,122,90,.5)">⚠ infested layer</div>':'')+
+    (poll?'<div style="color:#7dff4a;font-size:8px;letter-spacing:1px;text-transform:uppercase;text-shadow:0 0 5px rgba(125,255,74,.5)">⚠ pollution</div>':'');}
+  // ===== MINIMAP (only after it's bought at the shop) =====
+  if(player.hasMap&&state.mode==='play')drawMinimap(tier);
+}
+
+// Sector-nav minimap: a sliding window of nearby tiers (infinite descent), bases and your blip.
+function drawMinimap(tier){
+  const mmx=VW-25,mmy=66,mmw=21,mmh=Math.min(234,VH-mmy-10);  // cap so it fits the shorter landscape view
+  const t0=Math.max(0,tier-2), t1=Math.min(tierTop.length-1,tier+3);   // window of tiers around the diver
+  const yTop=tierTop[t0]*TS, yBot=bandEnd(t1)*TS, span=Math.max(1,yBot-yTop);
+  const mapY=wy=>mmy+clamp((wy-yTop)/span,0,1)*mmh;
+  const mapX=wx=>mmx+clamp(wx/(MW*TS),0,1)*mmw;
+  // frame + label
+  px(ctx,mmx-3,mmy-3,mmw+6,mmh+6,'#091018');px(ctx,mmx-2,mmy-2,mmw+4,mmh+4,'#1b2b37');px(ctx,mmx-1,mmy-1,mmw+2,mmh+2,'#0a141c');
+  pxText(ctx,'NAV',mmx,mmy-9,'#46d0ff');
+  // tier bands in their water colours; current tier brightened
+  for(let t=t0;t<=t1;t++){const y0=mapY(tierTop[t]*TS),y1=mapY(tierBot[t]*TS),wc=TIERS[t].water;
+    px(ctx,mmx,y0|0,mmw,Math.max(1,(y1-y0))|0,shade(wc[1],t===tier?1.35:0.85));
+    px(ctx,mmx,y0|0,mmw,1,shade(wc[1],1.6));}
+  // bulkhead seam lines between tiers
+  for(let t=t0+1;t<=t1;t++){const y=mapY(tierTop[t]*TS)|0;px(ctx,mmx,y-1,mmw,2,'#05080c');px(ctx,mmx,y-1,mmw,1,'#46d0ff');}
+  // "deeper still" arrow if the descent continues below the window
+  if(t1<tierTop.length-1||generatedTiers>t1+1){const ay=(mmy+mmh+2)|0;px(ctx,mmx+mmw/2-2,ay,4,1,'#46d0ff');px(ctx,mmx+mmw/2-1,ay+1,2,1,'#46d0ff');px(ctx,mmx+mmw/2,ay+2,1,1,'#46d0ff');}
+  // base markers (lit cyan when powered, dim when dead) — only those in the window
+  for(const b of bases){if(!b||b.tier<t0||b.tier>t1)continue;const bxp=mapX(b.x)|0,byp=mapY(b.y)|0;
+    px(ctx,bxp-1,byp-1,4,4,b.active?'#0e3a4a':'#241a0c');
+    px(ctx,bxp,byp,2,2,b.active?'#5fe6ff':'#a98a3a');}
+  // current-tier bracket on the left edge
+  {const y0=mapY(tierTop[tier]*TS)|0,y1=mapY(tierBot[tier]*TS)|0;
+    px(ctx,mmx-3,y0,2,3,'#46d0ff');px(ctx,mmx-3,y0,1,(y1-y0),'#46d0ff');px(ctx,mmx-3,y1-2,2,3,'#46d0ff');}
+  // transit gate marker (gold, blinking) — only when its layer is in the window
+  if(cityExit&&cityExit.tier>=t0&&cityExit.tier<=t1){const exp2=mapX(cityExit.x)|0,eyp2=mapY(cityExit.y)|0,bl2=(state.tick>>3)&1;
+    px(ctx,exp2-1,eyp2-1,4,4,'#3a300c');px(ctx,exp2,eyp2,2,2,bl2?'#ffd23c':'#fff2c8');}
+  // MULE marker (orange when live, dim red when dead) — so a stranded frame is findable
+  if(mech&&!mech.off&&!mech.piloted){const mt=tAt(mech.y);
+    if(mt>=t0&&mt<=t1){const mxp=mapX(mech.x)|0,myp=mapY(mech.y)|0;
+      px(ctx,mxp-1,myp-1,4,4,'#241a0c');px(ctx,mxp,myp,2,2,mech.battery>0?'#ff9a3c':'#7a2030');}}
+  // player blip (bright, with a soft halo so it's easy to find)
+  const pxp=mapX(player.x+4),pyp=mapY(player.y+4);
+  ctx.globalCompositeOperation='lighter';radial(ctx,pxp,pyp,5,'rgba(127,255,180,0.5)','rgba(127,255,180,0)');ctx.globalCompositeOperation='source-over';
+  const bl=(state.tick>>2)&1;px(ctx,(pxp|0)-1,(pyp|0)-1,3,3,bl?'#caffea':'#7dffc0');px(ctx,pxp|0,pyp|0,1,1,'#ffffff');
+}
+
+// ============ LOOP ============
+// #stage's decorative "plastic frame" bezel (see #stage::before in the GUNMETAL/NEON-NOIR
+// skin passes) is an absolutely-positioned overlay painted directly on top of the canvas,
+// not a real border the layout reserves space for — so without this the frame's own border
+// width sits right over the outer ring of the canvas and can eclipse HUD elements drawn
+// close to an edge (e.g. the sub's hull pips). Shrink the rendered canvas by that much on
+// every side so the frame always has bare glass under it, never live HUD.
+const STAGE_FRAME_PAD=8;
+function resize(){const stage=document.getElementById('stage'),w=stage.clientWidth-STAGE_FRAME_PAD*2,h=stage.clientHeight-STAGE_FRAME_PAD*2;
+  if(!w||!h)return;                                   // no layout yet (e.g. headless) — keep defaults
+  const gba=window.matchMedia('(orientation:landscape) and (max-height:600px)').matches;
+  if(document.body.classList.contains('pc-mode')){
+    // PC: integer pixel scaling. One world pixel = `scale` screen pixels exactly, so the
+    // art never lands on a half pixel; the view widens to whatever the window gives us.
+    const scale=Math.max(2,Math.ceil(w/PC_MAX_VW),Math.ceil(h/PC_MAX_VH));
+    VW=Math.max(176,Math.round(w/scale)); if(VW&1)VW++;
+    VH=Math.max(240,Math.round(h/scale)); if(VH&1)VH++;
+    if(canvas.width!==VW||canvas.height!==VH){canvas.width=VW;canvas.height=VH;murk.width=VW;murk.height=VH;ctx.imageSmoothingEnabled=false;mctx.imageSmoothingEnabled=false;}
+    canvas.style.width=(VW*scale)+'px';canvas.style.height=(VH*scale)+'px';   // exact multiple — square pixels, at most a few px of bezel
+    return;
+  }
+  if(gba){
+    // LANDSCAPE: lock the on-screen tile size so the diver renders at the same scale as portrait (zoom in).
+    // VW & VH are both derived from the display size at a fixed px-per-tile, so pixels stay square (no stretch).
+    const TILE=17;                                     // target on-screen tile size; ~40% pulled back from portrait so landscape shows more world
+    VH=Math.max(168,Math.round(h*16/TILE)); if(VH&1)VH++;
+    VW=Math.max(176,Math.round(w*16/TILE)); if(VW&1)VW++;
+  } else {
+    // PORTRAIT: unchanged — fixed 22-tile-tall view, width tracks the screen aspect
+    VH=352;
+    VW=Math.max(176,Math.min(460,Math.round(VH*w/h))); if(VW&1)VW++;
+  }
+  if(canvas.width!==VW||canvas.height!==VH){canvas.width=VW;canvas.height=VH;murk.width=VW;murk.height=VH;ctx.imageSmoothingEnabled=false;mctx.imageSmoothingEnabled=false;}
+  canvas.style.width=w+'px';canvas.style.height=h+'px';}
+window.addEventListener('resize',resize);window.addEventListener('orientationchange',()=>setTimeout(resize,200));
+
+let acc=0,last=performance.now(),frameAcc=0;
+function frame(now){
+  // cap the sim/render cadence to ~60Hz regardless of display refresh rate — on high-refresh
+  // PC monitors (120/144/240Hz) rAF fires much more often than mobile's 60Hz, and a lot of the
+  // per-frame animation code below assumes "one call == 1/60s" rather than using real dt.
+  frameAcc+=now-last;last=now;
+  if(frameAcc<15){requestAnimationFrame(frame);return;}
+  let dt=Math.min(frameAcc,100)/1000;frameAcc=0;acc+=dt;
+  if((state.mode==='title'||state.mode==='win'||state.mode==='lose')&&!TUT.active){if(actionEdge||queueCraft){actionEdge=false;queueCraft=false;startGame();}}
+  else if(state.mode==='mine'){mineInput();
+    if(mgOre&&!mineIntroActive){const o=mgOre,t=o.tier||0;   // no oxygen change while the mining tutorial slides are up
+      if(o.tetherAir){player.oxygen=player.maxOxygen;player.drown=0;}   // clipped on: the air line keeps you breathing while you dig
+      else{
+        player.oxygen-=OXY_RATE*pressureAt(t)*(player.oxyDrainMul||1);if(player.oxygen<0)player.oxygen=0;
+        if(player.oxygen<=0){player.drown++;
+          if(player.drown>=DROWN){player.drown=0;player.hearts--;flashDmg(1,true);shake=7;sfx.hurt();
+            if(player.hearts<=0){const oo=mgOre;mgOre=null;if(oo)removeOre(oo);dieOrRevive('air');}}}
+        else player.drown=0;}}}
+  else if(state.mode==='crank'){crankInput();}
+  else if(state.mode==='flame'){flameInput();}
+  else if(state.mode==='hack'){hackInput();}
+  else if(state.mode==='craft'){if(queueCraft){queueCraft=false;toggleCraft(false);}}
+  else if(state.mode==='play'){if(queueCraft){queueCraft=false;if(nearBase&&nearBase.active)toggleCraft(true);else showMsg('dock at a powered base to craft');}}
+  else if(state.mode==='inv'){if(queueCraft){queueCraft=false;toggleInv(false);}}
+  else if(state.mode==='pause'){if(actionEdge){actionEdge=false;resumeGame();}}
+  else if(state.mode==='sub'){subInput();queueCraft=false;}
+  else if(state.mode==='citymap'||state.mode==='drydock'){queueCraft=false;}
+  if(player&&player.dmgFx){player.dmgFx.t+=dt;const lim=player.dmgFx.env?1.55:0.72;if(player.dmgFx.t>lim)player.dmgFx=null;}
+  let steps=0;while(acc>=STEP&&steps<5){if(state.mode==='play')update(STEP);acc-=STEP;steps++;}
+  if(steps>=5)acc=0;
+  actionEdge=false;
+  if(state.mode==='play'&&state.tick%900===0)saveGame();   // ~every 15s, so a crash/kill loses at most a few seconds
+  updateAmbient(dt);state.tick++;render();
+  requestAnimationFrame(frame);
+}
+// called at the boot-intro-to-gameplay handoff (both the "skip" and "finished tutorial" paths) —
+// resumes a saved dive straight into play if one exists, otherwise starts a fresh one. The boot
+// intro itself always plays first; this never skips it.
+function enterGame(){
+  const saved=loadSaveRaw();
+  if(saved){applySave(saved);setMode('play');}
+  else startGame();
+}
+function init(){
+  genWorld();
+  player={x:(MW/2)*TS,y:(tierTop[0]+3)*TS,w:9,h:9,vx:0,vy:0,dir:1,oxygen:110,maxOxygen:110,hearts:5,maxHearts:5,invuln:0,dashCD:0,drown:0,bub:0,accMul:1,maxvMul:1,lightRadius:80,thermalR:0,pollutionR:0,sensitivity:1,burn:0,tint:0,tintCol:'',attached:true,attachedBase:null,regen:0,tankBonus:0,filterBonus:0,rooted:0,medkits:0,lightBonus:0,mvBonus:0,builtFloodlight:false,builtThruster:false,seals:[false,false,false,false],lookX:1,lookY:0,lanternLevel:0,oxyDrainMul:1,o2tank:{},o2reg:{},lensUpg:{},hasMap:false,dmgFx:null,mechBattery:0,mechBatUpg:{},mechBoostUpg:{},mechRegenUpg:{},mechHookUpg:{},
+    subUpg:{torpSpd:0,torpSplash:0,torpRl:0,boostRegen:0,mineDef:0,mineAmmo:0,hull:0},subScrap:0};
+  camera.x=clamp(player.x-VW/2,0,MW*TS-VW);camera.y=clamp(player.y-VH/2,0,MH*TS-VH);
+  resize();startStudioIntro();
+}
+// ============ EXCAVATION MINIGAME ============
+let mgX=0,mgY=0,mgFx=[],mgCell=14;
+const mgPrev={up:false,down:false,left:false,right:false};
+
+function openMine(o){
+  if(!o.grid)genMineGrid(o);
+  // air comes from the rope only if you started this dig clipped on; detach and your tank drains while you mine
+  o.tetherAir=!!player.attached;
+  mgOre=o; if(!o.sel)o.sel={x:(MG_N/2)|0,y:(MG_N/2)|0};
+  if(!o.vents)o.vents=[];if(!o.bubbles)o.bubbles=[];
+  mgPrev.up=mgPrev.down=mgPrev.left=mgPrev.right=true; // swallow held dpad
+  mgFx.length=0; setMode('mine'); orePrompt.style.display='none';
+  clearTimeout(rewardTimer); rewardEl.classList.add('hidden'); rewardEl.classList.remove('show','out'); sfx.start();
+  if(tutorialsOn&&!mineIntroSeen){mineIntroSeen=true;startMineIntro();}
+}
+function hideMine(){mineEl.classList.add('hidden');}
+function closeMine(){const o=mgOre;mgOre=null;setMode('play');sfx.back();
+  if(o&&o.x!=null){o.fuse=ABORT_FUSE;o.fuseMax=ABORT_FUSE;o.fuseTick=0;showMsg('vein destabilised — get clear before it blows');}}
+function removeOre(o){map[o.y][o.x]=EMPTY;const i=oreCells.indexOf(o);if(i>=0)oreCells.splice(i,1);}
+
+function genMineGrid(o){
+  const N=MG_N,n=N*N; o.N=N; o.tier=tAt(player.y);
+  o.grid=new Array(n); for(let i=0;i<n;i++)o.grid[i]={t:'s',dug:false,val:0};
+  o.gas=new Set();o.vents=[];o.bubbles=[];
+  const maxEach=Math.floor(n/6); // each pocket ≤ 1/6 of the face
+  const size=Math.min(maxEach,7+o.tier), box=4+(o.tier>1?1:0);
+  placePocket(o,1,1,box,size);
+  placePocket(o,N-1-box,N-1-box,box,size+1);
+  for(const k of o.gas){const p=k.split(',');o.grid[(+p[1])*N+(+p[0])].t='g';}
+  o.total=0; growVein(o,5+o.tier);
+  o.got=0; o.cracks=0; o.maxCracks=3;
+  // precompute resource-adjacency pips + gas-distance field
+  o.gdist=new Array(n);
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    let rc=0;for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){if(!dx&&!dy)continue;const nx=x+dx,ny=y+dy;if(nx<0||ny<0||nx>=N||ny>=N)continue;if(o.grid[ny*N+nx].t==='r')rc++;}
+    o.grid[y*N+x].val=rc;
+    let gd=99;for(const k of o.gas){const p=k.split(',');const d=Math.max(Math.abs((+p[0])-x),Math.abs((+p[1])-y));if(d<gd)gd=d;}
+    o.gdist[y*N+x]=gd;
+  }
+}
+function placePocket(o,x0,y0,box,count){const N=MG_N;
+  x0=clamp(x0,0,N-box);y0=clamp(y0,0,N-box);
+  let x=x0+((Math.random()*box)|0),y=y0+((Math.random()*box)|0),placed=0,steps=0;
+  o.gas.add(x+','+y);placed++;
+  const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+  while(placed<count&&steps<count*12){steps++;
+    const d=dirs[(Math.random()*4)|0],nx=x+d[0],ny=y+d[1];
+    if(nx>=x0&&nx<x0+box&&ny>=y0&&ny<y0+box){x=nx;y=ny;const k=x+','+y;if(!o.gas.has(k)){o.gas.add(k);placed++;}}
+  }
+}
+function growVein(o,count){const N=MG_N;let tries=0,start=-1;
+  while(tries<200){tries++;const i=(Math.random()*N*N)|0;if(o.grid[i].t==='s'){start=i;break;}}
+  if(start<0){return;}
+  const frontier=[start],seen=new Set([start]);let placed=0;
+  const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+  while(placed<count&&frontier.length){
+    const fi=(Math.random()*frontier.length)|0,idx=frontier[fi];frontier.splice(fi,1);
+    if(o.grid[idx].t==='s'){o.grid[idx].t='r';o.total++;placed++;}
+    const x=idx%N,y=(idx/N)|0;
+    for(const d of dirs){const nx=x+d[0],ny=y+d[1];if(nx<0||ny<0||nx>=N||ny>=N)continue;const ni=ny*N+nx;if(!seen.has(ni)&&o.grid[ni].t==='s'){seen.add(ni);frontier.push(ni);}}
+  }
+  if(o.total===0){o.grid[start].t='r';o.total=1;}
+}
+
+function mineInput(){
+  const o=mgOre;if(!o)return;
+  if(mineIntroActive)return;
+  // keyboard arrows step the selector (the on-screen pad calls mgMove directly per tap)
+  if(input.up&&!mgPrev.up)mgMove(0,-1);
+  if(input.down&&!mgPrev.down)mgMove(0,1);
+  if(input.left&&!mgPrev.left)mgMove(-1,0);
+  if(input.right&&!mgPrev.right)mgMove(1,0);
+  mgPrev.up=input.up;mgPrev.down=input.down;mgPrev.left=input.left;mgPrev.right=input.right;
+  if(actionEdge||mineEdge){actionEdge=false;mineEdge=false;mineDigSel();}
+  if(queueCraft){queueCraft=false;closeMine();}
+}
+function mgMove(dx,dy){const o=mgOre;if(!o.sel){o.sel={x:(MG_N/2)|0,y:(MG_N/2)|0};return;}
+  o.sel.x=clamp(o.sel.x+dx,0,MG_N-1);o.sel.y=clamp(o.sel.y+dy,0,MG_N-1);sfx.mine();}
+function mineTapPx(sx,sy){const o=mgOre;if(!o)return;
+  const col=Math.floor((sx-mgX)/mgCell),row=Math.floor((sy-mgY)/mgCell);
+  if(col>=0&&col<MG_N&&row>=0&&row<MG_N)mineTapCell(col,row);}
+function mineTapCell(cx,cy){const o=mgOre;if(!o)return;const c=o.grid[cy*MG_N+cx];if(c.dug){o.sel={x:cx,y:cy};return;}
+  if(o.sel&&o.sel.x===cx&&o.sel.y===cy)mineDigSel();else{o.sel={x:cx,y:cy};sfx.mine();}}
+function mineDigSel(){const o=mgOre;if(!o||!o.sel)return;const idx=o.sel.y*MG_N+o.sel.x,c=o.grid[idx];if(c.dug)return;c.dug=true;
+  const gx=mgX+o.sel.x*mgCell+mgCell/2,gy=mgY+o.sel.y*mgCell+mgCell/2;
+  if(c.t==='g'){o.cracks++;shake=7;sfx.zap();spawnFx(gx,gy,'#ff5a3c',10,140);
+    if(!o.vents)o.vents=[];o.vents.push({x:o.sel.x,y:o.sel.y});
+    if(o.cracks>=o.maxCracks)mgExplode();}
+  else if(c.t==='r'){o.got++;sfx.pop();spawnFx(gx,gy,RES[o.resId].col,8,90);
+    if(o.got>=o.total)mgCollect();}
+  else{sfx.mine();spawnFx(gx,gy,'#6f93a6',3,50);}
+}
+function mgExplode(){const o=mgOre;const dmg=1+Math.floor((o.tier||0)/2);
+  player.hearts-=dmg;player.invuln=INVULN;shake=12;sfx.lose();flashDmg(dmg,false);
+  burst(player.x+4,player.y+4,28,180,0.7,()=>Math.random()<.5?'#ff5a3c':'#ffd23c');
+  removeOre(o);mgOre=null;hideMine();showMsg('gas pocket blew — vein destroyed');
+  if(player.hearts<=0){if(dieOrRevive('blast'))return;}setMode('play');
+}
+function mgCollect(){const o=mgOre;addInv(o.resId,ORE_YIELD);sfx.build();
+  burst(player.x+4,player.y+4,16,120,0.6,RES[o.resId].col);
+  const rid=o.resId;removeOre(o);mgOre=null;setMode('play');showReward(rid,ORE_YIELD);
+}
+function spawnFx(x,y,col,n,spd){for(let i=0;i<n;i++)mgFx.push({x,y,vx:(Math.random()-.5)*spd,vy:(Math.random()-.5)*spd,life:0.6,max:0.6,col,size:1+((Math.random()*2)|0)});}
+function mgDots(X,Y,val){const pos=[[3,3],[8,3],[3,8],[8,8]];for(let i=0;i<Math.min(val,4);i++)px(ctx,X+pos[i][0],Y+pos[i][1],2,2,'#ffd23c');}
+
+function renderMine(){
+  const o=mgOre;if(!o){if(state.mode==='mine')setMode('play');return;}
+  RCX=0;RCY=0;
+  const sh=shake>0?(Math.random()-.5)*shake:0,sv=shake>0?(Math.random()-.5)*shake:0;
+  ctx.fillStyle='#0b141d';ctx.fillRect(0,0,VW,VH);
+  ctx.globalCompositeOperation='lighter';
+  for(let i=0;i<3;i++){const x=((state.tick*0.3+i*110)%(VW+60))-30;radial(ctx,x,VH/2,60,'rgba(90,60,40,0.05)','rgba(90,60,40,0)');}
+  ctx.globalCompositeOperation='source-over';
+  const N=MG_N,rc=RES[o.resId];
+  const land=VW>VH;                                              // landscape: the dashboard goes in the empty column beside the grid
+  const _dispH=canvas.clientHeight||VH,_sc=_dispH/VH;            // display px per logical px
+  const _topRsv=land?(Math.round(8/_sc)+6):(Math.round(30/_sc)+36),_botRsv=Math.round(46/_sc); // portrait keeps room for the top header+gauges; landscape needs only a small margin
+  mgCell=Math.max(7,Math.min(MGC,Math.floor((VH-_topRsv-_botRsv)/N))); // shrink the grid so every tile always fits
+  mgX=Math.round((VW-N*mgCell)/2+sh);
+  let _gy=Math.max(_topRsv,(VH-N*mgCell)/2+2);_gy=Math.min(_gy,VH-_botRsv-N*mgCell); // centre the grid but never let it slip under the footer
+  mgY=Math.round(_gy+sv);
+  // frame
+  px(ctx,mgX-3,mgY-3,N*mgCell+6,N*mgCell+6,'#1a2a36');px(ctx,mgX-2,mgY-2,N*mgCell+4,N*mgCell+4,'#0c1822');
+  // ---- gauges (+ resource / sens / vents when landscape) — oxygen only drains while you dig if you detached from the air line ----
+  {const onAir=mgOre&&mgOre.tetherAir,of=clamp(player.oxygen/player.maxOxygen,0,1),hpf=clamp(player.hearts/player.maxHearts,0,1);
+   if(land){
+    // dashboard panel in the empty space to the LEFT of the centred grid
+    const x0=10,pw=Math.max(64,Math.min(170,mgX-22));let yy=Math.round(mgY+Math.max(0,(N*mgCell-104)/2));
+    px(ctx,x0-6,yy-7,pw+12,118,'rgba(9,17,26,0.55)');px(ctx,x0-6,yy-7,pw+12,1,'#22384a');px(ctx,x0-6,yy+110,pw+12,1,'#0e1b25');
+    px(ctx,x0,yy+1,10,10,shade(rc.col,0.55));px(ctx,x0+1,yy+2,8,8,rc.col);
+    ctx.textBaseline='top';ctx.fillStyle='#cfe6f2';ctx.font='bold 9px \'Courier New\',monospace';ctx.fillText(rc.name.toUpperCase(),x0+16,yy+2);yy+=20;
+    ctx.fillStyle='#5b8095';ctx.font='8px \'Courier New\',monospace';ctx.fillText('SENS',x0,yy+1);
+    for(let i=0;i<5;i++)px(ctx,x0+34+i*6,yy,4,10,i<player.sensitivity?'#46d0ff':'#22323e');yy+=18;
+    ctx.fillStyle='#5b8095';ctx.fillText('VENTS',x0,yy+1);
+    for(let i=0;i<o.maxCracks;i++)px(ctx,x0+44+i*8,yy,7,9,i<o.cracks?'#ff4d5e':'#22323e');yy+=20;
+    pxText(ctx,onAir?'AIR LINE':'OXYGEN',x0,yy,onAir?'#5fe6ff':'#7fd0ee');
+    {const oy=yy+8;px(ctx,x0-1,oy-1,pw+2,6,'#0c1822');px(ctx,x0,oy,Math.round(pw*of),4,onAir?'#46d0ff':(of>0.5?'#46d0ff':of>0.25?'#ffcc2e':'#ff4d5e'));px(ctx,x0,oy,Math.round(pw*of),1,'rgba(255,255,255,0.25)');if(!onAir&&of<=0.2&&(state.tick>>3)%2===0)px(ctx,x0,oy,pw,4,'rgba(255,77,94,0.32)');if(onAir&&(state.tick>>3)%2===0)px(ctx,x0+pw-7,oy,7,4,'rgba(95,230,255,0.45)');}yy+=22;
+    pxText(ctx,'HP',x0,yy,'#ff9aa6');
+    {const hy=yy+8;px(ctx,x0-1,hy-1,pw+2,6,'#0c1822');px(ctx,x0,hy,Math.round(pw*hpf),4,player.hearts<=2?'#ff4d5e':'#46e06a');px(ctx,x0,hy,Math.round(pw*hpf),1,'rgba(255,255,255,0.22)');}
+    ctx.textBaseline='alphabetic';
+   }else{
+    // portrait: gauges sit above the grid
+    const gw=N*mgCell-1;
+    pxText(ctx,onAir?'AIR LINE':'OXYGEN',mgX,mgY-33,onAir?'#5fe6ff':'#7fd0ee');
+    {const oy=mgY-27;px(ctx,mgX-1,oy-1,gw+2,6,'#0c1822');px(ctx,mgX,oy,Math.round(gw*of),4,onAir?'#46d0ff':(of>0.5?'#46d0ff':of>0.25?'#ffcc2e':'#ff4d5e'));px(ctx,mgX,oy,Math.round(gw*of),1,'rgba(255,255,255,0.25)');if(!onAir&&of<=0.2&&(state.tick>>3)%2===0)px(ctx,mgX,oy,gw,4,'rgba(255,77,94,0.32)');if(onAir&&(state.tick>>3)%2===0)px(ctx,mgX+gw-7,oy,7,4,'rgba(95,230,255,0.45)');}
+    pxText(ctx,'HP',mgX,mgY-18,'#ff9aa6');
+    {const hy=mgY-12;px(ctx,mgX-1,hy-1,gw+2,6,'#0c1822');px(ctx,mgX,hy,Math.round(gw*hpf),4,player.hearts<=2?'#ff4d5e':'#46e06a');px(ctx,mgX,hy,Math.round(gw*hpf),1,'rgba(255,255,255,0.22)');}
+   }}
+  const sel=o.sel,auraR=clamp(player.sensitivity,1,3);
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){const i=y*N+x,c=o.grid[i],X=mgX+x*mgCell,Y=mgY+y*mgCell;
+    if(c.dug){
+      if(c.t==='g'){px(ctx,X,Y,mgCell-1,mgCell-1,'#3a140c');px(ctx,X+2,Y+2,mgCell-5,mgCell-5,'#ff5a3c');if(((state.tick+i)&15)<8)px(ctx,X+(mgCell>>1)-1,Y+1,2,2,'#ffd23c');}
+      else if(c.t==='r'){px(ctx,X,Y,mgCell-1,mgCell-1,shade(rc.col,0.4));px(ctx,X+2,Y+2,mgCell-5,mgCell-5,rc.col);px(ctx,X+3,Y+3,2,2,shade(rc.col,1.6));}
+      else{px(ctx,X,Y,mgCell-1,mgCell-1,'#0c141b');if(c.val>0)mgDots(X,Y,c.val);}
+    }else{
+      const __b=['#3c4651','#36404b','#414b56','#313a45','#46505a','#3a4450'][(hash(x*7+o.x*3+11,y*5+o.y*7+3)*6)|0];
+      const __h2=hash(x*13+o.x+5,y*3+o.y*11+9),__h3=hash(x+o.x*17+29,y+o.y*5+41);
+      px(ctx,X,Y,mgCell-1,mgCell-1,__b);
+      px(ctx,X,Y,mgCell-1,1,shade(__b,1.30));px(ctx,X,Y,1,mgCell-1,shade(__b,1.18));
+      px(ctx,X,Y+mgCell-2,mgCell-1,1,shade(__b,0.64));px(ctx,X+mgCell-2,Y,1,mgCell-1,shade(__b,0.68));
+      if(__h2>0.5)px(ctx,X+2+((__h2*5)|0),Y+2+((__h3*5)|0),2,2,shade(__b,1.16));
+      if(__h3>0.55)px(ctx,X+2+((hash(x+o.x,y+o.y)*6)|0),Y+5+((__h2*5)|0),1,1,shade(__b,0.58));
+      if(__h2>0.62)px(ctx,X+4+((__h3*4)|0),Y+3+((__h2*4)|0),1,1,shade(__b,0.56));
+      if(__h3>0.8){px(ctx,X+3,Y+3,1,1,shade(__b,0.5));px(ctx,X+4,Y+4,1,1,shade(__b,0.5));px(ctx,X+4,Y+6,1,1,shade(__b,0.5));px(ctx,X+5,Y+8,1,1,shade(__b,0.5));px(ctx,X+5,Y+10,1,1,shade(__b,0.5));}
+    }
+    if(sel){const dd=Math.max(Math.abs(x-sel.x),Math.abs(y-sel.y));
+      if(!c.dug&&dd<=auraR){const gd=o.gdist[i],col=gd<=1?'255,77,94':gd<=2?'255,140,40':gd<=3?'255,210,60':'93,255,140';ctx.fillStyle='rgba('+col+',0.34)';ctx.fillRect(X,Y,mgCell-1,mgCell-1);}
+      if(!c.dug&&c.t==='g'&&dd===1){ctx.strokeStyle='rgba(255,60,60,0.95)';ctx.lineWidth=1;ctx.strokeRect(X+1.5,Y+1.5,mgCell-4,mgCell-4);px(ctx,X+(mgCell>>1)-1,Y+(mgCell>>1)-1,2,2,'#ff3c3c');}
+    }
+  }
+  if(o.vents&&o.vents.length){if(!o.bubbles)o.bubbles=[];
+    for(const v of o.vents){if(o.bubbles.length<72&&Math.random()<0.55){const vx=mgX+v.x*mgCell+mgCell/2;o.bubbles.push({x:vx+(Math.random()-.5)*5,y:mgY+v.y*mgCell+mgCell/2,vy:16+Math.random()*18,r:1+((Math.random()*3)|0),ph:Math.random()*6.28});}}
+    ctx.globalAlpha=0.10;ctx.fillStyle='#bfeeff';for(const v of o.vents){const vx=mgX+v.x*mgCell,colTop=mgY-1,colBot=mgY+v.y*mgCell+2;ctx.fillRect(vx,colTop,mgCell-1,colBot-colTop);}ctx.globalAlpha=1;
+    for(let i=o.bubbles.length-1;i>=0;i--){const bb=o.bubbles[i];bb.y-=bb.vy/60;bb.ph+=0.11;if(bb.y<mgY-2){o.bubbles.splice(i,1);continue;}const wob=Math.sin(bb.ph)*1.6,bx=Math.round(bb.x+wob),by=Math.round(bb.y),rr=bb.r;const a=clamp((bb.y-(mgY-2))/(mgCell*2.5),0,1)*0.42+0.16;ctx.globalAlpha=a;ctx.fillStyle='#dff4ff';ctx.fillRect(bx-rr,by-rr,rr*2,rr*2);ctx.globalAlpha=Math.min(0.9,a+0.25);ctx.fillStyle='#ffffff';ctx.fillRect(bx-rr,by-rr,1,1);}ctx.globalAlpha=1;}
+  if(sel){const X=mgX+sel.x*mgCell,Y=mgY+sel.y*mgCell;ctx.strokeStyle='#ffffff';ctx.lineWidth=1;ctx.strokeRect(X+0.5,Y+0.5,mgCell-2,mgCell-2);
+    px(ctx,X,Y,2,2,'#46d0ff');px(ctx,X+mgCell-3,Y,2,2,'#46d0ff');px(ctx,X,Y+mgCell-3,2,2,'#46d0ff');px(ctx,X+mgCell-3,Y+mgCell-3,2,2,'#46d0ff');}
+  for(let i=mgFx.length-1;i>=0;i--){const q=mgFx[i];q.life-=1/60;q.x+=q.vx/60;q.y+=q.vy/60;q.vx*=0.92;q.vy*=0.92;
+    if(q.life<=0){mgFx.splice(i,1);continue;}ctx.globalAlpha=clamp(q.life/q.max,0,1);px(ctx,Math.round(q.x),Math.round(q.y),q.size,q.size,q.col);ctx.globalAlpha=1;}
+  if(shake>0)shake-=0.6;
+  // HTML chrome
+  mSw.style.background=rc.col;mName.textContent=rc.name;
+  let ch='';for(let i=0;i<o.maxCracks;i++)ch+='<i class="'+(i<o.cracks?'on':'')+'"></i>';mCracks.innerHTML=ch;
+  let sn='';for(let i=0;i<5;i++)sn+='<i class="'+(i<player.sensitivity?'on':'')+'"></i>';mSens.innerHTML=sn;
+  mBar.style.width=Math.round((o.total?o.got/o.total:0)*100)+'%';mProg.textContent='VEIN '+o.got+'/'+o.total;
+}
+canvas.addEventListener('pointerdown',e=>{if(state.mode!=='mine')return;e.preventDefault();audioInit();
+  const q=canvasPt(e);mineTapPx(q[0],q[1]);});
+mineEl.addEventListener('click',e=>{const b=e.target.closest('[data-mine]');if(!b)return;const v=b.dataset.mine;if(v==='exit')closeMine();else if(v==='dig')mineDigSel();});
+
+// ============ CRANK MINIGAME (pressure valve) ============
+// Interacting with a POLLUTION pressure-valve sprite opens this focused, full-canvas panel styled as
+// a cyberpunk engineer's HMI console: a live schematic of the sector gas grid up top, and a timing
+// track below. On the track a SAFE (green) window and a HAZARD (red) window both slide back and
+// forth, crossing each other; a swept marker runs the track. Hit ACTUATE (F / tap / the button)
+// while the marker is inside GREEN-ONLY to fire the remote servo and bleed a pulse of pressure — the
+// schematic valve physically spins each time (digital command -> mechanical crank). Fire while the
+// marker sits in RED (or where red has slid over the green) and the main vents scalding gas that
+// eats your air. Drain the pressure to zero and the valve is RELEASED — the task is done.
+let crankObj=null;
+// three moving bands on the track: SAFE (green) window + HAZARD (red) window each oscillate; the
+// marker sweeps. Safe zone = marker inside green AND outside red (red wins on overlap).
+const crankS={need:7,turns:0,p:0,dir:1,speed:0.5,bt:0,gSpd:0.85,rSpd:1.25,gAmp:0.26,rAmp:0.30,gH:0.12,rH:0.09,rPhase:1.4,
+  psiMax:280,actY:0,rotor:0,spin:0,streak:0,flash:0,hitFlash:0,doneT:0,burnT:0,fx:[],hint:0,
+  time:0,limit:16,bust:false};
+function crankNeed(tier){return 6+Math.min(tier||0,3);}   // a couple more turns the deeper the layer
+function crankBands(){                                     // normalized [0,1] edges of the two moving windows
+  const gc=0.5+Math.sin(crankS.bt*crankS.gSpd)*crankS.gAmp;
+  const rc=0.5+Math.sin(crankS.bt*crankS.rSpd+crankS.rPhase)*crankS.rAmp;
+  return {gL:clamp(gc-crankS.gH,0,1),gR:clamp(gc+crankS.gH,0,1),rL:clamp(rc-crankS.rH,0,1),rR:clamp(rc+crankS.rH,0,1)};
+}
+function crankZone(){const p=crankS.p,b=crankBands();
+  const inR=p>=b.rL&&p<=b.rR, inG=p>=b.gL&&p<=b.gR;
+  return inR?'vent':(inG?'turn':'wait');}                  // red overrides green wherever they cross
+function crankSpark(x,y,col,spd){crankS.fx.push({x:x+(Math.random()-.5)*6,y:y+(Math.random()-.5)*4,
+  vx:(Math.random()-.5)*spd,vy:-16-Math.random()*spd*0.6,life:0.4+Math.random()*0.4,r:1+((Math.random()*2)|0),col});}
+function openCrank(o){
+  crankObj=o;const tier=o.tier||0,tc=Math.min(tier,3);
+  crankS.need=crankNeed(tier);
+  crankS.turns=clamp(o.crankTurns||0,0,crankS.need-1);   // resume any partial progress from a prior abort
+  crankS.p=0;crankS.dir=1;crankS.speed=0.5+tier*0.03;crankS.bt=0;
+  crankS.gSpd=0.85+tc*0.05;crankS.rSpd=1.25+tc*0.09;     // deeper layers: windows slide faster
+  crankS.gAmp=0.26;crankS.rAmp=0.30;
+  crankS.gH=0.12-tc*0.008;crankS.rH=0.085+tc*0.013;       // deeper: safe window narrower, hazard wider
+  crankS.rPhase=1.3+tier*0.4;crankS.psiMax=240+tier*70;
+  crankS.rotor=o.ph||0;crankS.spin=0;crankS.streak=0;
+  crankS.flash=0;crankS.hitFlash=0;crankS.doneT=0;crankS.burnT=0;crankS.hint=3.0;crankS.fx.length=0;
+  crankS.time=0;crankS.limit=16+tier*1.5;crankS.bust=false;
+  mineEdge=false;actionEdge=false;
+  setMode('crank');sfx.start();
+  if(tutorialsOn&&!crankIntroSeen){crankIntroSeen=true;startCrankIntro();}
+}
+// timer runs out before the valve is fully turned: it blows in the diver's face — same shape as the
+// biohazard sac's bust, and same rule: it still counts the step complete, the failure just costs a heart
+function crankBust(){
+  if(crankS.doneT>0)return;
+  crankS.bust=true;crankS.doneT=1.0;crankS.spin+=10;crankS.flash=0.5;crankS.burnT=0.8;
+  crankS.streak=0;shake=Math.max(shake,8);sfx.boom();hurt(1);
+  const ay=crankS.actY||Math.round(VH*0.4),cx=Math.round(VW/2);
+  for(let i=0;i<14;i++)crankSpark(cx+(Math.random()-.5)*30,ay,'#ff6a3c',110);
+}
+function closeCrank(){if(!crankObj){if(state.mode==='crank')setMode('play');return;}
+  const o=crankObj;o.crankTurns=crankS.turns;o.prog=Math.round(crankS.turns/crankS.need*100);   // keep the world sprite's gauge in step
+  crankObj=null;setMode('play');sfx.back();
+  if(crankS.turns>0)showMsg('valve left part-open — the pressure is still up');}
+function crankTurn(){const o=crankObj;if(!o||crankS.doneT>0||deckActive)return;
+  const z=crankZone(),ay=crankS.actY||Math.round(VH*0.4),cx=Math.round(VW/2);
+  if(z==='turn'){                       // clean actuate: servo fires, a pressure pulse bleeds off
+    crankS.turns++;crankS.streak++;crankS.spin+=6.4;crankS.hitFlash=0.30;sfx.mine();
+    for(let i=0;i<7;i++)crankSpark(cx+(Math.random()-.5)*22,ay,'#3dff9a',64);
+    o.crankTurns=crankS.turns;o.prog=Math.round(crankS.turns/crankS.need*100);
+    crankS.gSpd+=0.02;crankS.rSpd+=0.03;   // each pulse tightens the timing a touch
+    if(crankS.turns>=crankS.need){crankS.doneT=1.2;crankS.spin+=8;sfx.mix();sfx.build();}
+  } else if(z==='vent'){                 // fired into the hazard window: scalding blowout — servo kicks back
+    hurt(1);
+    crankS.spin-=3.6;crankS.streak=0;crankS.flash=0.42;crankS.burnT=0.6;shake=Math.max(shake,7);sfx.zap();
+    for(let i=0;i<12;i++)crankSpark(cx+(Math.random()-.5)*28,ay,'#ff3b6b',96);
+  } else {                              // fired on a closed valve — no effect, just a denial blip
+    crankS.streak=0;crankS.flash=0.16;sfx.deny();
+  }
+}
+function crankInput(){
+  const o=crankObj;if(!o){if(state.mode==='crank')setMode('play');return;}
+  if(deckActive)return;                       // the valve primer is up — nothing ticks behind it
+  // AIR IS FROZEN for the duration of the minigame — no passive drain, no drowning while you work.
+  // A blown vent still costs air (see crankFire): that's the minigame's own risk, not passive drain.
+  if(player.attached)player.oxygen=player.maxOxygen;
+  player.drown=0;
+  if(crankS.hint>0)crankS.hint-=1/60;
+  if(crankS.doneT>0){crankS.doneT-=1/60;crankS.rotor+=crankS.spin/60;crankS.spin*=0.9;
+    if(crankS.doneT<=0){const bust=crankS.bust;crankObj=null;o.crankTurns=0;completeMissionObj(o);setMode('play');
+      if(bust)showMsg('TIMER OUT — the valve blows in your face!');}
+    return;}
+  crankS.time+=1/60;
+  if(crankS.time>=crankS.limit){crankBust();return;}
+  // sweep the marker (ping-pong) + slide the two windows; marker speeds up a touch as pressure bleeds
+  const sp=Math.min(1.1,crankS.speed+crankS.turns*0.04);
+  crankS.p+=crankS.dir*sp/60;
+  if(crankS.p>=1){crankS.p=1;crankS.dir=-1;}else if(crankS.p<=0){crankS.p=0;crankS.dir=1;}
+  crankS.bt+=1/60;
+  if(crankZone()==='vent'&&(state.tick&3)===0)crankSpark(Math.round(VW/2)+(Math.random()-.5)*18,crankS.actY||Math.round(VH*0.4),'#ff3b6b',60);
+  crankS.rotor+=crankS.spin/60;crankS.spin*=0.86;
+  if(crankS.flash>0)crankS.flash-=1/60;
+  if(crankS.hitFlash>0)crankS.hitFlash-=1/60;
+  if(crankS.burnT>0)crankS.burnT-=1/60;
+  for(let i=crankS.fx.length-1;i>=0;i--){const s=crankS.fx[i];s.life-=1/60;if(s.life<=0){crankS.fx.splice(i,1);continue;}
+    s.x+=s.vx/60;s.y+=s.vy/60;s.vx*=0.94;s.vy*=0.96;s.vy+=0.3;}
+  if(mineEdge||actionEdge){mineEdge=false;actionEdge=false;crankTurn();}
+  if(queueCraft){queueCraft=false;closeCrank();}
+}
+function pxTextW(str){let w=0;for(const ch of str)w+=((FONT3[ch]?FONT3[ch][0].length:3)+1);return w-1;}
+function pxTextC(str,cx,y,col){pxText(ctx,str,Math.round(cx-pxTextW(str)/2),y,col);}
+// cyberpunk rotary servo/actuator — LED-rimmed housing + a 4-arm rotor (one accent index arm) that
+// spins on `ang`. This is the "mechanical" end of the console: it snaps round each time you ACTUATE.
+function drawActuator(cx,cy,r,ang,live,vent){
+  const acc=vent?'#ff3b6b':live?'#3dff9a':'#39c6ff',dim=vent?'#5a1830':live?'#164a30':'#123848';
+  pxDisc(ctx,cx,cy,r,'#0c1826');pxDisc(ctx,cx,cy,r-1,'#0a1420');
+  for(let i=0;i<12;i++){const a=i/12*6.28318,lx=cx+Math.cos(a)*(r-2),ly=cy+Math.sin(a)*(r-2);   // segmented LED rim
+    px(ctx,Math.round(lx)-1,Math.round(ly)-1,2,2,(i%3===0)?acc:dim);}
+  pxDisc(ctx,cx,cy,r-4,'#060d16');
+  for(let i=0;i<4;i++){const a=ang+i/4*6.28318,col=(i===0)?acc:'#2a5a72';                        // rotor cross
+    for(let s=2;s<=r-5;s++){const x=cx+Math.cos(a)*s,y=cy+Math.sin(a)*s;px(ctx,Math.round(x)-1,Math.round(y)-1,2,2,col);}}
+  pxDisc(ctx,cx,cy,3,shade(acc,0.6));pxDisc(ctx,cx,cy,2,acc);   // hub
+}
+function renderCrank(){
+  const o=crankObj;if(!o){if(state.mode==='crank')setMode('play');return;}
+  RCX=0;RCY=0;const t=state.tick;
+  const sh=shake>0?(Math.random()-.5)*shake:0,sv=shake>0?(Math.random()-.5)*shake:0;
+  // ---- console backdrop: near-black with a faint scrolling grid + drifting cyan glow ----
+  ctx.fillStyle='#05090f';ctx.fillRect(0,0,VW,VH);
+  for(let gy=2;gy<VH;gy+=9)px(ctx,0,gy,VW,1,'#0a1420');
+  const goff=Math.round(t*0.3)%14;for(let gx=-goff;gx<VW;gx+=14)px(ctx,gx,0,1,VH,'#0a1420');
+  ctx.globalCompositeOperation='lighter';
+  for(let i=0;i<2;i++){const x=((t*0.2+i*130)%(VW+80))-40;radial(ctx,x,VH*0.44,80,'rgba(40,120,150,0.05)','rgba(40,120,150,0)');}
+  ctx.globalCompositeOperation='source-over';
+  const cx=Math.round(VW/2+sh),z=crankZone(),live=z==='turn',vent=z==='vent';
+  const glowAt=(x,y,r,col,a)=>{ctx.globalCompositeOperation='lighter';radial(ctx,x,y,r,'rgba('+col+','+a+')','rgba('+col+',0)');ctx.globalCompositeOperation='source-over';};
+  const onAir=!!player.attached,of=clamp(player.oxygen/player.maxOxygen,0,1),hpf=clamp(player.hearts/player.maxHearts,0,1);
+  const frac=clamp(crankS.turns/crankS.need,0,1),psi=Math.max(0,Math.round((1-frac)*crankS.psiMax));
+  // ==== TOP STATUS STRIP: O2 + HULL ====
+  {const gw=Math.min(150,VW-38),gx=Math.round(cx-gw/2);
+   pxText(ctx,onAir?'AIR LINE':'O2 HELD',gx,5,onAir?'#5fe6ff':'#7fd0ee');
+   const oy=12;px(ctx,gx-1,oy-1,gw+2,5,'#0a1420');px(ctx,gx,oy,Math.round(gw*of),3,onAir?'#39c6ff':(of>0.5?'#39c6ff':of>0.25?'#ffcf3a':'#ff4d5e'));if(!onAir&&of<=0.2&&(t>>3&1))px(ctx,gx,oy,gw,3,'rgba(255,77,94,0.3)');
+   pxText(ctx,'HULL',gx,19,'#ff9aa6');
+   const hy=26;px(ctx,gx-1,hy-1,gw+2,5,'#0a1420');px(ctx,gx,hy,Math.round(gw*hpf),3,player.hearts<=2?'#ff4d5e':'#3dff9a');}
+  // ==== HEADER BAR ====
+  const hbY=35;
+  px(ctx,8,hbY,VW-16,11,'#081420');px(ctx,8,hbY,VW-16,1,'#1c4152');px(ctx,8,hbY+10,VW-16,1,'#0c2330');
+  px(ctx,8,hbY,1,4,'#39c6ff');px(ctx,8,hbY,4,1,'#39c6ff');px(ctx,VW-9,hbY,1,4,'#39c6ff');px(ctx,VW-12,hbY,4,1,'#39c6ff');   // corner brackets
+  pxText(ctx,'VALVE CTRL',14,hbY+3,'#7fe0ff');
+  {const lvX=VW-14;pxText(ctx,'LIVE',lvX-16,hbY+3,'#2f9a6a');if((t>>4)&1)px(ctx,lvX,hbY+3,4,4,'#3dff9a');}
+  // countdown to a blowout — mirrors the biohazard sac's purge window
+  {const left=Math.max(0,crankS.limit-crankS.time),cfrac=clamp(left/crankS.limit,0,1),
+     tcol=cfrac>0.5?'#3dff9a':cfrac>0.25?'#ffcf3a':'#ff4d5e',ts=left.toFixed(1)+'s';
+   pxText(ctx,ts,Math.round(cx-pxTextW(ts)/2),hbY+3,tcol);
+   if(cfrac<0.25&&(t>>2&1))px(ctx,8,hbY,VW-16,11,'rgba(255,77,94,0.14)');}
+  // ==== ENGINEER DECK: sector gas-grid schematic ====
+  const barY=VH-82;                                   // timing track top — everything below anchored here
+  const panX=8,panT=hbY+15,panW=VW-16,panB=barY-8,panH=Math.max(46,panB-panT);
+  px(ctx,panX,panT,panW,panH,'#070f18');
+  px(ctx,panX,panT,panW,1,'#123040');px(ctx,panX,panT+panH-1,panW,1,'#0c2230');px(ctx,panX,panT,1,panH,'#123040');px(ctx,panX+panW-1,panT,1,panH,'#123040');
+  pxText(ctx,'SECTOR GAS GRID',panX+5,panT+4,'#3a6f88');
+  pxText(ctx,'BLED '+Math.round(frac*100)+'%',panX+panW-46,panT+4,'#2f7a56');
+  // big PSI readout — bleeds toward 0 as pressure drops
+  const psiCol=psi<=0?'#3dff9a':(frac<0.34?'#ff6a4a':frac<0.7?'#ffcf3a':'#7fe0ff'),psiStr=''+psi;
+  pxTextGhost(ctx,psiStr,cx,panT+18,3,'#0e1c22',1);pxTextXL(ctx,psiStr,cx,panT+18,3,psiCol,1);
+  pxText(ctx,'PSI',cx+Math.ceil(lcdWidth(psiStr,3,1)/2)+3,panT+16,'#3a6f88');
+  // pipe network + central actuator
+  const pipeY=Math.round(panT+panH*0.66+sv);crankS.actY=pipeY;
+  const ar=Math.max(11,Math.min(26,(panH*0.30)|0,(panW*0.14)|0));
+  const nodeLX=panX+14,nodeRX=panX+panW-14;
+  px(ctx,nodeLX,pipeY-3,(cx-ar)-nodeLX,6,'#0f2230');px(ctx,cx+ar,pipeY-3,nodeRX-(cx+ar),6,'#0f2230');
+  px(ctx,nodeLX,pipeY-3,(cx-ar)-nodeLX,1,'#1c4256');px(ctx,cx+ar,pipeY-3,nodeRX-(cx+ar),1,'#1c4256');
+  px(ctx,nodeLX,pipeY-1,(cx-ar)-nodeLX,3,'#08161f');px(ctx,cx+ar,pipeY-1,nodeRX-(cx+ar),3,'#08161f');
+  const flowSpd=0.5+(1-frac)*1.6,foff=(t*flowSpd)%9;   // flow dashes slow as the main bleeds off
+  for(let x=nodeLX+2+foff;x<cx-ar-1;x+=9)px(ctx,Math.round(x),pipeY-1,4,3,'#2be0ff');
+  for(let x=cx+ar+2+foff;x<nodeRX-1;x+=9)px(ctx,Math.round(x),pipeY-1,4,3,vent?'#ff6a4a':'#2be0ff');
+  const drawNode=(nxp,lab,col)=>{px(ctx,nxp-5,pipeY-6,10,12,'#0c1c28');px(ctx,nxp-5,pipeY-6,10,1,'#1c4256');px(ctx,nxp-3,pipeY-4,6,8,'#08161f');
+    for(let k=0;k<3;k++)px(ctx,nxp-2,pipeY-3+k*3,4,2,(((t>>3)+k)%3)?'#123040':col);pxTextC(lab,nxp,pipeY+9,'#3a6f88');};
+  drawNode(nodeLX,'IN','#39c6ff');drawNode(nodeRX,'OUT',vent?'#ff3b6b':'#39c6ff');
+  if(vent)glowAt(cx,pipeY,ar+12,'255,59,107',0.34+Math.sin(t*0.3)*0.14);
+  else if(live)glowAt(cx,pipeY,ar+9,'61,255,154',0.24+Math.sin(t*0.12)*0.08);
+  else glowAt(cx,pipeY,ar+6,'57,198,255',0.12);
+  drawActuator(cx,pipeY,ar,crankS.rotor,live,vent);
+  if(crankS.hitFlash>0){ctx.strokeStyle='rgba(61,255,154,'+(crankS.hitFlash*2).toFixed(2)+')';ctx.lineWidth=1;ctx.beginPath();ctx.arc(cx,pipeY,ar+3,0,6.2832);ctx.stroke();}
+  pxTextC('SERVO A'+(Math.min(o.tier||0,8)+1),cx,pipeY+ar+4,'#3a6f88');
+  for(const s of crankS.fx){const a=clamp(s.life/0.8,0,1);ctx.globalAlpha=0.6*a;ctx.fillStyle=s.col||'#dff1ff';const rr=s.r+Math.round((1-a)*2);ctx.fillRect(Math.round(s.x)-rr,Math.round(s.y)-rr,rr*2,rr*2);}
+  ctx.globalAlpha=1;
+  // ==== TIMING TRACK: sliding SAFE (green) + HAZARD (red) windows + swept marker ====
+  const bw=Math.min(180,VW-24),bx=Math.round(cx-bw/2),by=barY;
+  px(ctx,bx-3,by-3,bw+6,16,'#060d16');px(ctx,bx-2,by-2,bw+4,14,'#0c1a26');px(ctx,bx-2,by-2,bw+4,1,'#173040');
+  for(let i=0;i<=8;i++)px(ctx,bx+Math.round(i/8*(bw-1)),by-2,1,2,'#173040');
+  const b=crankBands();
+  const gx0=bx+Math.round(b.gL*(bw-1)),gx1=bx+Math.round(b.gR*(bw-1));
+  const rx0=bx+Math.round(b.rL*(bw-1)),rx1=bx+Math.round(b.rR*(bw-1));
+  glowAt((gx0+gx1)/2,by+5,18,'61,255,154',0.16);   // SAFE window
+  px(ctx,gx0,by,gx1-gx0,10,'#123f28');px(ctx,gx0,by,gx1-gx0,2,'#3dff9a');px(ctx,gx0,by+9,gx1-gx0,1,'#0c2a1a');
+  px(ctx,gx0,by,1,10,'#3dff9a');px(ctx,gx1-1,by,1,10,'#3dff9a');
+  glowAt((rx0+rx1)/2,by+5,18,'255,59,107',0.18);   // HAZARD window, drawn over green so overlaps read as danger
+  px(ctx,rx0,by,rx1-rx0,10,'#3a1020');px(ctx,rx0,by,rx1-rx0,2,'#ff3b6b');
+  for(let x=rx0+1;x<rx1-1;x+=4)px(ctx,x,by+3,2,4,(t>>2&1)?'#ffcf3a':'#7a1a30');
+  px(ctx,rx0,by,1,10,'#ff3b6b');px(ctx,rx1-1,by,1,10,'#ff3b6b');
+  {const oL=Math.max(gx0,rx0),oR=Math.min(gx1,rx1);if(oR>oL){const wc=(t>>1&1)?'#ffef8a':'#ff3b6b';px(ctx,oL,by-2,oR-oL,1,wc);px(ctx,oL,by+11,oR-oL,1,wc);}}   // overlap warning
+  const nx=bx+Math.round(crankS.p*(bw-1)),ncol=vent?'#ff5a6b':live?'#5dffa0':'#eef6ff';
+  px(ctx,nx-2,by-5,5,3,'#060d16');px(ctx,nx-1,by-4,3,18,'#060d16');px(ctx,nx,by-4,1,17,ncol);px(ctx,nx-2,by-5,5,2,ncol);   // marker
+  // ==== ACTUATE BUTTON (digital control that fires the mechanical servo) ====
+  const btnW=Math.min(150,VW-40),btnX=Math.round(cx-btnW/2),btnY=by+22,btnH=18;
+  let btLab,btCol,btEdge,btFill;
+  if(vent){btLab='HOLD';btCol='#ff5a6b';btEdge='#ff3b6b';btFill='#26090f';}
+  else if(live){btLab='ACTUATE';btCol='#eafff2';btEdge='#3dff9a';btFill='#123f28';}
+  else{btLab='STANDBY';btCol='#6fa0b8';btEdge='#1c4256';btFill='#0a1622';}
+  px(ctx,btnX-1,btnY-1,btnW+2,btnH+2,'#05090f');px(ctx,btnX,btnY,btnW,btnH,btFill);
+  px(ctx,btnX,btnY,btnW,1,btEdge);px(ctx,btnX,btnY+btnH-1,btnW,1,shade(btEdge,0.5));px(ctx,btnX,btnY,1,btnH,btEdge);px(ctx,btnX+btnW-1,btnY,1,btnH,shade(btEdge,0.6));
+  if(live)glowAt(cx,btnY+btnH/2,btnW*0.5,'61,255,154',0.14+Math.sin(t*0.2)*0.05);
+  if(crankS.hitFlash>0||crankS.flash>0)px(ctx,btnX,btnY,btnW,btnH,'rgba(255,255,255,0.16)');
+  {const chv=live?'#3dff9a':vent?'#ff5a6b':'#2a4a5a';pxText(ctx,'>',btnX+6,btnY+7,chv);pxText(ctx,'<',btnX+btnW-10,btnY+7,chv);}
+  pxTextGhost(ctx,btLab,cx,btnY+9,2,'#0a1620',1);pxTextXL(ctx,btLab,cx,btnY+9,2,btCol,1);
+  // ==== PROGRESS PIPS ====
+  {const pipY=btnY+btnH+6,tot=crankS.need,pipW=Math.max(5,Math.min(11,((btnW-tot*3)/tot)|0)),pipG=3,rowW=tot*(pipW+pipG)-pipG,ppx=Math.round(cx-rowW/2);
+   for(let i=0;i<tot;i++){const on=i<crankS.turns;px(ctx,ppx+i*(pipW+pipG),pipY,pipW,5,on?'#39c6ff':'#122430');if(on)px(ctx,ppx+i*(pipW+pipG),pipY,pipW,1,'#9fe8ff');}}
+  // ==== RULE / FIRST-OPEN HINT ====
+  if(crankS.hint>0){const a=clamp(crankS.hint/3,0,1);ctx.globalAlpha=a;pxTextC('FIRE ON GREEN   AVOID RED',cx,VH-13,'#6f93a6');ctx.globalAlpha=1;}
+  else pxTextC('FIRE ON GREEN',cx,VH-13,'#3a5a6a');
+  // ==== BURN / RELEASE OVERLAYS ====
+  if(crankS.burnT>0){ctx.fillStyle='rgba(255,60,90,'+(0.22*clamp(crankS.burnT/0.6,0,1)).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);}
+  if(crankS.doneT>0){const busting=crankS.bust,k=clamp(crankS.doneT/(busting?1.0:1.2),0,1),
+    col=busting?'255,106,60':'61,255,154',txt=busting?'BLOWOUT':'RELEASED';
+    ctx.fillStyle='rgba('+col+','+(0.22*k).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);
+    glowAt(cx,pipeY,40,col,0.4*k);pxTextGhost(ctx,txt,cx,pipeY,3,busting?'#2a1006':'#0e2a1c',1);pxTextXL(ctx,txt,cx,pipeY,3,busting?'#ffb27a':'#9dffc0',1);}
+  if(shake>0)shake-=0.6;
+}
+canvas.addEventListener('pointerdown',e=>{if(state.mode!=='crank')return;e.preventDefault();audioInit();crankTurn();});
+
+/* ===== CYBER WALL TERMINAL: OCTAGON ICE-BREAK MINIGAME ==============================================
+ * Interacting with a CYBER wall terminal drops the diver into a focused, full-canvas ICE console.
+ * An 8-sided ICE ring is drawn centre-screen with a cursor parked on one side. Sides light up one at a
+ * time; the diver rotates the cursor to the shining side and SELECTS it — the side folds inward and
+ * joins a glyph forming at the ring's core. A shape is built from 1–8 selected sides (random). Pick the
+ * WRONG side and the whole shape build resets. Once the glyph is whole, the console shows THREE rows of
+ * candidate glyphs — the diver navigates the grid and INPUTS on the cell matching the glyph they built.
+ * The right cell cracks that layer of ICE; the wrong cell scrambles the glyph and forces a rebuild.
+ * Build and input THREE glyphs to break the node. Air keeps draining the whole time — this is a dive. */
+let hackObj=null;
+const HACK_ROWS=3, HACK_COLS=6, HACK_TOTAL=3;
+// phase: 'build' (pick shining sides) -> 'form' (glyph snaps together) -> 'input' (find it in the grid);
+// 'done' plays the ACCESS GRANTED beat before handing back to the world.
+const hackS={phase:'build',tier:0,cx:0,cy:0,R:60,
+  ptr:0,need:3,target:[],targetSet:[],collected:[],shineIdx:0,
+  grid:[],gcur:0,targetCell:0,
+  shapesDone:0,formT:0,doneT:0,flash:0,hitFlash:0,wrongT:0,hint:0,pulse:0,banner:'',bannerT:0,fx:[],
+  time:0,limit:28,bust:false};
+// geometry — a flat-topped regular octagon; side k runs from vertex k to vertex k+1
+function hackVert(cx,cy,r,k){const a=Math.PI/8+k*(Math.PI/4);return [cx+Math.cos(a)*r,cy+Math.sin(a)*r];}
+function hackSideMid(cx,cy,r,k){const a=hackVert(cx,cy,r,k),b=hackVert(cx,cy,r,(k+1)%8);return [(a[0]+b[0])/2,(a[1]+b[1])/2];}
+function hackPickSet(n){const pool=[0,1,2,3,4,5,6,7];_shuffle(pool);return pool.slice(0,n).sort((a,b)=>a-b);}
+function hackSetKey(arr){return arr.slice().sort((a,b)=>a-b).join(',');}   // canonical id for a glyph
+function hackSpark(x,y,col,spd,n){for(let i=0;i<(n||6);i++)hackS.fx.push({x:x+(Math.random()-.5)*6,y:y+(Math.random()-.5)*4,
+  vx:(Math.random()-.5)*spd,vy:-14-Math.random()*spd*0.6,life:0.4+Math.random()*0.4,r:1+((Math.random()*2)|0),col});}
+function hackBanner(txt,t){hackS.banner=txt;hackS.bannerT=t||1.1;}
+// a fresh glyph to build: 1–8 sides (deeper nodes lean toward more sides, but any given node is random)
+function hackStartBuild(){const S=hackS,tc=Math.min(S.tier,3);
+  const lo=1+Math.min(tc,3);                       // deeper ICE needs at least a few sides
+  S.need=clamp(lo+((Math.random()*(9-lo))|0),1,8);
+  S.targetSet=hackPickSet(S.need);
+  S.target=S.targetSet.slice();_shuffle(S.target);  // order the sides shine in
+  S.collected=[];S.shineIdx=0;S.ptr=(Math.random()*8)|0;S.phase='build';sfx.uiopen();
+}
+// lay out the 3×6 candidate grid; one cell is the exact glyph just built, the rest are near-miss decoys
+function hackBuildGrid(set){const S=hackS,tk=hackSetKey(set),used={};used[tk]=1;
+  const total=HACK_ROWS*HACK_COLS,tgt=(Math.random()*total)|0,cells=[];
+  for(let i=0;i<total;i++){
+    if(i===tgt){cells.push(set.slice());continue;}
+    let s,k,guard=0;
+    do{const n=clamp(S.need+(((Math.random()*5)|0)-2),1,8);s=hackPickSet(n);k=hackSetKey(s);guard++;}
+    while(used[k]&&guard<40);
+    used[k]=1;cells.push(s);
+  }
+  S.grid=cells;S.targetCell=tgt;S.gcur=0;S.phase='input';sfx.mix();
+}
+function openHack(o){
+  hackObj=o;const S=hackS,tier=o.tier||0;
+  S.tier=tier;S.cx=Math.round(VW/2);S.cy=Math.round(VH*0.42);
+  S.R=Math.round(Math.min(VW*0.30,VH*0.17,64));
+  S.shapesDone=0;S.doneT=0;S.formT=0;S.flash=0;S.hitFlash=0;S.wrongT=0;S.hint=3.5;S.pulse=0;S.banner='';S.bannerT=0;S.fx.length=0;
+  S.time=0;S.limit=28+tier*2;S.bust=false;
+  mineEdge=false;actionEdge=false;input.action=false;
+  hackStartBuild();
+  setMode('hack');sfx.start();
+  if(tutorialsOn&&!hackIntroSeen){hackIntroSeen=true;startHackIntro();}
+}
+// timer runs out before all layers crack: the console arcs in the diver's face — same shape as the
+// crank and the biohazard sac, and same rule: it still counts the node cracked, the failure just costs a heart
+function hackBust(){const S=hackS;
+  if(S.doneT>0)return;
+  S.bust=true;S.phase='bust';S.doneT=1.0;S.flash=0.5;
+  shake=Math.max(shake,8);sfx.boom();hurt(1);
+  hackSpark(S.cx,S.cy,'#ff6a3c',110,16);
+}
+function closeHack(){if(!hackObj){if(state.mode==='hack')setMode('play');return;}
+  hackObj=null;setMode('play');sfx.back();
+  showMsg('link dropped — the node is still locked');}
+// rotate the cursor round the ring (build) or step the grid cursor (input); both wrap around
+function hackNav(dir){const S=hackS;if(!hackObj||S.doneT>0||S.formT>0)return;
+  if(S.phase==='build'){S.ptr=(dir==='left'||dir==='up')?(S.ptr+7)%8:(S.ptr+1)%8;sfx.nav();}
+  else if(S.phase==='input'){let r=(S.gcur/HACK_COLS)|0,c=S.gcur%HACK_COLS;
+    if(dir==='up')r=(r+HACK_ROWS-1)%HACK_ROWS;else if(dir==='down')r=(r+1)%HACK_ROWS;
+    else if(dir==='left')c=(c+HACK_COLS-1)%HACK_COLS;else if(dir==='right')c=(c+1)%HACK_COLS;
+    S.gcur=r*HACK_COLS+c;sfx.nav();}
+}
+function hackConfirm(){const S=hackS,o=hackObj;if(!o||S.doneT>0||S.formT>0)return;
+  if(S.phase==='build'){
+    const want=S.target[S.shineIdx],m=hackSideMid(S.cx,S.cy,S.R,S.ptr);
+    if(S.ptr===want){                                   // right side: it folds inward into the glyph
+      S.collected.push(want);S.shineIdx++;S.hitFlash=0.3;S.flash=0.14;sfx.select();
+      hackSpark(m[0],m[1],'#7fe6ff',56,7);
+      if(S.shineIdx>=S.target.length){S.phase='form';S.formT=0.8;S.flash=0.3;sfx.build();
+        hackBanner('GLYPH LOCKED',0.9);
+        const c=hackSideMid(S.cx,S.cy,S.R*0.42,want);hackSpark(c[0],c[1],'#9dffe0',70,10);}
+    } else {                                             // wrong side: the whole build scrambles
+      S.collected=[];S.shineIdx=0;_shuffle(S.target);S.wrongT=0.5;S.flash=0.4;shake=Math.max(shake,5);sfx.zap();
+      hurt(1);
+      hackSpark(m[0],m[1],'#ff3b6b',80,10);hackBanner('SEQUENCE RESET',1.0);
+    }
+  } else if(S.phase==='input'){
+    if(S.gcur===S.targetCell){                           // matched: this layer of ICE cracks
+      S.shapesDone++;S.flash=0.3;S.hitFlash=0.4;sfx.win();
+      if(S.shapesDone>=HACK_TOTAL){S.phase='done';S.doneT=1.3;S.banner='';sfx.build();}
+      else{hackBanner('LAYER CRACKED  '+S.shapesDone+'/'+HACK_TOTAL,1.0);hackStartBuild();}
+    } else {                                             // wrong cell: glyph scrambles, build again
+      S.wrongT=0.6;S.flash=0.45;shake=Math.max(shake,6);sfx.zap();
+      hurt(1);
+      hackBanner('WRONG NODE — REBUILD',1.1);hackStartBuild();
+    }
+  }
+}
+function hackInput(){const S=hackS,o=hackObj;if(!o){if(state.mode==='hack')setMode('play');return;}
+  if(deckActive)return;                       // the ICE primer is up — nothing ticks behind it
+  // AIR IS FROZEN for the duration of the minigame — no passive drain, no drowning while you work.
+  // A scrambled sequence still costs air (see the wrong-side branch): that's the ICE's own risk.
+  if(player.attached)player.oxygen=player.maxOxygen;
+  player.drown=0;
+  S.pulse+=1/60;
+  if(S.hint>0)S.hint-=1/60;
+  if(S.flash>0)S.flash-=1/60;
+  if(S.hitFlash>0)S.hitFlash-=1/60;
+  if(S.wrongT>0)S.wrongT-=1/60;
+  if(S.bannerT>0)S.bannerT-=1/60;
+  for(let i=S.fx.length-1;i>=0;i--){const s=S.fx[i];s.life-=1/60;if(s.life<=0){S.fx.splice(i,1);continue;}
+    s.x+=s.vx/60;s.y+=s.vy/60;s.vx*=0.94;s.vy*=0.96;s.vy+=0.25;}
+  if(S.phase==='form'){S.formT-=1/60;if(S.formT<=0)hackBuildGrid(S.targetSet);return;}
+  if(S.phase==='done'){S.doneT-=1/60;if(S.doneT<=0){hackObj=null;completeMissionObj(o);setMode('play');}return;}
+  if(S.phase==='bust'){S.doneT-=1/60;
+    if(S.doneT<=0){hackObj=null;completeMissionObj(o);setMode('play');showMsg('TIMER OUT — the console arcs in your face!');}
+    return;}
+  S.time+=1/60;
+  if(S.time>=S.limit){hackBust();return;}
+  if(mineEdge||actionEdge){mineEdge=false;actionEdge=false;hackConfirm();}
+  if(queueCraft){queueCraft=false;closeHack();}
+}
+// ---- ICE glyph drawing ----------------------------------------------------------------------------
+function hackPxLine(x0,y0,x1,y1,col,w){x0=Math.round(x0);y0=Math.round(y0);x1=Math.round(x1);y1=Math.round(y1);
+  const dx=Math.abs(x1-x0),dy=Math.abs(y1-y0),sx=x0<x1?1:-1,sy=y0<y1?1:-1;let err=dx-dy,x=x0,y=y0;w=w||1;const o=(w-1)>>1;
+  for(;;){px(ctx,x-o,y-o,w,w,col);if(x===x1&&y===y1)break;const e2=2*err;if(e2>-dy){err-=dy;x+=sx;}if(e2<dx){err+=dx;y+=sy;}}}
+function hackDrawRing(cx,cy,r,col){for(let k=0;k<8;k++){const a=hackVert(cx,cy,r,k),b=hackVert(cx,cy,r,(k+1)%8);hackPxLine(a[0],a[1],b[0],b[1],col,1);}
+  for(let k=0;k<8;k++){const v=hackVert(cx,cy,r,k);px(ctx,Math.round(v[0])-1,Math.round(v[1])-1,2,2,col);}}
+function hackDrawEdge(cx,cy,r,k,col,w,node){const a=hackVert(cx,cy,r,k),b=hackVert(cx,cy,r,(k+1)%8);hackPxLine(a[0],a[1],b[0],b[1],col,w);
+  if(node){px(ctx,Math.round(a[0])-1,Math.round(a[1])-1,2,2,col);px(ctx,Math.round(b[0])-1,Math.round(b[1])-1,2,2,col);}}
+// draw a whole glyph (its selected sides) at (cx,cy) radius r — used at the core and in every grid cell
+function hackDrawGlyph(cx,cy,r,sides,col,w,node){for(const s of sides)hackDrawEdge(cx,cy,r,s,col,w,node);}
+function hackGlow(x,y,r,col,a){ctx.globalCompositeOperation='lighter';radial(ctx,x,y,r,'rgba('+col+','+a+')','rgba('+col+',0)');ctx.globalCompositeOperation='source-over';}
+// grid geometry, shared by render + tap hit-testing so they always agree
+function hackGridGeom(){const gx=8,gw=VW-16,cellW=gw/HACK_COLS,gTop=Math.round(VH*0.34),gBot=VH-26,rowH=(gBot-gTop)/HACK_ROWS;
+  const r=Math.max(7,Math.min(15,Math.round(Math.min(cellW,rowH)*0.34)));
+  return {gx,gw,cellW,gTop,rowH,r,cx:(c)=>Math.round(gx+cellW*(c+0.5)),cy:(rr)=>Math.round(gTop+rowH*(rr+0.5))};}
+function renderHack(){
+  const S=hackS,o=hackObj;if(!o){if(state.mode==='hack')setMode('play');return;}
+  RCX=0;RCY=0;const t=state.tick;
+  const sh=shake>0?(Math.random()-.5)*shake:0,sv=shake>0?(Math.random()-.5)*shake:0;
+  // ---- console backdrop: near-black with a faint scrolling grid + drifting cyan glow ----
+  ctx.fillStyle='#05090f';ctx.fillRect(0,0,VW,VH);
+  for(let gy=2;gy<VH;gy+=9)px(ctx,0,gy,VW,1,'#0a1420');
+  const goff=Math.round(t*0.3)%14;for(let gx=-goff;gx<VW;gx+=14)px(ctx,gx,0,1,VH,'#0a1420');
+  ctx.globalCompositeOperation='lighter';
+  for(let i=0;i<2;i++){const x=((t*0.2+i*130)%(VW+80))-40;radial(ctx,x,VH*0.44,80,'rgba(40,120,150,0.05)','rgba(40,120,150,0)');}
+  ctx.globalCompositeOperation='source-over';
+  const cx=Math.round(VW/2+sh);
+  const of=clamp(player.oxygen/player.maxOxygen,0,1),hpf=clamp(player.hearts/player.maxHearts,0,1),onAir=!!player.attached;
+  // ==== TOP STATUS STRIP: O2 + HULL (mirrors the other minigame consoles) ====
+  {const gw=Math.min(150,VW-38),gx=Math.round(cx-gw/2);
+   pxText(ctx,onAir?'AIR LINE':'O2 HELD',gx,5,onAir?'#5fe6ff':'#7fd0ee');
+   const oy=12;px(ctx,gx-1,oy-1,gw+2,5,'#0a1420');px(ctx,gx,oy,Math.round(gw*of),3,onAir?'#39c6ff':(of>0.5?'#39c6ff':of>0.25?'#ffcf3a':'#ff4d5e'));if(!onAir&&of<=0.2&&(t>>3&1))px(ctx,gx,oy,gw,3,'rgba(255,77,94,0.3)');
+   pxText(ctx,'HULL',gx,19,'#ff9aa6');
+   const hy=26;px(ctx,gx-1,hy-1,gw+2,5,'#0a1420');px(ctx,gx,hy,Math.round(gw*hpf),3,player.hearts<=2?'#ff4d5e':'#3dff9a');}
+  // ==== HEADER BAR ====
+  const hbY=35;
+  px(ctx,8,hbY,VW-16,11,'#081420');px(ctx,8,hbY,VW-16,1,'#1c4152');px(ctx,8,hbY+10,VW-16,1,'#0c2330');
+  px(ctx,8,hbY,1,4,'#39c6ff');px(ctx,8,hbY,4,1,'#39c6ff');px(ctx,VW-9,hbY,1,4,'#39c6ff');px(ctx,VW-12,hbY,4,1,'#39c6ff');
+  pxText(ctx,S.phase==='input'?'MATCH GLYPH':'ICE BREAK',14,hbY+3,'#7fe0ff');
+  {const lvX=VW-14;pxText(ctx,'ICE',lvX-12,hbY+3,'#2f9a6a');if((t>>4)&1)px(ctx,lvX,hbY+3,4,4,'#3dff9a');}
+  // countdown to a blowout — mirrors the crank valve's and the biohazard sac's timers
+  {const left=Math.max(0,S.limit-S.time),cfrac=clamp(left/S.limit,0,1),
+     tcol=cfrac>0.5?'#3dff9a':cfrac>0.25?'#ffcf3a':'#ff4d5e',ts=left.toFixed(1)+'s';
+   pxText(ctx,ts,Math.round(cx-pxTextW(ts)/2),hbY+3,tcol);
+   if(cfrac<0.25&&(t>>2&1))px(ctx,8,hbY,VW-16,11,'rgba(255,77,94,0.14)');}
+  // node-break progress pips (3 glyphs to crack)
+  {const pw=8,pg=4,tot=HACK_TOTAL,rw=tot*(pw+pg)-pg,px0=Math.round(cx-rw/2),py=hbY+14;
+   for(let i=0;i<tot;i++){const on=i<S.shapesDone;px(ctx,px0+i*(pw+pg),py,pw,3,on?'#3dff9a':'#12283a');if(on)px(ctx,px0+i*(pw+pg),py,pw,1,'#9dffcf');}}
+
+  if(S.phase==='build'||S.phase==='form'){
+    const forming=S.phase==='form';
+    const oc=S.cx+sh,oy=S.cy+sv,R=S.R;
+    // faint base ring
+    hackDrawRing(oc,oy,R,'#123040');
+    // sides already folded in read as locked (dim green) on the outer ring
+    for(const s of S.collected)hackDrawEdge(oc,oy,R,s,'#2f9a6a',2,true);
+    if(!forming){
+      // the shining side the diver must select next — pulsing cyan
+      const want=S.target[S.shineIdx],pul=0.5+0.5*Math.sin(S.pulse*6),m=hackSideMid(oc,oy,R,want);
+      hackGlow(m[0],m[1],14,'127,230,255',0.22+pul*0.22);
+      hackDrawEdge(oc,oy,R,want,pul>0.5?'#eafcff':'#7fe6ff',2,true);
+      // the cursor: an arrowhead just outside the current side, aimed inward
+      const cm=hackSideMid(oc,oy,R,S.ptr);
+      const ux=(cm[0]-oc)/(Math.hypot(cm[0]-oc,cm[1]-oy)||1),uy=(cm[1]-oy)/(Math.hypot(cm[0]-oc,cm[1]-oy)||1);
+      const perx=-uy,pery=ux,onTgt=S.ptr===want,ac=onTgt?'#eafcff':'#ffd23c';
+      const tipx=cm[0]+ux*3,tipy=cm[1]+uy*3,b1x=cm[0]+ux*11+perx*5,b1y=cm[1]+uy*11+pery*5,b2x=cm[0]+ux*11-perx*5,b2y=cm[1]+uy*11-pery*5;
+      hackGlow(cm[0]+ux*7,cm[1]+uy*7,9,onTgt?'234,252,255':'255,210,60',0.3);
+      hackPxLine(tipx,tipy,b1x,b1y,ac,1);hackPxLine(tipx,tipy,b2x,b2y,ac,1);hackPxLine(b1x,b1y,b2x,b2y,ac,1);
+    } else {
+      // form beat — the finished glyph flares on the outer ring
+      const fl=clamp(S.formT/0.8,0,1);
+      for(const s of S.targetSet)hackDrawEdge(oc,oy,R,s,(t>>1&1)?'#eafcff':'#7fe6ff',2,true);
+      hackGlow(oc,oy,R+8,'127,230,255',0.18*fl);
+    }
+    // the glyph assembling at the core, one folded side at a time
+    const core=forming?S.targetSet:S.collected;
+    hackDrawRing(oc,oy,Math.round(R*0.42),'#0e2230');
+    hackDrawGlyph(oc,oy,Math.round(R*0.42),core,'#7fe6ff',2,true);
+    if(core.length)hackGlow(oc,oy,Math.round(R*0.42)+4,'127,230,255',0.12+(forming?0.1:0));
+    // side-build progress pips (collected / needed)
+    {const tot=S.need,pw=Math.max(4,Math.min(12,((Math.min(150,VW-40)-tot*3)/tot)|0)),pg=3,rw=tot*(pw+pg)-pg,px0=Math.round(cx-rw/2),py=oy+R+16;
+     for(let i=0;i<tot;i++){const on=i<S.collected.length;px(ctx,px0+i*(pw+pg),py,pw,5,on?'#39c6ff':'#122430');if(on)px(ctx,px0+i*(pw+pg),py,pw,1,'#9fe8ff');}
+     pxTextC(forming?'GLYPH LOCKED':('SIDES  '+S.collected.length+'/'+S.need),cx,py+9,forming?'#9dffcf':'#4f7f96');}
+    // sparks
+    for(const s of S.fx){const a=clamp(s.life/0.8,0,1);ctx.globalAlpha=0.6*a;ctx.fillStyle=s.col||'#dff1ff';const rr=s.r+Math.round((1-a)*2);ctx.fillRect(Math.round(s.x)-rr,Math.round(s.y)-rr,rr*2,rr*2);}
+    ctx.globalAlpha=1;
+    if(S.hint>0&&!forming){const a=clamp(S.hint/3.5,0,1);ctx.globalAlpha=a;pxTextC('MOVE TO THE LIT SIDE   SELECT',cx,VH-13,'#6f93a6');ctx.globalAlpha=1;}
+    else if(!forming)pxTextC('SELECT THE SHINING SIDE',cx,VH-13,'#3a5a6a');
+  } else if(S.phase==='input'){
+    // the glyph the diver just built, shown as the thing to find
+    const pcy=Math.round((hbY+15+VH*0.34)/2);
+    pxTextC('YOUR GLYPH',cx,hbY+16,'#4f7f96');
+    hackDrawRing(cx,pcy,15,'#0e2230');hackDrawGlyph(cx,pcy,15,S.targetSet,'#7fe6ff',2,true);
+    hackGlow(cx,pcy,20,'127,230,255',0.14);
+    // the 3×6 candidate grid
+    const G=hackGridGeom();
+    for(let i=0;i<S.grid.length;i++){const r=(i/HACK_COLS)|0,c=i%HACK_COLS,gcx=G.cx(c),gcy=G.cy(r),sel=i===S.gcur;
+      const bw=Math.round(G.cellW-6),bh=Math.round(G.rowH-6),bx=gcx-(bw>>1),by=gcy-(bh>>1);
+      px(ctx,bx,by,bw,bh,sel?'#0b2230':'#081420');
+      px(ctx,bx,by,bw,1,sel?'#39c6ff':'#12283a');px(ctx,bx,by+bh-1,bw,1,'#0c1c28');px(ctx,bx,by,1,bh,sel?'#39c6ff':'#12283a');px(ctx,bx+bw-1,by,1,bh,'#0c1c28');
+      hackDrawRing(gcx,gcy,G.r,'#123040');
+      hackDrawGlyph(gcx,gcy,G.r,S.grid[i],sel?'#bfeeff':'#5fb8d8',1,false);
+      if(sel){const pul=0.5+0.5*Math.sin(S.pulse*6);hackGlow(gcx,gcy,G.r+6,'57,198,255',0.14+pul*0.14);
+        px(ctx,bx-1,by-1,bw+2,1,'#39c6ff');px(ctx,bx-1,by+bh,bw+2,1,'#39c6ff');}}
+    if(S.hint>0){const a=clamp(S.hint/3.5,0,1);ctx.globalAlpha=a;pxTextC('FIND YOUR GLYPH   INPUT',cx,VH-13,'#6f93a6');ctx.globalAlpha=1;}
+    else pxTextC('MATCH THE GLYPH YOU BUILT',cx,VH-13,'#3a5a6a');
+  } else if(S.phase==='done'){
+    const k=clamp(S.doneT/1.3,0,1);
+    hackDrawRing(cx,S.cy,S.R,'#0e2230');hackGlow(cx,S.cy,S.R+10,'61,255,154',0.4*k);
+    pxTextGhost(ctx,'GRANTED',cx,S.cy,3,'#0e2a1c',1);pxTextXL(ctx,'GRANTED',cx,S.cy,3,'#9dffc0',1);
+    pxTextC('ACCESS',cx,S.cy-24,'#3dff9a');
+  } else if(S.phase==='bust'){
+    const k=clamp(S.doneT/1.0,0,1);
+    hackDrawRing(cx,S.cy,S.R,'#2a1414');hackGlow(cx,S.cy,S.R+16,'255,106,60',0.5*k);
+    pxTextGhost(ctx,'BREACH',cx,S.cy,3,'#2a1006',1);pxTextXL(ctx,'BREACH',cx,S.cy,3,'#ffb27a',1);
+    pxTextC('CONSOLE ARCS BACK',cx,S.cy-24,'#ff6a3c');
+  }
+  // ==== flashes / banners ====
+  if(S.flash>0){const isW=S.wrongT>0||S.phase==='bust';ctx.fillStyle=(isW?'rgba(255,60,90,':'rgba(127,230,255,')+(0.18*clamp(S.flash/0.45,0,1)).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);}
+  if(S.doneT>0){const busting=S.phase==='bust';
+    ctx.fillStyle=(busting?'rgba(255,106,60,':'rgba(61,255,154,')+(0.2*clamp(S.doneT/(busting?1.0:1.3),0,1)).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);}
+  if(S.bannerT>0){const a=clamp(S.bannerT/0.5,0,1),bw=S.wrongT>0,col=bw?'#ff6a7f':'#9dffcf';
+    ctx.globalAlpha=a;pxTextC(S.banner,cx,hbY+26,col);ctx.globalAlpha=1;}
+  if(shake>0)shake-=0.6;
+}
+// touch: tap a side / grid cell to move the cursor there and act; anywhere else just confirms
+canvas.addEventListener('pointerdown',e=>{if(state.mode!=='hack')return;e.preventDefault();audioInit();
+  const S=hackS,o=hackObj;if(!o||S.doneT>0||S.formT>0){hackConfirm();return;}
+  const _q=canvasPt(e),mx=_q[0],my=_q[1];
+  if(S.phase==='build'){
+    let best=-1,bd=1e9;for(let k=0;k<8;k++){const m=hackSideMid(S.cx,S.cy,S.R,k),d=Math.hypot(mx-m[0],my-m[1]);if(d<bd){bd=d;best=k;}}
+    if(best>=0&&bd<S.R*0.7)S.ptr=best;
+    hackConfirm();
+  } else if(S.phase==='input'){
+    const G=hackGridGeom();let best=-1,bd=1e9;
+    for(let i=0;i<S.grid.length;i++){const rr=(i/HACK_COLS)|0,c=i%HACK_COLS,d=Math.hypot(mx-G.cx(c),my-G.cy(rr));if(d<bd){bd=d;best=i;}}
+    if(best>=0){S.gcur=best;hackConfirm();}
+  } else hackConfirm();
+});
+// touch: drag the reticle straight to wherever a thumb lands on the vat and burn while held —
+// tapping the game screen itself now aims AND fires, instead of needing the joystick plus the
+// confirm button
+(function(){let active=false;
+  const aim=e=>{const B=flameS,_q=canvasPt(e),mx=_q[0],my=_q[1];
+    B.aimX=clamp(mx,B.bx,B.bx+B.bw);B.aimY=clamp(my,B.by,B.by+B.bh);B.vx=0;B.vy=0;};
+  canvas.addEventListener('pointerdown',e=>{if(state.mode!=='flame')return;e.preventDefault();audioInit();active=true;flameFire=true;aim(e);});
+  canvas.addEventListener('pointermove',e=>{if(state.mode!=='flame'||!active)return;e.preventDefault();aim(e);});
+  const stop=()=>{if(!active)return;active=false;flameFire=false;};
+  canvas.addEventListener('pointerup',stop);canvas.addEventListener('pointercancel',stop);canvas.addEventListener('pointerleave',stop);
+})();
+
+/* ===== BIOLOGICAL GAS-SAC: HIGH-PRECISION FLAMETHROWER MINIGAME =====================================
+ * Opening a gas sac drops the diver into a focused, full-canvas console: a pixel cyberpunk metal urn
+ * holds 3 mutant angler-fish pups curled up in separate pockets. Steer the aim with the STICK (WASD /
+ * arrows on desktop) and HOLD FIRE (the confirm button / space) to spit a thin blue high-precision
+ * flame at one; six pips of sustained burn kill it. Underwater, so the jet trails bubbles. The aim
+ * carries a little momentum (drag) and a gentle autonomous sway, so you can never fully let go of it.
+ * Torch all three before an 8s timer busts. A clean WIN burns the sac out with no blowback at all; a
+ * BUST rides an almost-instant fuse (podBlasts, out in the world) so the gas erupts right in the diver's face. */
+let flameObj=null;
+const flameS={slimes:[],cx:110,rimTop:70,baseBot:300,bx:46,by:104,bw:128,bh:150,
+  aimX:110,aimY:180,vx:0,vy:0,rx:110,ry:180,swx:0,swy:0,nozX:110,nozY:294,
+  limit:10,time:0,killed:0,won:false,doneT:0,outcome:null,hint:3.0,flash:0,hitFlash:0,
+  firing:false,onTarget:false,swayAmp:2.4,aimAcc:0.82,aimDrag:0.86,burnRate:6.0,fx:[]};
+function openFlame(o){
+  flameObj=o;const B=flameS,tier=o.tier||0,tc=Math.min(tier,3);
+  B.cx=Math.round(VW/2);B.rimTop=70;B.baseBot=300;
+  B.bx=46;B.by=104;B.bw=VW-92;B.bh=150;                 // aim / slime interior (inside the urn belly)
+  B.aimX=B.cx;B.aimY=Math.round(B.by+B.bh*0.5);B.vx=0;B.vy=0;B.rx=B.aimX;B.ry=B.aimY;B.swx=0;B.swy=0;
+  B.nozX=B.cx;B.nozY=VH-58;
+  const spots=[[0.24,0.20],[0.76,0.44],[0.42,0.82]];    // three well-separated pockets — never clustered
+  B.slimes=spots.map(s=>{const r=9+((Math.random()*3)|0);   // bigger, far easier to land the reticle on
+    const nl=5+((Math.random()*2)|0),lobes=[];             // irregular pulsating-splash silhouette
+    for(let i=0;i<nl;i++)lobes.push({a:i/nl*6.283+Math.random()*0.6,d:0.42+Math.random()*0.36,r:0.42+Math.random()*0.26,ph:Math.random()*6.28});
+    return {x:Math.round(B.bx+B.bw*s[0]+(Math.random()-.5)*8),
+      y:Math.round(B.by+B.bh*s[1]+(Math.random()-.5)*8),r,burn:0,dead:false,ph:Math.random()*6.28,hitT:0,lobes};});
+  B.limit=10;B.time=0;B.killed=0;B.won=false;B.doneT=0;B.outcome=null;
+  B.hint=3.0;B.flash=0;B.hitFlash=0;B.firing=false;B.onTarget=false;
+  B.swayAmp=2.2+tc*0.5;B.aimAcc=0.82;B.aimDrag=0.86;B.burnRate=6.0;   // deeper sacs sway a touch harder
+  B.fx.length=0;
+  mineEdge=false;actionEdge=false;input.action=false;flameFire=false;
+  input.jx=0;input.jy=0;input.up=input.down=input.left=input.right=false;
+  setMode('flame');sfx.start();
+  if(tutorialsOn&&!flameIntroSeen){flameIntroSeen=true;startFlameIntro();}
+}
+function closeFlame(){                                   // abort — the sac stays live, no progress
+  if(!flameObj){if(state.mode==='flame')setMode('play');return;}
+  flameObj=null;flameFire=false;setMode('play');sfx.back();
+  showMsg('backed off the sac — it is still live');
+}
+function flameEnd(win){
+  if(flameS.doneT>0)return;
+  flameS.won=win;flameS.outcome=win?'clear':'bust';flameS.doneT=win?1.0:0.9;flameS.flash=0.5;
+  if(win)sfx.build();else{sfx.boom();shake=Math.max(shake,5);}
+}
+function flameSpark(x,y,col){flameS.fx.push({kind:'spk',x,y,vx:(Math.random()-.5)*50,vy:(Math.random()-.5)*50,life:0.2+Math.random()*0.15,max:0.35,size:1+Math.random(),col,seed:0});}
+function spawnFlameFx(rx,ry){
+  const t=state.tick,B=flameS;
+  if((t%2)===0)for(let k=0;k<2;k++)B.fx.push({kind:'bub',x:rx+(Math.random()-.5)*6,y:ry+(Math.random()-.5)*6,
+    vx:(Math.random()-.5)*14,vy:-22-Math.random()*26,life:0.5+Math.random()*0.4,max:0.9,size:1+Math.random()*1.4,col:'#bfe6ff',seed:(Math.random()*100)|0});
+  if((t%3)===0){const f=Math.random(),bx=B.nozX+(rx-B.nozX)*f,by=B.nozY+(ry-B.nozY)*f;
+    B.fx.push({kind:'bub',x:bx+(Math.random()-.5)*3,y:by,vx:(Math.random()-.5)*10,vy:-30-Math.random()*20,life:0.4+Math.random()*0.3,max:0.7,size:1+Math.random(),col:'#8fd8ff',seed:(Math.random()*100)|0});}
+  B.fx.push({kind:'spk',x:rx,y:ry,vx:(Math.random()-.5)*40,vy:(Math.random()-.5)*40-10,life:0.16+Math.random()*0.12,max:0.28,size:1+Math.random(),col:(Math.random()<0.5?'#9fe0ff':'#5bb8ff'),seed:0});
+}
+function updateFlameFx(){
+  const B=flameS;
+  for(let i=B.fx.length-1;i>=0;i--){const s=B.fx[i];s.life-=1/60;if(s.life<=0){B.fx.splice(i,1);continue;}
+    s.x+=s.vx/60;s.y+=s.vy/60;
+    if(s.kind==='bub'){s.vy-=10/60;s.x+=Math.sin((state.tick+s.seed)*0.2)*0.3;}
+    else{s.vy+=30/60;s.vx*=0.94;}}
+}
+function flameInput(){
+  const o=flameObj,B=flameS;if(!o){if(state.mode==='flame')setMode('play');return;}
+  if(deckActive){B.firing=false;return;}      // the torch primer is up — nothing ticks behind it
+  // AIR IS FROZEN for the duration of the minigame — no passive drain, no drowning while you work.
+  // Backdraft/scald hits still cost air (see the burn branches): that's the sac's own risk.
+  if(player.attached)player.oxygen=player.maxOxygen;
+  player.drown=0;
+  if(B.hint>0)B.hint-=1/60;
+  if(B.flash>0)B.flash-=1/60;
+  if(B.hitFlash>0)B.hitFlash-=1/60;
+  // end animation → hand back to the world, plant the fused sac blast, count the step
+  if(B.doneT>0){B.doneT-=1/60;updateFlameFx();
+    if(B.doneT<=0){const win=B.won;flameObj=null;flameFire=false;setMode('play');
+      completeMissionObj(o);
+      if(win){showMsg('SAC BURNED CLEAN — no blowback');shake=Math.max(shake,2);}
+      else{podBlasts.push({x:o.x,y:o.y,tier:o.tier,t:0,fuse:0.4,win:false});   // bust: gas erupts right in the diver's face
+        showMsg('TIMER BUST — the sac ruptures on you!');shake=Math.max(shake,8);}}
+    return;}
+  // ==== aim: analog input + arrows, momentum (drag) + gentle autonomous sway ====
+  let ix=(input.jx||0)+((input.right?1:0)-(input.left?1:0));
+  let iy=(input.jy||0)+((input.down?1:0)-(input.up?1:0));
+  const im=Math.hypot(ix,iy);if(im>1){ix/=im;iy/=im;}
+  B.vx=(B.vx+ix*B.aimAcc)*B.aimDrag;B.vy=(B.vy+iy*B.aimAcc)*B.aimDrag;
+  B.aimX=clamp(B.aimX+B.vx,B.bx,B.bx+B.bw);B.aimY=clamp(B.aimY+B.vy,B.by,B.by+B.bh);
+  const t=state.tick,A=B.swayAmp;
+  B.swx=Math.sin(t*0.045+1.0)*A+Math.sin(t*0.021)*A*0.5;
+  B.swy=Math.cos(t*0.038+2.3)*A+Math.sin(t*0.017)*A*0.5;
+  const rx=clamp(B.aimX+B.swx,B.bx-4,B.bx+B.bw+4),ry=clamp(B.aimY+B.swy,B.by-4,B.by+B.bh+4);
+  B.rx=rx;B.ry=ry;
+  // ==== fire: thin flame + bubbles; burn the slime under the reticle ====
+  const firing=(input.action||flameFire);B.firing=firing;
+  let hit=null;
+  for(const s of B.slimes){if(s.dead)continue;if(Math.hypot(rx-s.x,ry-s.y)<=s.r+4){hit=s;break;}}  // generous hitbox
+  B.onTarget=!!hit;
+  if(firing){spawnFlameFx(rx,ry);
+    if(hit){hit.burn+=B.burnRate/60;B.hitFlash=0.2;hit.hitT=0.18;   // per-slime hit flash confirms registration
+      if((t%3)===0)flameSpark(hit.x,hit.y,'#bfe9ff');
+      // GREEN BLEED — droplets spray off the slime every frame the burn registers
+      for(let g=0;g<2;g++){const a=Math.random()*6.283,sp=22+Math.random()*44;
+        B.fx.push({kind:'spk',x:hit.x+Math.cos(a)*hit.r*0.6,y:hit.y+Math.sin(a)*hit.r*0.6,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp-8,life:0.24+Math.random()*0.22,max:0.46,size:1+Math.random()*1.7,col:(Math.random()<0.5?'#7dff4a':'#39c66a'),seed:0});}
+      if(hit.burn>=6){hit.dead=true;hit.burn=6;B.killed++;sfx.pop();
+        for(let k=0;k<18;k++){const a=Math.random()*6.283,sp=30+Math.random()*72;   // green splatter burst on kill
+          B.fx.push({kind:'spk',x:hit.x,y:hit.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:0.3+Math.random()*0.26,max:0.56,size:1+Math.random()*2,col:(k%3?'#7dff4a':'#c2ff5f'),seed:0});}
+        if(B.killed>=3){flameEnd(true);return;}}}}
+  // un-flamed slimes cool a touch (so drifting off-target costs a little, gently)
+  for(const s of B.slimes){if(!s.dead&&!(firing&&s===hit))s.burn=Math.max(0,s.burn-0.8/60);}
+  for(const s of B.slimes){s.ph+=1/60;if(s.hitT>0)s.hitT-=1/60;}
+  updateFlameFx();
+  // ==== timer (checked after kills so a same-frame third kill still wins) ====
+  B.time+=1/60;
+  if(B.time>=B.limit){flameEnd(false);return;}
+  if(queueCraft){queueCraft=false;closeFlame();}
+}
+// --- pixel cyberpunk metal urn: knot-driven silhouette, metal scanlines, seams, rivets, lit interior ---
+function vaseHW(knots,y){if(y<knots[0][0]||y>knots[knots.length-1][0])return 0;
+  for(let i=0;i<knots.length-1;i++){const a=knots[i],b=knots[i+1];if(y>=a[0]&&y<=b[0]){const f=(y-a[0])/(b[0]-a[0]||1);return a[1]+(b[1]-a[1])*f;}}return 0;}
+function drawVase(cx,sv){
+  const B=flameS,knots=[[70,54],[76,60],[82,30],[104,38],[150,72],[190,78],[228,72],[266,46],[280,32],[292,40],[300,36]];
+  ctx.globalCompositeOperation='lighter';
+  radial(ctx,cx,B.by+B.bh*0.5+sv,92,'rgba(70,200,90,0.10)','rgba(0,0,0,0)');   // interior bio-glow behind
+  ctx.globalCompositeOperation='source-over';
+  const y0=knots[0][0],y1=knots[knots.length-1][0];
+  for(let y=y0;y<=y1;y++){const hw=Math.round(vaseHW(knots,y));if(hw<=0)continue;const Y=y+sv;
+    px(ctx,cx-hw,Y,hw*2,1,'#243743');                                          // metal body
+    px(ctx,cx-hw,Y,Math.max(1,Math.round(hw*0.5)),1,'#31505f');                // left highlight
+    px(ctx,cx+Math.round(hw*0.4),Y,Math.max(1,Math.round(hw*0.6)),1,'#182833');// right shade
+    const inner=hw-6;
+    if(inner>4&&y>96&&y<268){px(ctx,cx-inner,Y,inner*2,1,'#08140f');           // dark cavity
+      px(ctx,cx-Math.round(inner*0.5),Y,inner,1,'#0c1f14');}                    // faint green core
+    px(ctx,cx-hw,Y,1,1,'#0a1620');px(ctx,cx+hw-1,Y,1,1,'#0a1620');}            // edge outline
+  for(const sy of [92,150,196,240]){const hw=Math.round(vaseHW(knots,sy));if(hw<=0)continue;const Y=sy+sv;
+    px(ctx,cx-hw,Y,hw*2,1,'#0e1e28');                                          // seam band
+    px(ctx,cx-hw+1,Y-1,2,2,'#40707f');px(ctx,cx+hw-3,Y-1,2,2,'#40707f');}      // rivets
+  for(let y=84;y<104;y++)px(ctx,cx-1,y+sv,2,1,'rgba(60,200,255,0.25)');        // lit neck seam
+  {const hw=Math.round(vaseHW(knots,74));px(ctx,cx-hw,73+sv,hw*2,1,'#4d7f92');px(ctx,cx-hw,74+sv,hw*2,2,'#3a5f6f');}
+  pxTextC('CONTAINMENT URN',cx,304+sv,'#2f5a6a');
+}
+// a mutant angler-fish pup, curled up and clinging to its pocket of the urn: a bulbous
+// hunched body, an underbite full of needle teeth, and a bioluminescent lure that bobs
+// on a thin stalk. Same contract as the old blob it replaces — s.x/s.y/s.r drive the
+// hitbox and never change here, s.ph/s.burn/s.hitT still drive all the animation — this
+// is a pure reskin, nothing about how it's targeted or killed moved.
+function drawSlime(s,t,ox,oy){
+  const X=s.x+(ox||0), Y=s.y+(oy||0), heat=clamp(s.burn/6,0,1);
+  if(s.dead){                                                    // charred little skeleton left curled in place
+    px(ctx,X-4,Y-1,8,2,'#241a12');px(ctx,X-5,Y,2,2,'#1c1410');px(ctx,X+3,Y-2,3,2,'#1c1410');
+    px(ctx,X-2,Y-2,1,1,'#3a2a12');px(ctx,X+1,Y-3,1,1,'#3a2a12');px(ctx,X-1,Y+1,1,1,'#2a1e0c');
+    return;}
+  const breathe=1+Math.sin(t*0.10+s.ph)*0.05-heat*0.14;           // slow gulping breath; hunches in as it chars
+  const R=Math.max(3,s.r*breathe), hitOn=s.hitT>0;
+  const gcol=heat>0.45?'150,235,220':'110,240,90';
+  ctx.globalCompositeOperation='lighter';
+  radial(ctx,X,Y,R+13,'rgba('+gcol+','+(0.20+heat*0.18+(hitOn?0.28:0)).toFixed(2)+')','rgba(0,0,0,0)');
+  ctx.globalCompositeOperation='source-over';
+  const base=heat>0.5?'#7ee0bf':'#4fbf5a', edge=heat>0.5?'#356f62':'#1f5a24', belly=heat>0.5?'#c8fff0':'#a8f08a';
+  // hunched teardrop body — wider at the head, tapering to a short tail flick
+  pxDisc(ctx,X-1,Y,R+1,edge);pxDisc(ctx,X-1,Y,R,base);
+  px(ctx,Math.round(X+R*0.5),Math.round(Y-2),Math.max(2,Math.round(R*0.6)),4,edge);   // tail-flick silhouette
+  px(ctx,Math.round(X+R*0.5),Math.round(Y-1),Math.max(1,Math.round(R*0.5)),2,base);
+  px(ctx,Math.round(X-R*0.35),Math.round(Y-R*0.55),Math.round(R*0.7),Math.max(2,Math.round(R*0.3)),belly); // pale belly patch
+  // dorsal mutation-spikes along the back
+  for(let i=0;i<3;i++){const sx=Math.round(X-R*0.5+i*R*0.5),sy=Math.round(Y-R*0.85);
+    px(ctx,sx,sy,1,3,edge);px(ctx,sx,sy,1,1,belly);}
+  // underbite jaw, bristling with needle teeth
+  const jy=Math.round(Y+R*0.35);
+  px(ctx,Math.round(X-R*0.55),jy,Math.round(R*1.0),Math.max(2,Math.round(R*0.3)),'#1a2a1c');
+  for(let i=0;i<4;i++)px(ctx,Math.round(X-R*0.45+i*R*0.32),jy,1,2,'#eafcef');
+  // eye — small and mean
+  px(ctx,Math.round(X-R*0.15),Math.round(Y-R*0.15),2,2,'#0a1208');px(ctx,Math.round(X-R*0.15),Math.round(Y-R*0.15),1,1,'#ff4d5e');
+  // the lure: a thin stalk off the crown, bright bioluminescent bulb bobbing at the tip
+  const lp=0.55+0.45*Math.sin(t*0.16+s.ph*1.6),lx=Math.round(X-R*0.5),ly=Math.round(Y-R-3-lp*2),lbase=Math.round(Y-R-2);
+  px(ctx,lx,ly,1,Math.max(2,lbase-ly),'#2f7a34');
+  ctx.globalCompositeOperation='lighter';radial(ctx,lx,ly,6+lp*3,'rgba(210,255,120,'+(0.5+lp*0.35).toFixed(2)+')','rgba(0,0,0,0)');ctx.globalCompositeOperation='source-over';
+  px(ctx,lx-1,ly-1,2,2,lp>0.5?'#fbffcf':'#d8ff9a');
+  for(let i=0;i<Math.floor(s.burn);i++){const a=s.ph+i*1.7,d=R*0.5;px(ctx,(X+Math.cos(a)*d)|0,(Y+Math.sin(a)*d)|0,2,2,'#1c2814');}
+  if(hitOn){const k=clamp(s.hitT/0.18,0,1);                                       // HIT-REGISTERED flash
+    ctx.globalCompositeOperation='lighter';radial(ctx,X,Y,R+7,'rgba(190,255,150,'+(0.55*k).toFixed(2)+')','rgba(0,0,0,0)');ctx.globalCompositeOperation='source-over';
+    px(ctx,Math.round(X)-1,Math.round(Y)-1,2,2,'#ffffff');}
+  for(let i=0;i<6;i++){const a=-1.5708+i/6*6.283,on=i<Math.round(s.burn);         // 6-pip burn meter ("6 presses")
+    px(ctx,(X+Math.cos(a)*(R+5))|0,(Y+Math.sin(a)*(R+5))|0,2,2,on?'#bfe9ff':'#20402e');}
+}
+function drawFlameBeam(){
+  const B=flameS,nx=B.nozX,ny=B.nozY,rx=B.rx,ry=B.ry,dx=rx-nx,dy=ry-ny;
+  ctx.globalCompositeOperation='lighter';
+  ctx.strokeStyle='rgba(60,150,255,0.20)';ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(nx,ny);ctx.lineTo(rx,ry);ctx.stroke();
+  ctx.strokeStyle='rgba(120,200,255,0.5)';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(nx,ny);
+  const seg=6,ux=dx/(Math.hypot(dx,dy)||1),uy=dy/(Math.hypot(dx,dy)||1);
+  for(let i=1;i<=seg;i++){const f=i/seg,j=(Math.random()-.5)*2*(1-f);ctx.lineTo(nx+dx*f-uy*j,ny+dy*f+ux*j);}ctx.stroke();
+  ctx.strokeStyle='rgba(224,246,255,0.95)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(nx,ny);ctx.lineTo(rx,ry);ctx.stroke();
+  radial(ctx,rx,ry,7+Math.random()*3,'rgba(150,210,255,0.6)','rgba(60,120,255,0)');
+  ctx.globalCompositeOperation='source-over';
+}
+function drawReticle(x,y,on){
+  const c=on?'#7dff9a':'#eaf6ff',c2=on?'125,255,154':'150,220,255',r=6;
+  ctx.globalCompositeOperation='lighter';radial(ctx,x,y,10,'rgba('+c2+',0.25)','rgba(0,0,0,0)');ctx.globalCompositeOperation='source-over';
+  px(ctx,x-1,y-r,2,4,c);px(ctx,x-1,y+r-3,2,4,c);px(ctx,x-r,y-1,4,2,c);px(ctx,x+r-3,y-1,4,2,c);
+  px(ctx,x-1,y-1,2,2,on?'#dfffe6':'#bfe6ff');
+  ctx.save();ctx.strokeStyle=c;ctx.lineWidth=1;ctx.beginPath();ctx.arc(x,y,r,0,6.283);ctx.stroke();ctx.restore();
+}
+function drawNozzle(cx){
+  const B=flameS,nx=Math.round(cx),ny=B.nozY;
+  px(ctx,nx-7,ny,14,12,'#1a2733');px(ctx,nx-7,ny,14,1,'#2f4d5c');px(ctx,nx-7,ny,1,12,'#2f4d5c');
+  px(ctx,nx-3,ny-4,6,5,'#26333f');px(ctx,nx-2,ny-6,4,3,'#33505f');
+  px(ctx,nx-1,ny-7,2,2,B.firing?'#cfeeff':'#39c6ff');
+  for(let i=0;i<3;i++)px(ctx,nx-5+i*4,ny+4,2,3,'#0e1d28');
+}
+function renderFlame(){
+  const o=flameObj,B=flameS;if(!o){if(state.mode==='flame')setMode('play');return;}
+  const t=state.tick;RCX=0;RCY=0;
+  const sh=shake>0?(Math.random()-.5)*shake:0,sv=shake>0?(Math.random()-.5)*shake:0;
+  ctx.fillStyle='#04080e';ctx.fillRect(0,0,VW,VH);
+  for(let gy=2;gy<VH;gy+=10)px(ctx,0,gy,VW,1,'#07111a');
+  ctx.globalCompositeOperation='lighter';
+  for(let i=0;i<3;i++){const x=((t*0.12+i*80)%(VW+60))-30;radial(ctx,x,VH*0.4,70,'rgba(30,90,120,0.045)','rgba(30,90,120,0)');}
+  ctx.globalCompositeOperation='source-over';
+  for(let i=0;i<7;i++){const bx=(i*47+((t*0.6)%400))%VW,by=VH-((t*0.7+i*63)%VH);px(ctx,bx|0,by|0,1,1,'rgba(120,180,210,0.22)');}
+  const cx=Math.round(VW/2+sh);
+  // header
+  px(ctx,8,6,VW-16,11,'#081420');px(ctx,8,6,VW-16,1,'#1c4152');
+  px(ctx,8,6,1,4,'#39c6ff');px(ctx,8,6,4,1,'#39c6ff');px(ctx,VW-9,6,1,4,'#39c6ff');px(ctx,VW-12,6,4,1,'#39c6ff');
+  pxText(ctx,'BIO-INCINERATOR',14,9,'#7fe0ff');
+  {const on=B.killed>=3;pxText(ctx,on?'CLEAR':'LIVE',VW-32,9,on?'#3dff9a':'#ff7a5c');}
+  // timer
+  const left=Math.max(0,B.limit-B.time),frac=clamp(left/B.limit,0,1);
+  const tbx=14,tby=22,tbw=VW-28,tcol=frac>0.5?'#3dff9a':frac>0.25?'#ffcf3a':'#ff4d5e';
+  pxText(ctx,'PURGE WINDOW',tbx,tby,'#3a6f88');
+  px(ctx,tbx-1,tby+8,tbw+2,6,'#0a1420');px(ctx,tbx,tby+9,Math.round(tbw*frac),4,tcol);
+  if(frac<0.25&&(t>>2&1))px(ctx,tbx,tby+9,tbw,4,'rgba(255,77,94,0.25)');
+  pxTextC(left.toFixed(1)+'s',cx,tby+17,tcol);
+  {const tot=3,pw=16,g=7,rw=tot*(pw+g)-g,ppx=Math.round(cx-rw/2),py=tby+25;   // slime kill pips
+   for(let i=0;i<tot;i++){const dead=i<B.killed;px(ctx,ppx+i*(pw+g),py,pw,5,dead?'#c2ff5f':'#123f28');if(dead)px(ctx,ppx+i*(pw+g),py,pw,1,'#eaffc0');}}
+  // urn + slimes
+  drawVase(cx,sv);
+  for(const s of B.slimes)drawSlime(s,t,sh,sv);
+  // flame + reticle
+  if(B.firing&&B.doneT<=0)drawFlameBeam();
+  drawReticle(Math.round(B.rx+sh),Math.round(B.ry+sv),B.onTarget);
+  drawNozzle(cx);
+  // fx
+  for(const s of B.fx){const a=clamp(s.life/s.max,0,1);
+    if(s.kind==='bub'){ctx.globalAlpha=0.5*a;ctx.strokeStyle=s.col;ctx.lineWidth=1;ctx.beginPath();ctx.arc(s.x+sh,s.y+sv,s.size,0,6.28);ctx.stroke();}
+    else{ctx.globalAlpha=0.85*a;ctx.fillStyle=s.col;const r=Math.max(1,s.size);ctx.fillRect(s.x+sh-r/2,s.y+sv-r/2,r,r);}}
+  ctx.globalAlpha=1;
+  // hint / status line + fire button glyph
+  if(B.hint>0){const a=clamp(B.hint/3,0,1);ctx.globalAlpha=a;pxTextC('STICK TO AIM  ·  HOLD FIRE TO BURN',cx,VH-34,'#6f93a6');ctx.globalAlpha=1;}
+  else pxTextC(B.onTarget?(B.firing?'BURNING':'ON TARGET — HOLD FIRE'):'MOVE ONTO A PUP',cx,VH-34,B.onTarget?'#9fe0a0':'#3a5a6a');
+  // end overlays
+  if(B.doneT>0){const k=clamp(B.doneT/1.0,0,1);
+    if(B.won){ctx.fillStyle='rgba(194,255,95,'+(0.22*k).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);
+      pxTextGhost(ctx,'PURGED',cx,Math.round(VH*0.5),3,'#183a10',1);pxTextXL(ctx,'PURGED',cx,Math.round(VH*0.5),3,'#dfffb0',1);}
+    else{ctx.fillStyle='rgba(255,80,50,'+(0.26*k).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);
+      pxTextGhost(ctx,'RUPTURE',cx,Math.round(VH*0.5),3,'#3a1006',1);pxTextXL(ctx,'RUPTURE',cx,Math.round(VH*0.5),3,'#ffcaa0',1);}}
+  if(shake>0)shake-=0.6;
+}
+
+// ============================================================================
+//  CITY TRANSVERSAL — the U-552 pipe run between cities
+// ----------------------------------------------------------------------------
+//  Picking a line on the transit grid used to teleport. Now it puts the diver in
+//  a Type VIIC boat and pushes it down the inter-city main: the stream carries
+//  you forward, always, and all you own is up, down, the bow tubes, and a mine
+//  bay that drops out of the deck and the keel. The things living in the pipe
+//  know a boat cannot shoot backwards — they come at you head-on, swing wide
+//  over or under, and take exactly one bite at the stern before peeling off.
+//  Boost is the answer to that, and the reason boost is rationed.
+//
+//  Runs as its own mode ('sub') on the same contract as the crank/flame
+//  minigames: subLaunch → per-frame subInput() → renderSub() owns the canvas →
+//  hand back with setMode. The world sim freezes for free (update() only runs
+//  in 'play'). Nothing in here is serialized: the checkpoint is the exit gate,
+//  which openCityMap() already saved before the boat ever launched.
+// ============================================================================
+const subS={
+  seed:0, t:0, dist:0, len:0, sx:0, y:0, vy:0, roll:0,
+  hull:0, maxHull:0, boost:0, boostMax:0, boosting:false, reload:0, mines:0, minesMax:0,
+  torps:[], bombs:[], mobs:[], loot:[], obs:[], fx:[], bub:[], lamps:[],
+  scrap:0, doneT:0, killT:0, hitFlash:0, warn:0, hint:0, nextWave:0, wave:0,
+  scrapeCD:0, burst:0, gateFlash:0
+};
+// screen band the pipe is allowed to occupy — the HUD owns the strips above and below it
+function subBandTop(){return 15;}
+function subBandBot(){return VH-15;}
+// The bore, sampled in WORLD x so the profile scrolls past instead of breathing in place.
+// Two slow waves move the centreline, two faster ones open and close the diameter; the
+// floor is a hard minimum so the channel is never tighter than the boat can thread.
+function subBore(wx){
+  const s=subS.seed, T=subBandTop(), B=subBandBot(), H=B-T, mid0=T+H/2;
+  const mid=mid0+Math.sin(wx*0.0031+s)*H*0.10+Math.sin(wx*0.0011+s*1.7)*H*0.06;
+  let half=H*0.20+Math.sin(wx*0.0024+s*2.3)*H*0.075+Math.sin(wx*0.0051+s*0.6)*H*0.035;
+  half=Math.max(Math.min(SUB_H*2.6,H*0.22),half);
+  let top=mid-half, bot=mid+half;
+  if(top<T){bot+=T-top;top=T;} if(bot>B){top-=bot-B;bot=B;}
+  return {top:Math.max(T,top),bot:Math.min(B,bot)};
+}
+function subWorldToScreen(wx){return wx-subS.dist+subS.sx;}
+function subScreenToWorld(x){return x-subS.sx+subS.dist;}
+function subBoreAt(x){return subBore(subScreenToWorld(x));}   // bore under a SCREEN column
+
+// ---- upgrade-driven numbers -------------------------------------------------
+// Levels live on player.subUpg so they ride the save and survive every transit.
+function subLv(k){const u=player&&player.subUpg;return (u&&u[k])||0;}
+function subTorpSpeed(){return SUB_TORP_SPD+SUB_TORP_STEP*subLv('torpSpd');}
+function subReload(){return Math.max(SUB_RELOAD_MIN,SUB_RELOAD*Math.pow(SUB_RELOAD_MUL,subLv('torpRl')));}
+function subSplashR(){return SUB_SPLASH_R+SUB_SPLASH_STEP*subLv('torpSplash');}
+function subSplashDmg(){return SUB_SPLASH_DMG+SUB_SPLASH_DSTEP*subLv('torpSplash');}
+function subBoostRegen(){return SUB_BOOST_REGEN+SUB_REGEN_STEP*subLv('boostRegen');}
+function subMineR(){return SUB_MINE_R+SUB_MINE_RSTEP*subLv('mineDef');}
+function subMineDmg(){return SUB_MINE_DMG+SUB_MINE_DSTEP*subLv('mineDef');}
+function subMinesMax(){return SUB_MINE_BASE+SUB_MINE_STEP*subLv('mineAmmo');}
+function subMaxHull(){return SUB_HULL_BASE+SUB_HULL_STEP*subLv('hull');}
+function subRunLen(city){return 5400+city*900;}               // fixed-length run, longer every city
+function subUpgCost(k,lv){return (k==='hull'||k==='torpSplash')?(30+lv*20):(18+lv*14);}
+
+// ---- launch -----------------------------------------------------------------
+function subLaunch(ch){
+  if(!ch)return;
+  pendingCity=ch;
+  subS.seed=((ch.id||0)*2654435761>>>0)%1000/13.7;
+  subS.t=0;subS.dist=0;subS.len=subRunLen(ch.city||CITY+1);
+  subS.sx=Math.round(VW*0.27);
+  const b=subBore(0);subS.y=(b.top+b.bot)/2;subS.vy=0;subS.roll=0;
+  subS.maxHull=subMaxHull();subS.hull=subS.maxHull;
+  subS.boostMax=SUB_BOOST_MAX;subS.boost=SUB_BOOST_MAX;subS.boosting=false;
+  subS.reload=0;subS.minesMax=subMinesMax();subS.mines=subS.minesMax;
+  subS.torps.length=0;subS.bombs.length=0;subS.mobs.length=0;subS.fx.length=0;subS.bub.length=0;
+  subS.scrap=0;subS.doneT=0;subS.killT=0;subS.hitFlash=0;subS.warn=0;subS.hint=4.2;
+  subS.wave=0;subS.nextWave=340;subS.scrapeCD=0;subS.burst=0;subS.gateFlash=0;subS.gateSeen=false;
+  subSeedPipe();
+  subBoostTrig=false;mineEdge=false;actionEdge=false;clipEdge=false;
+  input.up=false;input.down=false;input.left=false;input.right=false;
+  setMode('sub');sfx.start();
+  if(tutorialsOn&&!subIntroSeen){subIntroSeen=true;startSubIntro();}
+}
+// loot, obstacles and lamp posts are laid down once, in world space, so the run is
+// the same shape every time you replay that particular transit line
+function subSeedPipe(){
+  const R=_rng((subS.seed*7919|0)^0x5e77e2), L=subS.len;
+  subS.loot.length=0;subS.obs.length=0;subS.lamps.length=0;
+  for(let wx=240;wx<L-160;wx+=110+R()*130){                    // salvage in the current
+    const b=subBore(wx), h=b.bot-b.top;
+    const r=R(), kind=r<0.62?'crate':(r<0.88?'box':'gem');
+    // a third of it deliberately parked in the tight lane against a wall — reaching it costs position
+    const hug=R()<0.34, y=hug?(R()<0.5?b.top+12:b.bot-12):(b.top+18+R()*(h-36));
+    subS.loot.push({wx,y,kind,got:0,ph:R()*6.28});
+  }
+  for(let wx=420;wx<L-220;wx+=200+R()*260){                    // broken ribs and torn grating
+    const b=subBore(wx), up=R()<0.5, len=14+R()*24;
+    subS.obs.push({wx,up,len,w:6+((R()*5)|0),y:up?b.top:b.bot,ph:R()*6.28});
+  }
+  for(let wx=120;wx<L;wx+=170)subS.lamps.push({wx,ph:R()*6.28});
+}
+
+// ---- weapons ----------------------------------------------------------------
+// The tubes are in the BOW. There is no turret, no rear gun, no aiming: a fish
+// leaves flat and level at whatever depth the boat was at when you pulled. Every
+// design decision downstream of this — the flanking AI, the mine bay, boost —
+// exists because of that one limitation.
+function subFire(){
+  if(state.mode!=='sub'||subS.doneT>0||subS.killT>0||deckActive)return;
+  if(subS.reload>0){sfx.deny();return;}
+  subS.reload=subReload();
+  subS.torps.push({x:subS.sx+SUB_W/2+2,y:subS.y+(subS.roll*1.5),v:subTorpSpeed(),life:2.6,t:0});
+  subS.burst=0.12;sfx.mine();
+  for(let i=0;i<5;i++)subFx(subS.sx+SUB_W/2,subS.y,(Math.random()*40),(Math.random()-.5)*30,0.3,'#bfe8ff',1);
+}
+// The mine bay: one charge out of the deck (dir -1) or the keel (dir +1). It drifts
+// away from the hull, arms after a beat so you cannot suicide with it, and holds
+// station in the current until something swims into it. This is the only weapon
+// that reaches the blind arcs above, below and behind.
+function subDropMine(dir){
+  if(state.mode!=='sub'||subS.doneT>0||subS.killT>0||deckActive)return;
+  if(subS.mines<=0){sfx.deny();return;}
+  subS.mines--;
+  subS.bombs.push({x:subS.sx-4,y:subS.y+dir*(SUB_H/2+1),vy:dir*34,arm:0.25,life:4.2,t:0,dir});
+  sfx.fuse();
+  for(let i=0;i<4;i++)subFx(subS.sx-4,subS.y+dir*6,(Math.random()-.5)*20,dir*20,0.35,'#8fb6c2',1);
+}
+function subFx(x,y,vx,vy,life,col,r){subS.fx.push({x,y,vx,vy,life,max:life,col,r:r||1});}
+function subBoom(x,y,r,dmg,col){
+  subS.fx.push({x,y,vx:0,vy:0,life:0.34,max:0.34,col:col||'#ffd27a',r:r,blast:true});
+  for(let i=0;i<14;i++){const a=Math.random()*6.28318,s=20+Math.random()*r*3.4;
+    subFx(x,y,Math.cos(a)*s,Math.sin(a)*s,0.25+Math.random()*0.4,(i&1)?'#ffd27a':'#ff8a3c',1+((Math.random()*2)|0));}
+  for(const m of subS.mobs){if(m.dead)continue;
+    if(Math.hypot(m.x-x,m.y-y)<r+m.r)subHurtMob(m,dmg);}
+  shake=Math.max(shake,r>24?7:5);sfx.boom();
+}
+function subHurtMob(m,d){
+  m.hp-=d;m.flash=0.18;
+  if(m.hp<=0&&!m.dead){
+    m.dead=0.5;m.st='dead';
+    subS.scrap+=m.kind==='meg'?9:4;                   // predators are worth salvaging too
+    for(let i=0;i<12;i++){const a=Math.random()*6.28318,s=10+Math.random()*50;
+      subFx(m.x,m.y,Math.cos(a)*s,Math.sin(a)*s,0.4+Math.random()*0.5,m.kind==='meg'?'#9fb0b4':'#c76fd6',2);}
+    sfx.pop();
+  }
+}
+// ---- enemies ----------------------------------------------------------------
+// Both kinds run the same five-state loop, only the numbers differ:
+//   spawn → close → flank → strike → leave.
+// They ALWAYS enter ahead of the boat (the only window the tubes can answer),
+// always try to come round the top or the bottom rather than through the bow,
+// and take exactly one bite at the stern before leaving for good.
+// `lunge` is the number the whole boost fantasy hangs on. The stream under boost runs at
+// SUB_FWD*(SUB_BOOST_MUL-1) = 80 px/s faster than the boat's neighbours can hold, so a lunge
+// slower than that CANNOT close on a boosting stern — it stalls, the window runs out, and the
+// thing peels off. Unboosted the same lunge is a fast, unanswerable bite. Keep both kinds
+// below 80 or the coil stops being the answer to a predator at the back.
+const SUB_MOB={   // close/flank/lunge cut 25% across the board — slower predators, same shapes
+  squid:{hp:2, r:9,  close:39,   flank:55.5, lunge:61.5, stand:26, dmg:1, turn:0.95, win:1.1},
+  meg:  {hp:2, r:15, close:27,   flank:37.5, lunge:51,   stand:42, dmg:2, turn:1.25, win:1.5}
+};
+function subSpawnMob(kind,yFrac){
+  const K=SUB_MOB[kind], x=VW+24+Math.random()*40;
+  const b=subBoreAt(VW), h=b.bot-b.top;
+  const y=b.top+K.r+4+(yFrac==null?Math.random():yFrac)*(h-K.r*2-8);
+  const hp=K.hp+(kind==='squid'&&CITY>=3?1:0)+(kind==='meg'&&CITY>=4?2:0);
+  subS.mobs.push({kind,x,y,vx:0,vy:0,hp,maxHp:hp,r:K.r,st:'close',side:0,t:0,lungeT:0,
+    ph:Math.random()*6.28,flash:0,dead:0,struck:false,jaw:0,tail:Math.random()*6.28});
+}
+// distance-keyed waves: singles, then mixed pairs, then a pair of megalodons as the
+// last pressure before the intake gate. Later cities send the same shapes, thicker.
+function subWaveTick(){
+  if(subS.dist<subS.nextWave||subS.dist>subS.len-260)return;
+  const f=subS.dist/subS.len, c=Math.min(CITY,6), w=subS.wave++;
+  let n=1+((f>0.35)?1:0)+((f>0.72)?1:0)+((c>=3&&f>0.5)?1:0);
+  for(let i=0;i<n;i++){
+    let kind='squid';
+    if(f>0.55&&(i===0||Math.random()<0.4))kind='meg';
+    if(f>0.86)kind=(i%2===0)?'meg':'squid';
+    if(f<0.3)kind='squid';
+    subSpawnMob(kind,(i+0.5)/n+(Math.random()-.5)*0.22);
+  }
+  subS.nextWave=subS.dist+Math.max(300,560-c*30-f*160)+Math.random()*140;
+}
+function subMobTick(m,dt,flow){
+  const K=SUB_MOB[m.kind];
+  m.t+=dt;m.tail+=dt*(m.kind==='squid'?9:4);
+  if(m.flash>0)m.flash-=dt;
+  if(m.dead){m.dead-=dt;m.x+=m.vx*dt-flow*dt;m.y+=m.vy*dt;m.vx*=0.9;m.vy*=0.9;return;}
+  // the stream: boosting means the water runs faster than the boat's neighbours can swim,
+  // and everything in it loses ground toward the stern. This is what "outrun" means here.
+  m.x-=flow*dt;
+  const dx=m.x-subS.sx, dy=m.y-subS.y;
+  if(m.st==='close'){
+    // it does not just home onto the boat's depth — it weaves hard up and down as it comes
+    // on, two harmonics stacked so the swing never quite repeats, only loosely tracking, so
+    // a torpedo (dead level, no steering) has to be timed for the moment the weave crosses
+    // the boat's own depth rather than fired the instant it's ahead
+    const weave=Math.sin(m.t*(m.kind==='squid'?6.8:4.7)+m.ph)*K.close*(m.kind==='squid'?3.0:3.6)
+               +Math.sin(m.t*(m.kind==='squid'?14.5:9.8)+m.ph*1.7)*K.close*(m.kind==='squid'?1.2:1.5);
+    m.vx=-K.close;m.vy=clamp((subS.y-m.y)*0.25+weave,-K.close*3.8,K.close*3.8);
+    if(m.kind==='squid'){m.vx-=Math.sin(m.t*7+m.ph)*22;m.vy+=Math.cos(m.t*5+m.ph)*26;}   // mantle-jet stutter
+    if(dx<SUB_W*0.9){                                    // abeam the bow: commit to a side and swing wide
+      m.st='flank';
+      const b=subBoreAt(m.x);
+      m.side=(subS.y-b.top>b.bot-subS.y)?-1:1;           // go round whichever side has the water
+      if(Math.random()<0.25)m.side=-m.side;
+    }
+  } else if(m.st==='flank'){
+    const stand=K.stand+Math.sin(m.t*(m.kind==='meg'?4.2:5.4)+m.ph)*(m.kind==='meg'?36:44);   // bobs wide at standoff too
+    const ty=subS.y+m.side*stand;
+    m.vy=clamp((ty-m.y)*3.2,-K.flank*2.0,K.flank*2.0);
+    m.vx=-K.flank*0.85;
+    // it has to be WELL past the stern before it turns, so the bite is a run back up the
+    // wake rather than a sideswipe the moment it draws level with the screws
+    if(dx<-SUB_W*K.turn&&Math.abs(dy)<stand*1.5){m.st='strike';m.t=0;m.lungeT=K.win;}
+    if(dx<-SUB_W-96){m.st='leave';}                                      // shoved too far back: it gives up
+  } else if(m.st==='strike'){
+    m.jaw=Math.min(1,m.jaw+dt*5);m.lungeT-=dt;
+    const ax=(subS.sx-SUB_W*0.42)-m.x, ay=subS.y-m.y, d=Math.hypot(ax,ay)||1;
+    m.vx=ax/d*K.lunge;m.vy=ay/d*K.lunge;
+    if(d<m.r*0.6+7&&!m.struck){m.struck=true;subHullHit(K.dmg,m);m.st='leave';}
+    // one lunge, one window. It does not circle for a second try, and a stern it cannot
+    // catch inside the window is a stern it never catches.
+    if(m.lungeT<=0||dx<-SUB_W-120){m.st='leave';}
+  } else {                                               // 'leave' — one pass only, ever
+    m.jaw=Math.max(0,m.jaw-dt*3);
+    m.vx=-K.flank*1.5;m.vy+=(Math.sin(m.t*3+m.ph)*30-m.vy)*dt*2;
+  }
+  m.x+=m.vx*dt;m.y+=m.vy*dt;
+  const b=subBoreAt(m.x);                                // predators hug the bore, they don't clip through it
+  m.y=clamp(m.y,b.top+m.r*0.6,b.bot-m.r*0.6);
+  if(m.kind==='squid'&&(state.tick&7)===0&&m.st!=='leave')
+    subS.bub.push({x:m.x+m.r*0.6,y:m.y,vy:-8-Math.random()*8,life:0.9,r:1});
+}
+function subHullHit(d,src){
+  if(subS.doneT>0||subS.killT>0)return;
+  subS.hull-=d;subS.hitFlash=0.5;shake=Math.max(shake,d>1?12:8);sfx.hurt();
+  if(src)for(let i=0;i<10;i++)subFx(subS.sx-SUB_W*0.4,subS.y,-(20+Math.random()*70),(Math.random()-.5)*70,0.45,'#ff6a55',2);
+  if(subS.hull<=0){subS.hull=0;subS.killT=1.9;sfx.lose();
+    for(let i=0;i<40;i++){const a=Math.random()*6.28318,s=20+Math.random()*130;
+      subFx(subS.sx,subS.y,Math.cos(a)*s,Math.sin(a)*s,0.5+Math.random()*0.7,(i&1)?'#ffd27a':'#8fb6c2',2);}
+    shake=Math.max(shake,18);}
+}
+
+// ---- the tick ---------------------------------------------------------------
+function subInput(){
+  if(state.mode!=='sub')return;
+  if(deckActive)return;                       // the transit primer is up — the boat holds station
+  const dt=1/60;
+  // AIR IS FROZEN for the length of the transversal — the boat is a sealed hull, the
+  // diver is not swimming. Damage here is measured in HULL, not in the suit's hearts.
+  if(player.attached)player.oxygen=player.maxOxygen;
+  player.drown=0;
+  subS.t+=dt;
+  if(subS.hint>0)subS.hint-=dt;
+  if(subS.hitFlash>0)subS.hitFlash-=dt;
+  if(subS.burst>0)subS.burst-=dt;
+  if(subS.scrapeCD>0)subS.scrapeCD-=dt;
+  if(subS.gateFlash>0)subS.gateFlash-=dt;
+  if(subS.reload>0)subS.reload-=dt;
+
+  // ---- imploded: play the wreck out, then it is a full game over, same as drowning
+  if(subS.killT>0){
+    subS.killT-=dt;subFxTick(dt);
+    if(subS.killT<=0){pendingCity=null;state.loseReason='crushed';setMode('lose');}
+    return;
+  }
+  // ---- through the gate: the arrival flourish, then the dry dock
+  if(subS.doneT>0){
+    subS.doneT-=dt;subS.dist+=SUB_FWD*dt*0.55;subFxTick(dt);
+    if(subS.doneT<=0)openDryDock();
+    return;
+  }
+
+  // ---- boost: EMERGENCY THRUST. It is a trigger, not a throttle — one press with a
+  // full coil lights the burn, and it runs wide open on its own until the coil is bone
+  // dry, no early cutoff and no topping it up mid-run. Then it rebuilds slowly, so
+  // lighting it is a real commitment: use it to make an exit, not to nudge position.
+  if(subBoostTrig&&!subS.boosting&&subS.boost>=subS.boostMax){subS.boosting=true;sfx.dash();}
+  subBoostTrig=false;
+  let boosting=false;
+  if(subS.boosting){
+    boosting=true;subS.boost-=dt;
+    if(subS.boost<=0){subS.boost=0;subS.boosting=false;sfx.deny();}
+  } else {
+    subS.boost=Math.min(subS.boostMax,subS.boost+subBoostRegen()*dt);
+  }
+  const spd=SUB_FWD*(boosting?SUB_BOOST_MUL:1), flow=spd-SUB_FWD;
+  if(boosting&&(state.tick&3)===0){
+    subS.bub.push({x:subS.sx-SUB_W/2-2,y:subS.y+(Math.random()-.5)*5,vy:-4-Math.random()*6,vx:-40-Math.random()*50,life:0.7,r:2});
+    if((state.tick&7)===0)sfx.dash();
+  }
+  // the boat rides forward in frame while the coil fires — you can SEE the ground gained
+  const wantSx=Math.round(VW*(boosting?0.40:0.27));
+  subS.sx+=(wantSx-subS.sx)*Math.min(1,dt*3.2);
+
+  // ---- vertical: heavy, drifting, planes not thrusters
+  let ax=0;
+  if(input.joy)ax=Math.abs(input.jy)>0.18?input.jy:0;
+  else ax=(input.up?-1:0)+(input.down?1:0);
+  subS.vy+=ax*SUB_LIFT*dt;
+  subS.vy*=Math.pow(SUB_VDRAG,dt*60);
+  subS.vy=clamp(subS.vy,-SUB_VMAX,SUB_VMAX);
+  subS.y+=subS.vy*dt;
+  subS.roll+=((clamp(subS.vy/SUB_VMAX,-1,1)*2.2)-subS.roll)*Math.min(1,dt*6);
+  subS.dist+=spd*dt;
+
+  // ---- the bore: scraping the concrete costs speed and paint, not hull. The things
+  // bolted to it — sheared ribs, torn grating — are what actually hole you.
+  const b=subBoreAt(subS.sx), lo=b.top+SUB_H/2+1, hi=b.bot-SUB_H/2-1;
+  if(subS.y<lo||subS.y>hi){
+    const up=subS.y<lo;subS.y=up?lo:hi;subS.vy=up?Math.abs(subS.vy)*0.25:-Math.abs(subS.vy)*0.25;
+    if(subS.scrapeCD<=0){subS.scrapeCD=0.18;sfx.zap();shake=Math.max(shake,3);
+      for(let i=0;i<4;i++)subFx(subS.sx+(Math.random()-.5)*SUB_W,subS.y+(up?-5:5),-(30+Math.random()*50),(up?1:-1)*20,0.3,'#ffd27a',1);}
+  }
+  for(const o of subS.obs){
+    const sx=subWorldToScreen(o.wx);
+    if(sx<subS.sx-SUB_W||sx>subS.sx+SUB_W)continue;
+    const bo=subBore(o.wx), oy0=o.up?bo.top:bo.bot-o.len, oy1=o.up?bo.top+o.len:bo.bot;
+    if(Math.abs(sx-subS.sx)<SUB_W/2+o.w/2&&subS.y+SUB_H/2>oy0&&subS.y-SUB_H/2<oy1&&!o.hit){
+      o.hit=1;subHullHit(1,null);
+      for(let i=0;i<8;i++)subFx(sx,subS.y,(Math.random()-.5)*80,(Math.random()-.5)*80,0.4,'#c9b48a',2);
+    }
+  }
+  // ---- salvage in the current
+  for(const L of subS.loot){
+    if(L.got)continue;
+    const sx=subWorldToScreen(L.wx);
+    if(sx<-20)L.got=2;
+    if(sx>subS.sx+SUB_W)continue;
+    if(Math.abs(sx-subS.sx)<SUB_W/2+7&&Math.abs(L.y-subS.y)<SUB_H/2+7){
+      L.got=1;const v=L.kind==='gem'?20:(L.kind==='box'?12:5);
+      subS.scrap+=v;sfx.pop();
+      for(let i=0;i<7;i++)subFx(sx,L.y,(Math.random()-.5)*60,-20-Math.random()*40,0.5,L.kind==='gem'?'#ffd23c':'#7fd0ee',1);
+    }
+  }
+  // ---- torpedoes: straight, level, forward. They also gut anything bolted to the bore.
+  for(let i=subS.torps.length-1;i>=0;i--){
+    const T=subS.torps[i];T.t+=dt;T.life-=dt;T.x+=T.v*dt;
+    if((state.tick&1)===0)subS.bub.push({x:T.x-6,y:T.y,vy:(Math.random()-.5)*10,vx:-30,life:0.4,r:1});
+    let hit=null;
+    for(const m of subS.mobs){if(m.dead)continue;
+      if(Math.abs(m.x-T.x)<m.r+3&&Math.abs(m.y-T.y)<m.r+3){hit=m;break;}}
+    const bb=subBoreAt(T.x);
+    if(hit){subHurtMob(hit,SUB_TORP_DMG);subBoom(T.x,T.y,subSplashR(),subSplashDmg());subS.torps.splice(i,1);continue;}
+    if(T.y<bb.top||T.y>bb.bot){subBoom(T.x,T.y,subSplashR(),subSplashDmg());subS.torps.splice(i,1);continue;}
+    if(T.life<=0||T.x>VW+30){subS.torps.splice(i,1);}
+  }
+  // ---- mines: the answer to everything the tubes cannot reach
+  for(let i=subS.bombs.length-1;i>=0;i--){
+    const M=subS.bombs[i];M.t+=dt;M.life-=dt;
+    if(M.arm>0)M.arm-=dt;
+    M.y+=M.vy*dt;M.vy*=Math.pow(0.985,dt*60);M.x-=flow*dt;
+    const bb=subBoreAt(M.x);
+    if(M.y<bb.top+3||M.y>bb.bot-3){M.y=clamp(M.y,bb.top+3,bb.bot-3);M.vy=0;}
+    let pop=false;
+    if(M.arm<=0)for(const m of subS.mobs){if(m.dead)continue;
+      if(Math.hypot(m.x-M.x,m.y-M.y)<m.r+4){pop=true;break;}}
+    if(pop||M.life<=0||M.x<-20){
+      if(pop||M.life<=0)subBoom(M.x,M.y,subMineR(),subMineDmg(),'#ff8a3c');
+      subS.bombs.splice(i,1);
+    }
+  }
+  // ---- predators
+  subWaveTick();
+  subS.warn=0;
+  for(let i=subS.mobs.length-1;i>=0;i--){
+    const m=subS.mobs[i];subMobTick(m,dt,flow);
+    if(!m.dead&&(m.st==='flank'||m.st==='strike'))subS.warn=Math.max(subS.warn,m.st==='strike'?1:0.6);
+    if((m.dead!==0&&m.dead<=0)||m.x<-70||m.x>VW+220)subS.mobs.splice(i,1);
+  }
+  subFxTick(dt);
+  // ---- the intake gate at the far end
+  if(subS.dist>=subS.len-VW*0.55&&subS.gateFlash<=0&&!subS.gateSeen){subS.gateSeen=true;subS.gateFlash=1.2;sfx.uiopen();}
+  if(subS.dist>=subS.len){subS.doneT=1.6;sfx.win();shake=Math.max(shake,4);}
+}
+function subFxTick(dt){
+  for(let i=subS.fx.length-1;i>=0;i--){const q=subS.fx[i];q.life-=dt;
+    if(q.life<=0){subS.fx.splice(i,1);continue;}
+    if(q.blast)continue;
+    q.x+=q.vx*dt;q.y+=q.vy*dt;q.vx*=Math.pow(0.93,dt*60);q.vy*=Math.pow(0.93,dt*60);}
+  for(let i=subS.bub.length-1;i>=0;i--){const q=subS.bub[i];q.life-=dt;
+    if(q.life<=0){subS.bub.splice(i,1);continue;}
+    q.x+=(q.vx||-18)*dt;q.y+=q.vy*dt;}
+}
+
+// ---- the boat: Type VIIC, U-552 ---------------------------------------------
+// Side profile, nose right, 36×11 over the pressure hull. Everything that made the
+// silhouette readable at sea is here at pixel scale: the raked bow and saddle-tank
+// bulge, the flat deck casing, the 8.8cm gun forward of the tower, the winter-garden
+// tower with periscope and snorkel, the boat's laughing red devil on the fairwater,
+// and a single screw behind the rudder. `roll` cants the whole hull off the planes.
+// Takes its target context so the transit primer's slide canvases draw the same boat.
+function drawSubBoat(c,cx,cy,roll,boosting,t,flash){
+  const HULL=flash?'#8a5a55':'#3c4a49', HI=flash?'#b98d84':'#5b6f6b', LO='#1b2426',
+        DECK='#28322f', TOW='#445654', TRIM='#7d9994', RED='#c8323c', DK='#141b1c';
+  const P=(lx,ly,w,h,col)=>{const yo=Math.round(roll*(lx/16));px(c,Math.round(cx+lx),Math.round(cy+ly+yo),w,h,col);};
+  // pressure hull — a per-column half-height gives the raked bow and the fine stern run
+  for(let lx=-18;lx<=17;lx++){
+    let hh = lx>11 ? 4.6-(lx-11)*0.62 : (lx<-13 ? 3.6-(-13-lx)*0.62 : (lx>7?4.8:5.2));
+    hh=Math.max(0.6,hh);
+    const top=-Math.round(hh), h=Math.max(1,Math.round(hh*2));
+    P(lx,top,1,h,HULL);P(lx,top,1,1,HI);P(lx,top+h-1,1,1,LO);
+  }
+  for(let lx=-13;lx<=11;lx++)P(lx,3,1,2,DK);            // saddle tank bulge, sitting proud of the hull line
+  for(let lx=-15;lx<=12;lx++)P(lx,-6,1,1,DECK);         // flat deck casing
+  P(-15,-6,28,1,DECK);
+  for(let lx=-12;lx<=10;lx+=4)P(lx,-5,1,1,'#4e615d');   // free-flooding slots along the casing
+  // 8.8cm deck gun, forward of the tower
+  P(4,-8,3,3,TOW);P(6,-8,6,1,TRIM);P(11,-8,1,1,'#93b0aa');P(5,-9,1,1,TRIM);
+  // conning tower / fairwater, with the winter-garden step aft
+  P(-5,-12,8,6,TOW);P(-5,-12,8,1,'#5c716d');P(-6,-8,2,2,TOW);P(3,-9,1,3,TOW);
+  P(1,-17,1,5,TRIM);P(0,-17,2,1,TRIM);                  // attack periscope
+  P(-3,-15,1,3,'#6b8480');                              // snorkel head
+  P(-4,-11,1,1,'#0d1414');P(-1,-11,1,1,'#0d1414');      // bridge slits
+  // the boat's mark: the laughing red devil on the fairwater
+  P(-3,-11,4,4,RED);P(-3,-12,1,1,RED);P(0,-12,1,1,RED);
+  P(-2,-10,1,1,'#3a0c10');P(-1,-10,1,1,'#3a0c10');P(-2,-8,2,1,'#3a0c10');
+  // rudder + single screw
+  P(-19,-8,2,7,TOW);P(-20,-1,3,2,DK);
+  const bl=Math.abs(Math.sin(t*(boosting?26:11)))*4+1;
+  P(-21,-Math.round(bl/2),2,Math.round(bl),boosting?'#cfe6df':'#7d9994');
+  // bow planes + the two tube caps (they flash as a fish leaves)
+  P(12,3,4,1,TOW);P(-11,4,4,1,TOW);
+  const cap=subS.burst>0?'#eaffff':'#5b6f6b';
+  P(16,-2,2,2,cap);P(16,1,2,2,cap);
+  if(boosting){c.globalCompositeOperation='lighter';
+    radial(c,cx-20,cy,16,'rgba(120,200,220,0.20)','rgba(120,200,220,0)');
+    c.globalCompositeOperation='source-over';}
+}
+// ---- predators --------------------------------------------------------------
+function drawSquid(m){
+  const f=m.vx>=0?1:-1, x=Math.round(m.x), y=Math.round(m.y);
+  const BODY=m.flash>0?'#ffd7ea':'#8e3ba0', HI=m.flash>0?'#ffffff':'#c76fd6', DK='#4a1a56', SK='#2b0f33';
+  const P=(lx,ly,w,h,c)=>px(ctx,x+Math.round(lx*f),y+ly,w,h,c);
+  for(let i=0;i<8;i++){                                  // the arms, streaming behind whichever way it swims
+    const a=(i-3.5)*1.7, len=12+((i*3)%6);
+    for(let s=0;s<len;s++){
+      const spread=a*(0.4+s*0.09);                       // fanning out from the crown, not a solid skirt
+      const wob=Math.sin(m.tail+i*0.9+s*0.4)*(1.4+s*0.22);
+      P(-6-s, Math.round(spread+wob), 1,1, (s>len-4)?SK:DK);
+    }
+  }
+  for(let lx=-6;lx<=7;lx++){                             // mantle: fat at the head, tapering to the siphon
+    const hh=Math.max(1,6-Math.abs(lx-1)*0.55-(lx>4?(lx-4)*1.3:0));
+    P(lx,-Math.round(hh),1,Math.max(1,Math.round(hh*2)),BODY);
+  }
+  P(-4,-8,5,2,BODY);P(-2,-9,3,1,DK);                     // the two swimming fins
+  for(let lx=-3;lx<=5;lx++)P(lx,-5,1,1,HI);
+  P(3,-2,3,3,'#f3e9c0');P(4,-1,2,2,'#160a1a');           // eye
+  if(m.st==='strike'||m.st==='flank')P(6,0,2,1,'#ffe07a'); // beak, out and hunting
+}
+function drawMeg(m){
+  const f=m.vx>=0?1:-1, x=Math.round(m.x), y=Math.round(m.y);
+  const BODY=m.flash>0?'#f2dcd8':'#5c6a6d', HI=m.flash>0?'#ffffff':'#7d8d90', PALE='#c3cfcc', DK='#33403f';
+  const P=(lx,ly,w,h,c)=>px(ctx,x+Math.round(lx*f),y+ly,w,h,c);
+  const sw=Math.sin(m.tail)*2.4;
+  for(let lx=-20;lx<=19;lx++){                           // fusiform body, thickest a third back from the snout
+    const k=(lx+20)/39, hh=Math.max(1,9*Math.sin(Math.PI*Math.pow(k,0.82))-(lx>14?(lx-14)*1.1:0));
+    const bend=Math.round(sw*Math.max(0,(-lx-4)/16));    // only the tail half sweeps
+    P(lx,-Math.round(hh)+bend,1,Math.max(1,Math.round(hh*2)),BODY);
+    P(lx,-Math.round(hh)+bend,1,1,HI);
+    P(lx,Math.round(hh)-1+bend,1,2,PALE);                // white underbelly
+  }
+  P(-24,Math.round(sw)-9,4,9,BODY);P(-24,Math.round(sw),4,7,BODY);P(-26,Math.round(sw)-8,2,7,DK);  // caudal fin
+  P(-2,-14,7,5,BODY);P(0,-16,3,2,BODY);                  // dorsal
+  P(2,6,7,3,BODY);P(-8,7,5,2,BODY);                      // pectorals
+  for(let i=0;i<5;i++)P(7+i*2,-3,1,6,DK);                // gill slits
+  P(14,-4,3,3,'#0e1414');P(15,-3,1,1,'#e6f2f0');         // eye
+  const jaw=Math.round(m.jaw*4);
+  P(11,2+jaw,9,2,'#1a0f10');                             // maw
+  for(let i=0;i<5;i++){P(12+i*2,1+jaw,1,1,'#f4f8f2');P(12+i*2,4+jaw,1,1,'#f4f8f2');}
+}
+
+// ---- render -----------------------------------------------------------------
+function renderSub(){
+  RCX=0;RCY=0;
+  const t=subS.t;
+  if(shake>0)shake-=0.6;
+  const shx=shake>0?(Math.random()-.5)*shake:0, shy=shake>0?(Math.random()-.5)*shake:0;
+  const T=subBandTop(), B=subBandBot();
+  if(TH){TH.atlas.ensure(VW,VH);TH.atlas.beginWorld();TM=TH.margin;}
+  sw(0);
+  // ---- the water in the main: black at the crown, silt-brown along the invert
+  const g=ctx.createLinearGradient(0,T,0,B);
+  g.addColorStop(0,'#061218');g.addColorStop(0.55,'#0b2028');g.addColorStop(1,'#12211a');
+  ctx.fillStyle=g;ctx.fillRect(-TM,-TM,VW+2*TM,VH+2*TM);
+  // drifting silt — cheap, deterministic, and it sells the direction of the current
+  for(let i=0;i<(TH?0:38);i++){
+    const sx=((i*97+subS.dist*1.6)%(VW+40))-20, sy=T+((i*61+Math.sin(t*0.6+i)*9)%(B-T));
+    px(ctx,Math.round(VW-sx),Math.round(sy),1,1,(i&3)?'#16303a':'#1e4250');
+  }
+  // ---- the bore. Two profiles sampled per column; concrete above and below, an algae
+  // lip at the waterline of each, ribs every few metres, and sodium lamps on the crown.
+  sw(2);
+  for(let x=-TM;x<VW+TM;x+=2){
+    const bo=subBoreAt(x+shx), wx=subScreenToWorld(x);
+    const rib=(Math.floor(wx/46)%2)===0, ribc=rib?'#333a35':'#2b312d';
+    px(ctx,x,T-6,2,Math.max(0,bo.top-T+6),'#141a17');
+    px(ctx,x,bo.bot,2,Math.max(0,B+6-bo.bot),'#141a17');
+    px(ctx,x,Math.max(T-6,bo.top-16),2,Math.min(16,Math.max(0,bo.top-T+6)),ribc);
+    px(ctx,x,bo.bot,2,Math.min(16,Math.max(0,B+6-bo.bot)),ribc);
+    px(ctx,x,bo.top-2,2,2,'#4a5348');px(ctx,x,bo.bot,2,3,'#4a5348');
+    px(ctx,x,bo.top,2,1,'#2d4a34');px(ctx,x,bo.bot-1,2,1,'#2d4a34');
+    px(ctx,x,bo.bot-3,2,2,'#243a2a');                     // silt bed along the invert
+    if(((wx|0)%46)<3){px(ctx,x,T-6,2,Math.max(0,bo.top-T+6),'#3d463f');px(ctx,x,bo.bot,2,Math.max(0,B+6-bo.bot),'#3d463f');}
+  }
+  ctx.globalCompositeOperation='lighter';
+  for(const lp of subS.lamps){                            // sodium lamps strung along the crown
+    const sx=subWorldToScreen(lp.wx);if(sx<-30||sx>VW+30)continue;
+    const bo=subBoreAt(sx), fl=0.75+Math.sin(t*3+lp.ph)*0.25;
+    radial(ctx,sx,bo.top+6,26,'rgba(255,186,90,'+(0.13*fl).toFixed(3)+')','rgba(255,186,90,0)');
+    if(TH)glS(sx,bo.top+6,40,'255,186,90',0.55*fl);
+  }
+  ctx.globalCompositeOperation='source-over';
+  for(const lp of subS.lamps){
+    const sx=subWorldToScreen(lp.wx);if(sx<-8||sx>VW+8)continue;
+    const bo=subBoreAt(sx);
+    px(ctx,Math.round(sx)-2,Math.round(bo.top),4,3,'#3a3020');px(ctx,Math.round(sx)-1,Math.round(bo.top)+3,2,2,'#ffbe5a');
+  }
+  // ---- sheared ribs and torn grating: the only bit of the pipe that actually holes you
+  for(const o of subS.obs){
+    const sx=Math.round(subWorldToScreen(o.wx));if(sx<-20||sx>VW+20)continue;
+    const bo=subBore(o.wx), y0=o.up?bo.top:bo.bot-o.len;
+    px(ctx,sx-((o.w/2)|0),Math.round(y0),o.w,Math.round(o.len),o.hit?'#4a3a30':'#4d4238');
+    for(let i=2;i<o.len;i+=4)px(ctx,sx-((o.w/2)|0),Math.round(y0+i),o.w,1,'#6b5c4a');
+    px(ctx,sx-((o.w/2)|0),Math.round(o.up?y0+o.len-1:y0),o.w,1,'#8a7a5f');
+  }
+  sw(3);
+  // ---- salvage
+  for(const L of subS.loot){
+    if(L.got)continue;
+    const sx=Math.round(subWorldToScreen(L.wx));if(sx<-14||sx>VW+14)continue;
+    const y=Math.round(L.y+Math.sin(t*1.6+L.ph)*2);
+    if(L.kind==='gem'){px(ctx,sx-2,y-3,5,7,'#1a3d46');px(ctx,sx-1,y-2,3,5,'#46d0ff');px(ctx,sx,y-1,1,3,'#dffaff');}
+    else if(L.kind==='box'){px(ctx,sx-5,y-4,10,8,'#4a3a1e');px(ctx,sx-5,y-4,10,1,'#7d6432');px(ctx,sx-1,y-4,2,8,'#ffd23c');}
+    else {px(ctx,sx-4,y-3,8,7,'#3d4a2a');px(ctx,sx-4,y-3,8,1,'#66794a');px(ctx,sx-4,y,8,1,'#66794a');}
+    ctx.globalCompositeOperation='lighter';
+    radial(ctx,sx,y,11,'rgba(255,210,60,0.10)','rgba(255,210,60,0)');
+    ctx.globalCompositeOperation='source-over';
+  }
+  // ---- the intake gate at the far end: sodium ring, rising sluice, the next city behind it
+  const gsx=subWorldToScreen(subS.len);
+  if(gsx<VW+80){
+    const bo=subBoreAt(clamp(gsx,0,VW-1));
+    px(ctx,Math.round(gsx)-3,Math.round(bo.top),6,Math.round(bo.bot-bo.top),'#16323c');
+    for(let yy=bo.top;yy<bo.bot;yy+=6)px(ctx,Math.round(gsx)-6,Math.round(yy),12,2,'#1f4a58');
+    px(ctx,Math.round(gsx)-8,Math.round(bo.top)-2,16,4,'#2c5e72');
+    px(ctx,Math.round(gsx)-8,Math.round(bo.bot)-2,16,4,'#2c5e72');
+    ctx.globalCompositeOperation='lighter';
+    for(let yy=bo.top+8;yy<bo.bot;yy+=22)radial(ctx,gsx,yy,18,'rgba(70,208,255,0.16)','rgba(70,208,255,0)');
+    ctx.globalCompositeOperation='source-over';
+  }
+  // ---- ordnance
+  for(const M of subS.bombs){
+    const x=Math.round(M.x),y=Math.round(M.y),live=M.arm<=0;
+    pxDisc(ctx,x,y,4,'#2a2f33');pxDisc(ctx,x,y,3,'#3d454a');
+    for(let i=0;i<6;i++){const a=i/6*6.28318;px(ctx,x+Math.round(Math.cos(a)*5),y+Math.round(Math.sin(a)*5),1,2,'#59646a');}
+    const bl=live&&((state.tick>>2)&1);
+    px(ctx,x-1,y-1,2,2,bl?'#ff4d5e':'#7a2530');
+    if(bl){ctx.globalCompositeOperation='lighter';radial(ctx,x,y,10,'rgba(255,77,94,0.20)','rgba(255,77,94,0)');ctx.globalCompositeOperation='source-over';}
+  }
+  for(const Tp of subS.torps){
+    const x=Math.round(Tp.x),y=Math.round(Tp.y);
+    px(ctx,x-7,y-1,12,3,'#3f4a4e');px(ctx,x+5,y-1,2,3,'#8fa3a6');px(ctx,x-8,y,1,1,'#6b7a7e');
+    px(ctx,x-7,y-2,3,1,'#5b6b6f');px(ctx,x-7,y+2,3,1,'#5b6b6f');
+    ctx.globalCompositeOperation='lighter';
+    radial(ctx,x-8,y,7,'rgba(180,230,255,0.16)','rgba(180,230,255,0)');
+    ctx.globalCompositeOperation='source-over';
+  }
+  for(const m of subS.mobs){
+    if(m.dead)ctx.globalAlpha=clamp(m.dead*2,0,1);
+    if(m.kind==='meg')drawMeg(m);else drawSquid(m);
+    ctx.globalAlpha=1;
+  }
+  // ---- the boat itself
+  const boosting=subS.boosting&&subS.killT<=0;
+  if(subS.killT<=0||((state.tick>>1)&1))
+    drawSubBoat(ctx,subS.sx+shx,subS.y+shy,subS.roll,boosting,t,subS.hitFlash>0.28);
+  // ---- bubbles + blast fx
+  for(const q of (TH?[]:subS.bub)){const a=clamp(q.life*2,0,1);ctx.globalAlpha=a*0.7;
+    px(ctx,Math.round(q.x),Math.round(q.y),q.r||1,q.r||1,'#9ed3e6');}
+  ctx.globalAlpha=1;
+  ctx.globalCompositeOperation='lighter';
+  for(const q of subS.fx){
+    if(q.blast&&TH){const k=1-q.life/q.max;glS(q.x,q.y,q.r*(1+k*2),'255,180,90',1.2*(1-k));}
+    if(q.blast){const k=1-q.life/q.max;radial(ctx,q.x,q.y,q.r*(0.5+k*1.5),'rgba(255,200,120,'+(0.5*(1-k)).toFixed(3)+')','rgba(255,140,60,0)');}
+  }
+  ctx.globalCompositeOperation='source-over';
+  for(const q of subS.fx){
+    if(q.blast)continue;
+    ctx.globalAlpha=clamp(q.life/q.max,0,1);
+    px(ctx,Math.round(q.x),Math.round(q.y),q.r,q.r,q.col);
+  }
+  ctx.globalAlpha=1;
+  // ---- depth murk: the pipe swallows light a hull-length ahead of the bow
+  if(!TH){
+  ctx.globalCompositeOperation='multiply';
+  const vg=ctx.createLinearGradient(0,0,VW,0);
+  vg.addColorStop(0,'rgba(120,150,160,1)');vg.addColorStop(0.35,'rgba(255,255,255,1)');
+  vg.addColorStop(0.75,'rgba(190,205,210,1)');vg.addColorStop(1,'rgba(90,120,130,1)');
+  ctx.fillStyle=vg;ctx.fillRect(0,T,VW,B-T);
+  ctx.globalCompositeOperation='source-over';
+  }
+  if(TH){TH.atlas.end();ctx=TH.atlas.beginHud();}
+  if(subS.hitFlash>0){px(ctx,0,0,VW,VH,'rgba(255,60,60,'+(subS.hitFlash*0.24).toFixed(3)+')');}
+  if(subS.killT>0){const k=clamp(1-subS.killT/1.9,0,1);px(ctx,0,0,VW,VH,'rgba(255,255,255,'+(k*k*0.9).toFixed(3)+')');}
+  if(subS.doneT>0){const k=clamp(1-subS.doneT/1.6,0,1);px(ctx,0,0,VW,VH,'rgba(70,208,255,'+(k*0.5).toFixed(3)+')');}
+  subHUD();
+}
+// ---- HUD --------------------------------------------------------------------
+function subHUD(){
+  const T=subBandTop(), B=subBandBot(), wide=VW>=170;   // labels fit from the narrowest portrait up
+  px(ctx,0,0,VW,T,'#050b10');px(ctx,0,B,VW,VH-B,'#050b10');
+  px(ctx,0,T-1,VW,1,'#123848');px(ctx,0,B,VW,1,'#123848');
+  // ---- top strip: distance to the far gate (the run is fixed-length, so the end is
+  // always in sight), the hull, and what the boat has scooped up so far
+  const sv='SLV '+subS.scrap, svw=pxTextW(sv);
+  const bx=5, bw=VW-10-svw-6, f=clamp(subS.dist/subS.len,0,1);
+  px(ctx,bx,3,bw,4,'#10222c');px(ctx,bx,3,bw,1,'#1b3a48');
+  px(ctx,bx,3,Math.round(bw*f),4,'#1e6a80');px(ctx,bx,3,Math.round(bw*f),1,'#46d0ff');
+  px(ctx,bx+Math.round(bw*f)-1,2,3,6,'#ffd23c');
+  px(ctx,bx+bw-1,2,2,6,(subS.gateFlash>0&&((state.tick>>2)&1))?'#ffffff':'#7fd0ee');
+  pxText(ctx,sv,VW-5-svw,3,'#ffd23c');
+  for(let i=0;i<subS.maxHull;i++){
+    const on=i<subS.hull, x=5+i*5;
+    px(ctx,x,9,4,4,on?'#ff4d5e':'#2a1a1e');
+    if(on)px(ctx,x,9,4,1,'#ff97a1');
+  }
+  // ---- bottom strip: the coil, the tubes, the mine bay — the three things you spend
+  const by=B+5;
+  let x=4;
+  const bReady=subS.boost>=subS.boostMax;
+  if(wide){pxText(ctx,'BOOST',x,by,subS.boosting?'#3dff9a':(bReady?'#ffd23c':'#5b8095'));x+=22;}
+  const cw=wide?48:40;
+  px(ctx,x,by,cw,5,'#0c1a22');
+  const cf=clamp(subS.boost/subS.boostMax,0,1);
+  px(ctx,x,by,Math.round(cw*cf),5,subS.boosting?'#3dff9a':(bReady?'#ffd23c':'#1e6a80'));
+  if(subS.boosting&&((state.tick>>2)&1))pxText(ctx,'!',x+cw+3,by,'#3dff9a');
+  else if(!bReady&&((state.tick>>3)&1))pxText(ctx,'DRY',x+cw+3,by,'#ff4d5e');
+  x+=cw+8;
+  const rf=clamp(1-subS.reload/subReload(),0,1);
+  if(wide){pxText(ctx,'TUBE',x,by,rf>=1?'#3dff9a':'#5b8095');x+=18;}
+  px(ctx,x,by,28,5,'#0c1a22');px(ctx,x,by,Math.round(28*rf),5,rf>=1?'#3dff9a':'#1e6a80');
+  x+=34;
+  for(let i=0;i<subS.minesMax;i++)px(ctx,x+i*5,by,4,5,i<subS.mines?'#ff8a3c':'#2a1e14');
+  // ---- rear-threat chevron. You cannot see behind the boat and you cannot shoot there,
+  // so the warning is the whole contract: it says turn on the coil, or drop a mine.
+  if(subS.warn>0){
+    const a=0.45+Math.sin(subS.t*(subS.warn>0.8?18:9))*0.35, col=subS.warn>0.8?'#ff4d5e':'#ffd23c';
+    const cy=Math.round(clamp(subS.y,T+12,B-12));
+    ctx.globalAlpha=clamp(a,0,1);
+    for(let k=0;k<3;k++){const cx=3+k*5;
+      for(let i=0;i<7;i++)px(ctx,cx+Math.abs(i-3),cy-9+i*3,2,3,col);}
+    ctx.globalAlpha=1;
+    if(subS.warn>0.8)pxTextC('REAR',34,cy-3,'#ff4d5e');
+  }
+  // ---- opening instructions, then out of the way for good
+  if(subS.hint>0){
+    const hy=Math.round(clamp((T+B)/2-58,T+4,B-48));
+    ctx.globalAlpha=clamp(subS.hint,0,1);
+    px(ctx,0,hy,VW,44,'rgba(4,10,14,0.78)');
+    px(ctx,0,hy,VW,1,'#123848');px(ctx,0,hy+43,VW,1,'#123848');
+    pxTextC('THE STREAM CARRIES YOU',VW/2,hy+6,'#7fd0ee');
+    pxTextC('UP DOWN - FIRE FORWARD',VW/2,hy+16,'#8fb6c2');
+    pxTextC('FULL BOOST: ONE BURN, NO BRAKES',VW/2,hy+26,'#8fb6c2');
+    pxTextC('MINES DROP UP AND DOWN',VW/2,hy+36,'#ffd23c');
+    ctx.globalAlpha=1;
+  }
+  if(subS.doneT>0)pxTextC('GATE REACHED',VW/2,Math.round(VH*0.42),'#46d0ff');
+  if(subS.killT>0)pxTextC('HULL BREACHED',VW/2,Math.round(VH*0.42),'#ff4d5e');
+}
+
+// ============ DRY DOCK (between the pipe and the new city) ============
+// The boat is winched up at the far intake with whatever it dragged in, and the yard
+// will take it as payment before the diver walks into the city. Everything not spent
+// stays banked, so skipping a cheap fitting to afford an expensive one is a real call.
+// NOTE: nothing is saved in here. The last checkpoint is the exit gate, back in the old
+// city, which openCityMap() wrote before the boat ever launched — so a tab closed in the
+// yard costs you the run rather than letting you bank the same salvage twice. The save
+// lands the moment you step into the new city (travelToCity already writes one).
+const SUB_UPGS=[
+  {k:'torpSpd',    n:'FASTER TORPEDOES',    blurb:'fish leave the tube harder — less lead on a crossing target',
+   cur:()=>Math.round(subTorpSpeed())+' px/s'},
+  {k:'torpSplash', n:'TORPEDO SPLASH',      blurb:'the detonation guts whatever is swimming beside the kill',
+   cur:()=>Math.round(subSplashR())+' px · '+subSplashDmg().toFixed(2)+' dmg'},
+  {k:'torpRl',     n:'RELOAD SPEED',        blurb:'the bow crew work the tubes faster',
+   cur:()=>subReload().toFixed(2)+' s'},
+  {k:'boostRegen', n:'BOOST RECHARGE',      blurb:'the coil rebuilds sooner, so the stern trick is available more often',
+   cur:()=>subBoostRegen().toFixed(2)+'/s'},
+  {k:'mineDef',    n:'MINE DEFENSE SYSTEM', blurb:'bigger charge in the bay — it reaches further round the hull',
+   cur:()=>Math.round(subMineR())+' px · '+subMineDmg().toFixed(1)+' dmg'},
+  {k:'mineAmmo',   n:'MINE BAY CAPACITY',   blurb:'more charges racked for the run',
+   cur:()=>subMinesMax()+' per run'},
+  {k:'hull',       n:'HULL REINFORCEMENT',  blurb:'more plate between you and the teeth',
+   cur:()=>subMaxHull()+' hits'}
+];
+const drydockEl=document.getElementById('drydock');
+let ddSel=0, ddRun=0;
+function openDryDock(){
+  ddRun=subS.scrap;
+  player.subScrap=(player.subScrap||0)+subS.scrap;
+  ddSel=0;setMode('drydock');buildDryDock();sfx.uiopen();
+}
+function ddPips(lv,max){let s='';for(let i=0;i<max;i++)s+='<i class="ddpip'+(i<lv?' on':'')+'"></i>';return s;}
+function buildDryDock(){
+  const ch=pendingCity;if(!ch){travelToCity(nextCityChoices()[0]);return;}
+  let rows='';
+  for(let i=0;i<SUB_UPGS.length;i++){
+    const U=SUB_UPGS[i], max=SUB_UPG_MAX[U.k], lv=subLv(U.k), maxed=lv>=max;
+    const cost=subUpgCost(U.k,lv), can=!maxed&&player.subScrap>=cost;
+    rows+='<div class="ddrow'+(i===ddSel?' sel':'')+(maxed?' maxed':'')+'" data-dd="row:'+i+'">'
+      +'<div class="ddn">'+U.n+'</div>'
+      +'<div class="ddpips">'+ddPips(lv,max)+'</div>'
+      +'<div class="ddc '+(maxed?'ok':(can?'ok':'no'))+'">'+(maxed?'FITTED':cost+' slv')+'</div>'
+      +'<div class="ddb">'+U.blurb+' · now <b>'+U.cur()+'</b></div>'
+      +'</div>';
+  }
+  const gi=SUB_UPGS.length;
+  drydockEl.innerHTML='<div class="ddwrap">'
+   +'<div class="cmhead"><span class="cmtitle">DRY DOCK</span><span class="cmsub">'+CITY_NAME+' → '+ch.name+'</span></div>'
+   +'<div class="ddtop"><span>the yard hauled the boat out at the far intake</span>'
+   +'<span class="ddslv">SALVAGE <b>'+(player.subScrap||0)+'</b>'+(ddRun?' <i>(+'+ddRun+' this run)</i>':'')+'</span></div>'
+   +'<div class="ddlist">'+rows+'</div>'
+   +'<div class="ddrow ddgo'+(ddSel===gi?' sel':'')+'" data-dd="row:'+gi+'">'
+   +'<div class="ddn">ENTER '+ch.name+' &rarr;</div>'
+   +'<div class="ddb">'+ch.envs+' environments · '+ch.layers+' layers · unspent salvage rides with you</div></div>'
+   +'<div class="cmhint">▴ ▾ choose · F / space — fit or enter</div>'
+   +'</div>';
+}
+function dryDockMove(d){
+  const n=SUB_UPGS.length+1;
+  if(d==='up'||d==='left')ddSel=(ddSel+n-1)%n;else ddSel=(ddSel+1)%n;
+  sfx.nav();buildDryDock();
+}
+function dryDockConfirm(){
+  if(ddSel>=SUB_UPGS.length){                     // ENTER: the transit finally completes
+    const ch=pendingCity;pendingCity=null;
+    if(ch)travelToCity(ch);else setMode('play');
+    return;
+  }
+  const U=SUB_UPGS[ddSel], max=SUB_UPG_MAX[U.k], lv=subLv(U.k);
+  if(lv>=max){sfx.deny();return;}
+  const cost=subUpgCost(U.k,lv);
+  if((player.subScrap||0)<cost){sfx.deny();showMsg('not enough salvage — '+cost+' needed');return;}
+  player.subScrap-=cost;
+  if(!player.subUpg)player.subUpg={};
+  player.subUpg[U.k]=lv+1;
+  sfx.build();buildDryDock();
+}
+drydockEl.addEventListener('click',e=>{const b=e.target.closest('[data-dd]');if(!b)return;audioInit();
+  const v=b.getAttribute('data-dd');
+  if(v.slice(0,4)==='row:'){const i=+v.slice(4)||0;if(i!==ddSel){ddSel=i;sfx.nav();buildDryDock();}else dryDockConfirm();}});
+
+/* ===== STUDIO BOOT SEQUENCE — segmented-LCD logo / presents / title / first-time prompt =====
+ * Renders straight onto the real game canvas (same VW/VH grid, same px()/FONT3 the rest of the
+ * UI uses) so it plays inside the console's screen, not as a full-page takeover. Ends on a
+ * yes/no prompt: yes hands off into the existing Field Manual (startBootTutorial); no skips
+ * straight to gameplay, but still runs the same CRT-static wipe either way. */
+function startStudioIntro(){
+  const stage=document.getElementById('stage');
+  const ctl=document.getElementById('controls');                 // stays visible the whole time — see onCtlPress below
+  const crtEl=document.getElementById('crt'); if(crtEl)crtEl.style.display='none'; // flat LCD glass, not a CRT — no scanline sweep here
+  overlayEl.classList.add('hidden');
+
+  // classic pale green-cyan LCD glass + near-black "ink" segments, like a Game & Watch / calculator display
+  const LCD_BG='#a3e8d4', LCD_BG2='#8ed7c2', INK='#16251f';
+  const GHOST=shade(LCD_BG,0.93);                                 // barely-there "unlit segment" backdrop
+  function lerpHex(h1,h2,u){const a=hex2rgb(h1),b=hex2rgb(h2);const L=(x,y)=>Math.round(x+(y-x)*u);return`rgb(${L(a[0],b[0])},${L(a[1],b[1])},${L(a[2],b[2])})`;}
+  function fillLcdBg(){const g=ctx.createRadialGradient(VW/2,VH*0.4,VH*0.15,VW/2,VH*0.4,VH*0.75);g.addColorStop(0,LCD_BG);g.addColorStop(1,LCD_BG2);ctx.fillStyle=g;ctx.fillRect(0,0,VW,VH);}
+  function inkOn(){ctx.shadowColor='rgba(8,18,14,0.35)';ctx.shadowOffsetX=1;ctx.shadowOffsetY=1;ctx.shadowBlur=0;}      // small embossed drop-shadow, like ink printed on glass
+  function inkOff(){ctx.shadowColor='transparent';ctx.shadowOffsetX=0;ctx.shadowOffsetY=0;ctx.shadowBlur=0;}
+
+  let phase='power', phaseT=0, running=true;
+
+  const btns=document.createElement('div'); btns.id='intro-ft-btns'; btns.style.display='none';
+  btns.innerHTML='<button id="intro-yes" class="intro-btn intro-btn-yes">YES</button><button id="intro-no" class="intro-btn intro-btn-no">NO</button>';
+  stage.appendChild(btns);
+  btns.addEventListener('pointerdown',audioInit);
+  document.getElementById('intro-yes').addEventListener('click',()=>{if(running)finish(true);});
+  document.getElementById('intro-no').addEventListener('click',()=>{if(running)finish(false);});
+
+  function setPhase(p){phase=p;phaseT=0;sfx.nav();btns.style.display=(p==='firsttime')?'flex':'none';}
+  function advance(){
+    if(phase==='power')setPhase('logo');
+    else if(phase==='logo')setPhase('presents');
+    else if(phase==='presents')setPhase('title');
+    else if(phase==='title')setPhase('firsttime');
+  }
+  function onTap(){if(!running||phase==='power'||phase==='firsttime')return;audioInit();advance();}
+  stage.addEventListener('pointerdown',onTap);
+  // the imitation casing's d-pad/buttons stay visible & lit the whole time; any press here just
+  // skips the current beat (capture phase + stopPropagation so the real button actions, which
+  // are no-ops before state.mode==='play' anyway, never get a chance to fire underneath).
+  function onCtlPress(e){
+    if(!running)return;
+    e.stopPropagation();
+    if(phase==='power'||phase==='firsttime')return;
+    audioInit();advance();
+  }
+  if(ctl)ctl.addEventListener('pointerdown',onCtlPress,true);
+
+  function finish(playTutorial){
+    running=false;
+    tutorialsOn=!!playTutorial;                                // NO here = no tutorial decks anywhere in the run
+    stage.removeEventListener('pointerdown',onTap);
+    if(ctl)ctl.removeEventListener('pointerdown',onCtlPress,true);
+    if(crtEl)crtEl.style.display='';
+    btns.remove();
+    if(playTutorial)startBootTutorial();else quickStaticToGame();
+  }
+
+  /* ---- pixel art (same chunky px()-rect style as the rest of the game) ---- */
+  function drawDna(cx,topY,h,t,col){
+    const rows=Math.round(h/3), amp=10;
+    for(let r=0;r<rows;r++){
+      const y=topY+r*3, ph=t*0.03+r*0.5;
+      const xL=cx+Math.sin(ph)*amp, xR=cx+Math.sin(ph+Math.PI)*amp;
+      px(ctx,Math.round(xL)-1,y,2,2,col); px(ctx,Math.round(xR)-1,y,2,2,col);
+      if(r%4===1){const x0=Math.min(xL,xR),x1=Math.max(xL,xR);px(ctx,Math.round(x0),y,Math.max(1,Math.round(x1-x0)),1,col);}
+    }
+    px(ctx,cx-7,topY-6,6,3,col); px(ctx,cx+1,topY-6,6,3,col); px(ctx,cx-1,topY-3,2,4,col); // leaf sprouts
+  }
+  function drawWaves(cx,y,w,t,col){
+    for(let x=-w/2;x<w/2;x+=3){const yy=y+Math.round(Math.sin(x*0.18+t*0.05)*2);px(ctx,Math.round(cx+x),yy,3,2,col);}
+  }
+  // cyberpunk sewer-mouth backdrop for the "first time" prompt: brick, a Roman-arch tunnel void,
+  // magenta/cyan neon tubing, a sagging cable, a reflective puddle and drifting mist/rain.
+  // gritty industrial metal sewer mouth — riveted steel plating (no brick), lit only by a
+  // pair of old gas lamps that breathe slowly bright-to-dim, like a real flame in a glass box.
+  function gasPulse(t,ph){return 0.5+0.5*Math.sin(t*0.025+ph);}   // slow dim-up/dim-down cycle, not a flicker
+  function drawGasLamp(t,lx,ly,ph){
+    const p=gasPulse(t,ph), glow=lerpHex('#7a4f1c','#ffe19a',p);                // never fully dark — an ember glow even at the dim end
+    px(ctx,lx-1,ly-2,2,16,'#3a352c');px(ctx,lx-6,ly-4,12,3,'#332c22');          // wall bracket
+    px(ctx,lx-6,ly-20,12,17,'#2a2318');px(ctx,lx-5,ly-19,10,3,'#4a3d26');       // lamp housing + cap
+    for(let i=0;i<3;i++)px(ctx,lx-4+i*4,ly-16,1,12,'#1c1712');                 // cage bars in front of the glass
+    px(ctx,lx-4,ly-16,8,12,glow);                                               // the flame/glass itself, breathing
+    ctx.globalAlpha=0.32+p*0.5;
+    const rg2=ctx.createRadialGradient(lx,ly-10,1,lx,ly-10,20+p*10);
+    rg2.addColorStop(0,'rgba(255,215,140,0.95)');rg2.addColorStop(1,'rgba(255,215,140,0)');
+    ctx.fillStyle=rg2;ctx.fillRect(lx-34,ly-46,68,68);ctx.globalAlpha=1;
+    return p;
+  }
+  function drawSewerEntranceBg(t){
+    let g=ctx.createLinearGradient(0,0,0,VH);
+    g.addColorStop(0,'#07090a');g.addColorStop(0.6,'#0b0e10');g.addColorStop(1,'#101315');
+    ctx.fillStyle=g;ctx.fillRect(0,0,VW,VH);
+    // riveted steel panel walls
+    const metal='#22282c',metalD='#171b1e',metalL='#2e363b',rustCol='#6b3a1c';
+    const panelW=28,panelH=34;
+    for(let by=-panelH;by<VH*0.82;by+=panelH){
+      const off=((by/panelH|0)%2)?panelW/2:0;
+      for(let bx=-panelW+off;bx<VW+panelW;bx+=panelW){
+        px(ctx,bx,by,panelW-2,panelH-2,metal);
+        px(ctx,bx,by,panelW-2,2,metalL);
+        px(ctx,bx,by+panelH-6,panelW-2,2,metalD);
+        px(ctx,bx+2,by+2,2,2,metalD);px(ctx,bx+panelW-6,by+2,2,2,metalD);
+        px(ctx,bx+2,by+panelH-10,2,2,metalD);px(ctx,bx+panelW-6,by+panelH-10,2,2,metalD);
+      }
+    }
+    for(let i=0;i<10;i++){const sx=(i*53)%VW,sy=6+((i*19)%36),sh=18+((i*37)%54);
+      ctx.globalAlpha=0.28;px(ctx,sx,sy,2,sh,rustCol);ctx.globalAlpha=1;}
+    const archCX=VW/2,archW=Math.min(VW*0.7,240),r=archW/2;
+    const archTopY=Math.round(VH*0.10),archBotY=VH+6,archH=archBotY-archTopY;
+    px(ctx,archCX-r-16,archTopY-14,archW+32,archH+14,'#1c2024');
+    px(ctx,archCX-r-16,archTopY-14,archW+32,3,'#333a3f');
+    for(let i=0;i<8;i++)px(ctx,Math.round(archCX-r-14+((i*(archW+28))/8|0)),archTopY-14,2,archH+14,'#151819'); // seam bolts down the frame
+    for(let yy=0;yy<=archH;yy++){const Y=archTopY+yy,dy=r-yy,halfW=yy<r?Math.sqrt(Math.max(0,r*r-dy*dy)):r;
+      px(ctx,Math.round(archCX-halfW),Y,Math.max(1,Math.round(halfW*2)),1,'#020303');}
+    // the tunnel isn't just a flat void — cross-pipes receding into the dark, a second light further in, rubble underfoot
+    for(let i=0;i<4;i++){const py=archTopY+16+i*24,pr=(r-8)*(1-i*0.14);
+      ctx.globalAlpha=0.4-i*0.07;px(ctx,Math.round(archCX-pr),py,Math.max(1,Math.round(pr*2)),3,'#0e1214');ctx.globalAlpha=1;}
+    const farP=gasPulse(t,5.1);
+    ctx.globalAlpha=0.08+farP*0.10;
+    const rgFar=ctx.createRadialGradient(archCX,archTopY+66,4,archCX,archTopY+66,44);
+    rgFar.addColorStop(0,'rgba(255,200,120,0.85)');rgFar.addColorStop(1,'rgba(255,200,120,0)');
+    ctx.fillStyle=rgFar;ctx.fillRect(archCX-48,archTopY+28,96,96);ctx.globalAlpha=1;
+    for(let i=0;i<5;i++){const dx=archCX-r*0.68+((i*67)%Math.round(r*1.3)),dy=archBotY-16-((i*13)%9);
+      px(ctx,Math.round(dx),Math.round(dy),8+((i*7)%7),5,'#0a0c0c');}
+    ctx.globalAlpha=0.5;const rg=ctx.createRadialGradient(archCX,archBotY-40,10,archCX,archBotY-40,r*1.3);
+    rg.addColorStop(0,'rgba(120,80,30,0.22)');rg.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=rg;ctx.fillRect(archCX-r,archTopY,archW,archH);ctx.globalAlpha=1;
+    const p1=drawGasLamp(t,Math.round(archCX-r-8),archTopY+52,0);
+    drawGasLamp(t,Math.round(archCX+r+8),archTopY+52,3.4);   // phase-offset so the two lamps breathe out of sync
+    ctx.save();ctx.shadowColor='rgba(255,205,110,'+(0.25+p1*0.4)+')';ctx.shadowBlur=3+p1*3;
+    pxTextXL(ctx,'ACCESS',archCX,archTopY-26,2,'#cbb98a');   // worn stencilled paint, lit by the lamp glow
+    ctx.restore();
+    for(let x=10;x<VW-10;x+=4){const sagY=18+Math.round(Math.sin((x/(VW-20))*Math.PI)*14);px(ctx,x,sagY,3,2,'#0c0d0e');}
+    if((t>>3)%10<2)px(ctx,Math.round(VW*0.5-1),30,3,3,'#fff1c0');
+    const pY=VH-26;px(ctx,archCX-r-10,pY,archW+20,26,'#040404');
+    for(let i=0;i<14;i++){const ppx=Math.round(archCX-r-6+((i*29)%(archW+12))),rip=Math.sin(t*0.08+i)*1;
+      px(ctx,ppx,Math.round(pY+4+rip),10,1,(i%2)?'rgba(255,190,100,0.15)':'rgba(70,74,78,0.2)');}
+    for(let i=0;i<3;i++){const my=VH-40-i*10,mx=((t*0.3+i*60)%(VW+80))-40;ctx.globalAlpha=0.05+i*0.02;ctx.fillStyle='#7c7a72';ctx.fillRect(mx,my,80,8);ctx.globalAlpha=1;}
+    for(let i=0;i<6;i++){const rx=(i*53+((t*3)%VW))%VW,ry=((t*9+i*40)%VH);px(ctx,rx,ry,1,6,'rgba(150,148,140,0.22)');}
+  }
+  // close-up, full-colour pixel-art portrait — same chunky px() style as the in-game diver
+  // sprites (see diverBody g===0 "PATCH DIVER" for the matching palette): a real watchful eye,
+  // a cracked wired-on lens, scar, grime, breath in the cold — now with the rest of them: a worn
+  // coat, one arm resting, the other holding up a scavenged lamppost that breathes like a real gas flame.
+  function drawDweller(cx,cy,t){
+    const DK='#161d24', su='#5c6357', suD='#3d4438', suL='#767e6c';
+    const rust='#9a5128', rustD='#5e2f15', rustL='#c97c42';
+    const skin='#9c7a5c', skinD='#6b5236', skinL='#c2a07c';
+    const wire='#caa23a', tape='#cfd6da', tapeD='#9aa4a8';
+    const metal='#454c46', metalD='#2a2f2a';
+    const tilt=Math.sin(t*0.04)*0.04, bob=Math.sin(t*0.07+1)*1;
+    const lampP=0.5+0.5*Math.sin(t*0.03+1.7), lampGlow=lerpHex('#6a4518','#ffdc95',lampP); // his own lamp breathes too — slow, not a flicker, never fully dark
+    ctx.save();ctx.translate(Math.round(cx),Math.round(cy+bob));ctx.rotate(tilt);
+    pxDisc(ctx,0,10,52,'rgba(4,3,8,0.55)'); // deep shadow well so the figure reads against the busy backdrop
+
+    // ---- coat, arms, legs and the makeshift lamppost — drawn first so the hood/collar overlaps it ----
+    px(ctx,-32,24,64,10,su);px(ctx,-32,24,64,3,suL);                          // shoulder line, worn coat
+    px(ctx,-28,32,56,24,suD);px(ctx,-28,32,56,4,su);                          // chest / torso
+    for(let i=0;i<3;i++)px(ctx,-22+i*16,38,3,3,rustD);                        // coat rivets
+    px(ctx,-26,52,52,4,rust);px(ctx,-3,51,7,6,rustL);                         // belt + buckle
+    px(ctx,-24,56,20,32,suD);px(ctx,4,56,20,32,suD);                          // legs, trousers
+    px(ctx,-24,56,20,4,su);px(ctx,4,56,20,4,su);                              // hip highlight
+    px(ctx,-26,86,24,12,rustD);px(ctx,2,86,24,12,rustD);                      // boots
+    px(ctx,-26,86,24,3,rustL);px(ctx,2,86,24,3,rustL);                        // boot highlight
+    px(ctx,-34,26,11,20,suD);px(ctx,-33,42,9,10,skinD);px(ctx,-31,43,5,7,skin); // left arm, hanging
+    px(ctx,24,18,10,18,suD);px(ctx,29,4,9,16,suD);px(ctx,31,-3,8,9,skinD);px(ctx,32,-2,5,6,skin); // right arm, raised
+    px(ctx,33,-45,3,42,metal);px(ctx,32,-45,1,42,metalD);                    // the pole — a scavenged pipe, kept well clear of the tunnel ceiling
+    px(ctx,31,-14,5,2,wire);px(ctx,31,-30,5,2,wire);                         // binding wire wraps up the shaft
+    px(ctx,26,-63,16,20,rustD);px(ctx,28,-61,12,16,'#161310');               // the lantern — riveted cage box
+    for(let i=0;i<3;i++)px(ctx,29+i*4,-59,1,12,'#0e0c0a');                   // cage bars in front of the glow
+    px(ctx,29,-59,10,12,lampGlow);                                           // the flame/bulb, breathing warm
+    px(ctx,25,-65,18,3,rust);px(ctx,33,-67,2,3,wire);                        // cap + hanging hook
+    ctx.globalAlpha=0.34+lampP*0.5;
+    const rgL=ctx.createRadialGradient(34,-53,1,34,-53,22+lampP*9);
+    rgL.addColorStop(0,'rgba(255,220,145,0.95)');rgL.addColorStop(1,'rgba(255,220,145,0)');
+    ctx.fillStyle=rgL;ctx.fillRect(0,-87,68,68);ctx.globalAlpha=1;
+
+    // ---- hood / face ----
+    px(ctx,-38,-40,76,30,DK);px(ctx,-36,-38,72,26,suD);px(ctx,-36,-38,72,3,suL); // hood / cowl
+    for(let i=0;i<9;i++)px(ctx,-34+i*8,-12,3,3,i%3===0?rustD:DK); // riveted hood rim
+    px(ctx,-36,-12,72,4,DK); // brow shadow
+    px(ctx,-30,-10,60,40,skinD);px(ctx,-28,-8,56,34,skin); // grimy skin glimpsed beneath the hood
+    for(let i=0;i<5;i++)px(ctx,-24+(i*11)%50,2+(i*7)%18,2,2,skinD); // grime smudges
+    px(ctx,-22,-6,1,9,skinL); // an old scar by the real eye
+    const blink=((t/40|0)%9===0);
+    px(ctx,-19,-4,14,8,'#332a22'); // LEFT — a real, watchful eye
+    if(!blink){px(ctx,-17,-2,10,5,'#d8dccb');px(ctx,-13,-1,4,4,'#5a4326');px(ctx,-12,0,2,2,DK);px(ctx,-13,-1,1,1,'#f0dcae');}
+    else px(ctx,-17,0,10,1,'#332a22');
+    px(ctx,-3,-2,7,3,tapeD);px(ctx,-2,-1,5,1,tape); // taped nose bridge, where the goggle strap bites in
+    px(ctx,4,-9,22,20,rustD);px(ctx,6,-7,18,16,'#221c14'); // RIGHT — a cracked salvage lens, wired on crooked
+    if(!blink){px(ctx,8,-5,12,11,'#463a20');px(ctx,11,-2,6,5,'#e8b34a');px(ctx,12,-1,2,2,'#fff0c2');}
+    else px(ctx,8,-1,12,2,'#221c14');
+    px(ctx,9,-8,1,9,DK);px(ctx,10,-2,7,1,DK);px(ctx,18,-6,1,6,DK); // crack lines
+    px(ctx,10,-4,1,1,'#e7ddc0');px(ctx,16,2,1,1,'#e7ddc0'); // condensation specks
+    px(ctx,5,-8,2,2,rustL);px(ctx,5,9,2,2,rustL);px(ctx,24,-8,2,2,rustL);px(ctx,24,9,2,2,rustL); // bezel screws
+    px(ctx,2,-2,4,1,wire);px(ctx,2,4,4,1,wire); // binding wire
+    px(ctx,-13,12,26,16,rustD);px(ctx,-11,14,22,12,rust); // riveted tin-cap respirator
+    px(ctx,-11,15,22,4,tape);px(ctx,9,15,2,4,tapeD); // tape patch, peeling at one corner
+    for(let i=0;i<4;i++)px(ctx,-9+i*6,21,2,2,DK); // breathing grate
+    px(ctx,-2,16,1,1,rustL);px(ctx,6,16,1,1,rustL);
+    px(ctx,11,18,5,3,rustD);px(ctx,15,19,3,2,rustD); // hose nozzle stub heading off-frame
+    for(let i=0;i<3;i++){const ph=(t*0.6+i*22)%60,fy=12-ph*0.5,fx=-6+i*7+Math.sin(t*0.1+i)*2,a=clamp(1-ph/60,0,1)*0.3;
+      ctx.globalAlpha=a;ctx.fillStyle='#d8d6ce';ctx.fillRect(Math.round(fx),Math.round(fy),2,2);ctx.globalAlpha=1;} // breath vapour
+    if((t>>2)%11===0)px(ctx,3,-9,1,1,'#fff1c0'); // a stray spark off the lens wiring
+    ctx.globalAlpha=0.14;px(ctx,-38,-40,6,74,'#000000'); // shadow side, plain falloff — no coloured rim
+    ctx.globalAlpha=0.22+lampP*0.34;px(ctx,32,-40,6,74,'#ffb35a'); // lamp side — warm rim light, breathing with the flame
+    ctx.globalAlpha=1;
+    ctx.restore();
+  }
+
+  /* ---- per-phase render ---- */
+  function render(t){
+    const cx=VW/2;
+    if(phase==='firsttime'){drawSewerEntranceBg(t);} else {fillLcdBg();}
+    if(phase==='power'){
+      const a=Math.min(1,phaseT/22);                              // backlight ramping up to full LCD tone
+      ctx.fillStyle=`rgba(18,28,24,${(1-a)*0.85})`; ctx.fillRect(0,0,VW,VH);
+    } else if(phase==='logo'){
+      const a=Math.min(1,phaseT/18), ink=lerpHex(LCD_BG,INK,a);
+      inkOn();
+      drawDna(cx,VH*0.30,90,t,ink);
+      drawWaves(cx,VH*0.30+96,140,t,ink);
+      pxTextGhost(ctx,'BIOCRAFTED',cx,VH*0.30+128,3,GHOST);
+      if(phaseT>14)pxTextXL(ctx,'BIOCRAFTED',cx,VH*0.30+128,3,INK);
+      pxTextGhost(ctx,'STUDIOS',cx,VH*0.30+148,2,GHOST);
+      if(phaseT>26)pxTextXL(ctx,'STUDIOS',cx,VH*0.30+148,2,INK);
+      inkOff();
+    } else if(phase==='presents'){
+      inkOn();
+      pxTextGhost(ctx,'PRESENTS',cx,VH*0.46,3,GHOST);
+      if(phaseT>6)pxTextXL(ctx,'PRESENTS',cx,VH*0.46,3,INK);
+      const n=3; for(let i=0;i<n;i++){const on=((phaseT/14|0)%(n+1))>i;px(ctx,Math.round(cx-10+i*10),VH*0.46+22,4,4,on?INK:GHOST);}
+      inkOff();
+    } else if(phase==='title'){
+      const titleScale=VW>=240?4:3;
+      inkOn();
+      pxTextXL(ctx,'SEWER DIVER',cx,VH*0.40,titleScale,INK);
+      px(ctx,cx-60,VH*0.40+26,120,1,INK);
+      pxTextXL(ctx,'THE DESCENT',cx,VH*0.40+40,2,INK);
+      if(phaseT>30&&(phaseT/20|0)%2===0)pxTextXL(ctx,'TAP TO CONTINUE',cx,VH*0.40+76,1,INK);
+      inkOff();
+    } else if(phase==='firsttime'){
+      const dwCY=VH*0.38;
+      drawDweller(cx,dwCY,t);
+      ctx.save();ctx.shadowColor='rgba(255,205,110,0.6)';ctx.shadowBlur=4;
+      pxTextXL(ctx,'FIRST TIME HERE',cx,dwCY+108,2,'#eafcff');
+      ctx.restore();
+    }
+  }
+
+  let _loopAcc=0,_loopLast=performance.now();
+  function loop(now){
+    if(!running)return;
+    _loopAcc+=now-_loopLast;_loopLast=now;
+    if(_loopAcc>=15){_loopAcc=0;
+      phaseT++;
+      if(actionEdge){actionEdge=false;if(phase!=='power'&&phase!=='firsttime')advance();}
+      render(phaseT);
+      if(phase==='power'&&phaseT>26)advance();
+      else if(phase==='logo'&&phaseT>150)advance();
+      else if(phase==='presents'&&phaseT>90)advance();
+      else if(phase==='title'&&phaseT>170)advance();
+    }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+}
+
+/* ---- quick CRT power-on/static wipe straight into gameplay (the "skip" / "no" path) ----
+ * Mirrors the visual beat at the end of the Field Manual (see bootStaticToGame below) so the
+ * transition into the game feels identical whether the player skips or finishes the tutorial. */
+function quickStaticToGame(){
+  const stage=document.getElementById('stage');
+  const bf=document.createElement('div'); bf.id='bootfx';
+  bf.innerHTML='<div id="bootfx-black"></div><canvas id="bootfx-static"></canvas>';
+  stage.appendChild(bf);
+  const sc=bf.querySelector('#bootfx-static'), blk=bf.querySelector('#bootfx-black');
+  bf.style.display='block';
+  const rect=stage.getBoundingClientRect();
+  const sw=Math.max(80,Math.round(rect.width/3)), sh=Math.max(80,Math.round(rect.height/3));
+  sc.width=sw; sc.height=sh;
+  const sx=sc.getContext('2d'); sx.imageSmoothingEnabled=false;
+  blk.style.opacity='1'; sc.style.opacity='0';
+  let staticOn=true;
+  function paintStatic(){
+    if(!staticOn)return;
+    const img=sx.createImageData(sw,sh), d=img.data;
+    for(let p=0;p<d.length;p+=4){const v=(Math.random()*255)|0;d[p]=d[p+1]=d[p+2]=v;d[p+3]=255;}
+    sx.putImageData(img,0,0);
+    requestAnimationFrame(paintStatic);
+  }
+  requestAnimationFrame(paintStatic);
+  if(typeof noise==='function'){try{noise(0.5,0.10);}catch(e){}}
+  sc.style.transition='opacity 620ms ease';
+  requestAnimationFrame(()=>{sc.style.opacity='0.72';});
+  setTimeout(()=>{
+    input.joy=false; input.jx=0; input.jy=0; input.up=input.down=input.left=input.right=input.action=false;
+    actionEdge=false; queueCraft=false; mineEdge=false; clipEdge=false;
+    last=performance.now(); acc=0;
+    enterGame();
+    resize();
+    requestAnimationFrame(frame);
+    blk.style.transition='opacity 760ms ease';
+    sc.style.transition='opacity 820ms ease';
+    requestAnimationFrame(()=>{blk.style.opacity='0';sc.style.opacity='0';});
+  },560);
+  setTimeout(()=>{staticOn=false;bf.style.display='none';if(bf.parentNode)bf.parentNode.removeChild(bf);},560+900);
+}
+
+/* ===== BOOT TUTORIAL MODULE (pixel-art slideshow + CRT power-on) ===== */
+function startBootTutorial(){
+  TUT.active=true;
+  const stage=document.getElementById('stage');
+
+  /* ---- build DOM ---- */
+  const tut=document.createElement('div'); tut.id='tutorial';
+  tut.innerHTML=
+    '<div id="tut-crt">'
+   +  '<div class="tut-scan"></div>'
+   +  '<button id="tut-skip">SKIP ▸</button>'
+   +  '<div class="tut-head"><span class="t1">SEWER&nbsp;DIVER</span><span class="t2">FIELD MANUAL</span></div>'
+   +  '<div id="tut-stagewrap">'
+   +    '<div class="tut-slide on" data-s="0"><div class="tut-txt"><div class="tut-lead">use the <b>joystick</b> to move.</div></div><canvas class="tut-cv tut-port" id="tcv0"></canvas><div class="tut-hint" id="tut-hint">▾ try it ▾</div></div>'
+   +    '<div class="tut-slide" data-s="1"><div class="tut-txt"><div class="tut-lead">use this button<span class="tut-btn tb-clip"></span> to <b>attach or detach</b> from the rope.</div></div><canvas class="tut-cv tut-land" id="tcv1"></canvas><div class="tut-txt"><div class="tut-sub">the rope stays in place after detaching — and can be attached to again.</div><div class="tut-sub tut-sub2">use the rope to <b class="hl-blue">breathe</b> and protect from <b class="hl-green">environmental pollution</b>.</div></div></div>'
+   +    '<div class="tut-slide" data-s="2"><div class="tut-txt"><div class="tut-lead">approach resources to <b>mine</b> them. use this button<span class="tut-btn tb-mine"></span> to mine.</div></div><canvas class="tut-cv tut-sq" id="tcv2"></canvas></div>'
+   +    '<div class="tut-slide" data-s="3"><div class="tut-txt"><div class="tut-lead">use this button<span class="tut-btn tb-craft"></span> to interact with a <b>base</b> — open the shop &amp; crafting.</div></div><canvas class="tut-cv tut-sq" id="tcv3"></canvas><div class="tut-txt"><div class="tut-sub">bases at lower levels must be powered by bringing resources over.</div></div></div>'
+   +  '</div>'
+   +  '<div id="tut-dots"><span class="tut-dot on"></span><span class="tut-dot"></span><span class="tut-dot"></span><span class="tut-dot"></span></div>'
+   +  '<div id="tut-nav"><button id="tut-prev" disabled>◂ BACK</button><button id="tut-next">NEXT ▸</button></div>'
+   +'</div>';
+  stage.appendChild(tut);
+
+  // fill the inline button chips with the actual control-button icons (pixel-identical)
+  [['.tb-clip','clipbtn'],['.tb-mine','minebtn'],['.tb-craft','ropebtn']].forEach(function(m){
+    var src=document.getElementById(m[1]), chip=tut.querySelector(m[0]);
+    if(src&&chip){ var svg=src.querySelector('svg'); if(svg){ var cl=svg.cloneNode(true); cl.removeAttribute('class'); chip.appendChild(cl); } }
+  });
+
+  const boot=document.createElement('div'); boot.id='bootfx';
+  boot.innerHTML='<div id="bootfx-black"></div><canvas id="bootfx-static"></canvas>';
+  stage.appendChild(boot);
+
+  /* ---- canvases ---- */
+  const SIZES=[[96,120],[140,74],[92,92],[104,90]];
+  const cvs=[], ctxs=[];
+  for(let i=0;i<4;i++){
+    const cv=document.getElementById('tcv'+i);
+    cv.width=SIZES[i][0]; cv.height=SIZES[i][1];
+    const c=cv.getContext('2d'); c.imageSmoothingEnabled=false;
+    cvs.push(cv); ctxs.push(c);
+  }
+
+  /* ---- math helpers ---- */
+  function lerp(a,b,u){return a+(b-a)*u;}
+  function ease(u){u=Math.max(0,Math.min(1,u));return u*u*(3-2*u);}
+  function kickAnim(t){return Math.round(Math.sin(t*0.35)*2);}
+
+  /* ---- ported pixel art ---- */
+  // PATCH DIVER (game grade 0). sprite spans x:0..16 y:0..18, faces RIGHT.
+  function tutDiver(c,t,kick){
+    const DK='#161d24', yelD='#c89414';
+    const su='#5d6b62',suD='#3d4942',suL='#76897e';
+    px(c,2,7,3,6,'#69786e');px(c,3,7,1,6,'#86968c');px(c,3,7,1,1,'#aebcb2');px(c,4,6,1,2,suD);
+    px(c,4,5,1,2,'#4a564e');
+    px(c,4,15+(kick>0?1:0),3,2,suD);px(c,3,16+(kick>0?1:0),2,1,suD);
+    px(c,9,15+(kick<0?1:0),3,2,suD);px(c,12,16+(kick<0?1:0),1,1,suD);
+    px(c,6,13,2,2,suD);px(c,9,13,2,2,suD);
+    px(c,5,7,8,7,suD);px(c,5,7,7,6,su);px(c,5,7,7,1,suL);
+    px(c,6,9,2,2,suL);px(c,9,11,2,1,'#46524a');px(c,8,8,1,1,'#46524a');
+    px(c,7,9,3,3,yelD);px(c,7,9,3,1,'#cdb24a');px(c,8,10,1,1,DK);
+    px(c,11,9,3,2,su);px(c,13,9,1,2,suD);
+    px(c,6,1,7,6,'#5e6a76');px(c,6,1,7,5,'#7f8b90');px(c,7,0,5,1,'#98a4a0');px(c,12,1,1,5,'#4f5b57');
+    px(c,9,2,1,4,'#56625e');px(c,8,4,2,1,'#56625e');
+    const f=(Math.sin(t*0.27)>-.35);px(c,7,3,4,2,DK);if(f){px(c,7,3,4,1,'#3aa6c4');px(c,8,3,2,1,'#74d6e6');}
+    if((t>>2)%5<2)px(c,9,Math.max(-2,-((t>>1)%5)),1,1,'#bfe9ff');
+  }
+  // place diver centered at (cx,cy); dir<0 flips to face left
+  function drawDiverAt(c,cx,cy,dir,t,kick){
+    c.save();
+    c.translate(Math.round(cx-8),Math.round(cy-9));
+    if(dir<0){c.translate(16,0);c.scale(-1,1);}
+    tutDiver(c,t,kick);
+    c.restore();
+  }
+  // blocky crystal ore cluster, centered at (cx,cy) sitting on floor
+  function drawOreAt(c,cx,cy,t,col){
+    const X=Math.round(cx),Y=Math.round(cy);
+    // procedural ore sprite (Silt Crystal) so the tutorial ore matches the real in-world ores
+    c.drawImage(getOreCanvas('t1rb',0,'up'),X-8,Y-13,16,16);
+    if((t+7)%52<6)px(c,X,Y-9,1,1,'#ffffff');
+    tutGlow(c,cx,cy-5,13,hex2rgb(col).join(','),0.26);
+  }
+  // base housing centered at (cx,cy) where cy = floor line / rope nozzle
+  function drawBaseAt(c,cx,cy,t,lit){
+    const X=Math.round(cx),Y=Math.round(cy);
+    px(c,X-9,Y-17,18,15,'#1b2530');px(c,X-8,Y-16,16,13,'#26333f');px(c,X-8,Y-16,16,2,'#33424f');
+    px(c,X-7,Y-15,2,11,'#33424f');px(c,X+5,Y-15,2,11,'#1b2530');
+    px(c,X-8,Y-20,3,4,'#1b2530');px(c,X+5,Y-20,3,4,'#1b2530');
+    const lc=lit?'#1c6a82':'#5a2230';
+    for(let i=0;i<3;i++){const on=lit&&(((t>>3)+i)%3===0);px(c,X-6+i*5,Y-14,3,2,on?'#bfefff':lc);}
+    px(c,X-5,Y-11,10,6,'#0c1620');px(c,X-4,Y-10,8,4,lit?'#0e3a4a':'#241016');
+    if(lit){const pu=2+Math.round(Math.abs(Math.sin(t*0.08))*2);px(c,X-1,Y-9,2,pu,'#7fe6ff');px(c,X-3,Y-8,6,1,'#46d0ff');}
+    else px(c,X-3,Y-8,6,1,'#7a2030');
+    px(c,X-3,Y-3,6,4,'#3a4a57');px(c,X-4,Y-2,1,3,'#2a3742');px(c,X+3,Y-2,1,3,'#2a3742');
+    px(c,X-1,Y-1,2,3,lit?'#ffd23c':'#4a4a4a');
+    if(lit)tutGlow(c,cx,cy-9,20,'70,208,255',0.30);
+    else{tutGlow(c,cx,cy-9,13,'150,50,50',0.12);if((t%34)<2)px(c,X-3+((Math.random()*7)|0),Y-9,1,1,'#ff9a3c');}
+  }
+  // catenary rope segment from anchor (ax,ay) to end (bx,by)
+  function drawRopeSeg(c,ax,ay,bx,by,sag){
+    const mx=(ax+bx)/2,my=(ay+by)/2+(sag||0),N=14;
+    for(let i=0;i<=N;i++){const u=i/N,iu=1-u;
+      const x=iu*iu*ax+2*iu*u*mx+u*u*bx,y=iu*iu*ay+2*iu*u*my+u*u*by;
+      px(c,Math.round(x)-1,Math.round(y)-1,2,2,(i&1)?'#9a7a38':'#c9a14a');}
+    px(c,Math.round(ax)-1,Math.round(ay)-1,2,2,'#ffd23c');
+  }
+  function drawClipEnd(c,x,y,glow){
+    const EX=Math.round(x),EY=Math.round(y);
+    if(glow>0)tutGlow(c,x,y,10,'255,210,60',glow);
+    px(c,EX-2,EY-2,5,5,'#3a4a57');px(c,EX-1,EY-1,3,3,'#ffd23c');px(c,EX,EY,1,1,'#fff4c2');
+  }
+  function tutGlow(c,x,y,r,rgb,a){
+    c.save();c.globalCompositeOperation='lighter';
+    const g=c.createRadialGradient(x,y,0,x,y,r);
+    g.addColorStop(0,'rgba('+rgb+','+a+')');g.addColorStop(1,'rgba('+rgb+',0)');
+    c.fillStyle=g;c.beginPath();c.arc(x,y,r,0,6.283);c.fill();c.restore();
+  }
+  function tutWater(c,w,h,t,top,bot){
+    const g=c.createLinearGradient(0,0,0,h);g.addColorStop(0,top);g.addColorStop(1,bot);
+    c.fillStyle=g;c.fillRect(0,0,w,h);
+    // drifting motes
+    for(let i=0;i<10;i++){
+      const sx=(i*37+ (t*0.3) )% (w+8) -4;
+      const sy=( (i*53) + Math.sin((t*0.02)+i)*6 + (t*0.12) )%(h+8)-4;
+      c.fillStyle=i%3?'rgba(120,180,200,0.18)':'rgba(150,220,240,0.10)';
+      c.fillRect(Math.round(sx),Math.round(sy),1,1);
+    }
+  }
+  function tutStatic(c,w,h,amt){
+    // chunky 2px grayscale noise filling canvas; amt 0..1 coverage
+    const S=2;
+    for(let y=0;y<h;y+=S)for(let x=0;x<w;x+=S){
+      if(Math.random()>amt)continue;
+      const v=(Math.random()*255)|0;
+      c.fillStyle='rgb('+v+','+v+','+v+')';
+      c.fillRect(x,y,S,S);
+    }
+  }
+
+  /* ---- per-slide animation state ---- */
+  let tutT=0, animClock=0, cur=0, slideLoopOn=true, ended=false;
+  // slide 0 interactive diver
+  const dv={x:48,y:64,vx:0,vy:0,dir:1};
+  let joyTouched=false;
+  const hintEl=document.getElementById('tut-hint');
+
+  /* ---- scenes ---- */
+  function sceneMove(c,w,h,t){
+    c.clearRect(0,0,w,h);
+    tutWater(c,w,h,t,'#0e2630','#06141c');
+    // floor
+    px(c,0,h-4,w,4,'#0a1c24');
+    // interactive physics from joystick
+    const ax=(input.jx||0), ay=(input.jy||0);
+    if(Math.abs(ax)>0.05||Math.abs(ay)>0.05){joyTouched=true; if(hintEl)hintEl.style.opacity='0';}
+    dv.vx=lerp(dv.vx, ax*1.5, 0.2); dv.vy=lerp(dv.vy, ay*1.5, 0.2);
+    if(!joyTouched){ dv.vy+=Math.sin(t*0.08)*0.04; } // idle bob
+    dv.x+=dv.vx; dv.y+=dv.vy;
+    dv.x=Math.max(11,Math.min(w-11,dv.x)); dv.y=Math.max(11,Math.min(h-9,dv.y));
+    if(dv.vx>0.12)dv.dir=1; else if(dv.vx<-0.12)dv.dir=-1;
+    const kick=(Math.abs(dv.vx)+Math.abs(dv.vy)>0.25)?kickAnim(t):0;
+    // bubbles when moving
+    if(joyTouched&&(t%6===0)&&(Math.abs(dv.vx)+Math.abs(dv.vy)>0.3)){}
+    drawDiverAt(c,dv.x,dv.y,dv.dir,t,kick);
+  }
+
+  const ROPE_CYC=360;
+  function sceneRope(c,w,h,t){
+    c.clearRect(0,0,w,h);
+    tutWater(c,w,h,t,'#0c2230','#05121a');
+    px(c,0,h-4,w,4,'#0a1c24');
+    const k=animClock%ROPE_CYC;
+    const anchorX=10, anchorY=12;          // rope anchor top-left (a base off-frame)
+    px(c,2,6,8,6,'#26333f');px(c,3,7,6,3,'#33424f');px(c,5,8,3,2,'#0e3a4a'); // little anchor block
+    const dropX=Math.round(w*0.52), dropY=h-12;
+    let dvx,dvy,dir=1,attached=true,clipGlow=0,flash=false;
+    if(k<80){ const u=ease(k/80); dvx=lerp(22,dropX,u); dvy=lerp(20,dropY,u); }
+    else if(k<96){ dvx=dropX;dvy=dropY; attached=false; flash=(k%4<2); clipGlow=0.5; }
+    else if(k<170){ const u=ease((k-96)/74); dvx=lerp(dropX,w-14,u); dvy=lerp(dropY,18,u); attached=false; dir=1; clipGlow=0.32; }
+    else if(k<200){ dvx=w-14;dvy=18; attached=false; clipGlow=0.32; }
+    else if(k<285){ const u=ease((k-200)/85); dvx=lerp(w-14,dropX,u); dvy=lerp(18,dropY,u); attached=false; dir=-1; clipGlow=0.32; }
+    else if(k<300){ dvx=dropX;dvy=dropY; attached=false; flash=(k%4<2); clipGlow=0.6; }
+    else { const u=ease((k-300)/60); dvx=dropX;dvy=dropY; attached=true; }
+    const kick=kickAnim(t);
+    // rope: when attached, goes anchor->diver; when detached, anchor->frozen droppoint + diver swims free
+    if(attached){ drawRopeSeg(c,anchorX,anchorY,dvx,dvy-2,8); }
+    else { drawRopeSeg(c,anchorX,anchorY,dropX,dropY,6); drawClipEnd(c,dropX,dropY, flash?0.8:clipGlow); }
+    drawDiverAt(c,dvx,dvy,dir,t,kick);
+    if(flash){ tutGlow(c,dvx,dvy,12,'255,210,120',0.5); }
+  }
+
+  const MINE_CYC=120;
+  function sceneMine(c,w,h,t){
+    c.clearRect(0,0,w,h);
+    const k=animClock%MINE_CYC;
+    if(k>=108){ // STATIC blink + reset
+      tutWater(c,w,h,t,'#0c2230','#05121a');
+      tutStatic(c,w,h,0.85);
+      return;
+    }
+    tutWater(c,w,h,t,'#0c2230','#05121a');
+    px(c,0,h-4,w,4,'#0a1c24');
+    const oreX=w-22, oreY=h-6;
+    drawOreAt(c,oreX,oreY,t,'#46d0ff');
+    let dvx,dir=1,kick=kickAnim(t);
+    if(k<88){ const u=ease(k/88); dvx=lerp(20,oreX-13,u); }
+    else { dvx=oreX-13; kick=0; }
+    drawDiverAt(c,dvx,oreY-7,dir,t,kick);
+    if(k>=88){ // mining taps + sparks
+      const tap=(k-88);
+      if(tap%6<3){ tutGlow(c,oreX,oreY-4,9,'255,226,128',0.5);
+        for(let s=0;s<4;s++){const a=Math.random()*6.28,r=2+Math.random()*6;
+          px(c,Math.round(oreX+Math.cos(a)*r),Math.round(oreY-4+Math.sin(a)*r),1,1,Math.random()<0.5?'#fff4c2':'#9fe8ff');}}
+    }
+  }
+
+  // in-game-style background: reuse the engine's pre-baked tier textures + water tint
+  function tutBgGame(c,w,h,t,tier){
+    const W=(typeof TIERS!=='undefined'&&TIERS[tier])?TIERS[tier].water:['#11313f','#0c2531','#071b25'];
+    const rgb0=hex2rgb(W[0]).join(','), rgb2=hex2rgb(W[2]).join(',');
+    c.fillStyle=W[2]; c.fillRect(0,0,w,h);
+    const tex=(typeof bgTex!=='undefined')&&bgTex[tier], glow=(typeof bgGlowTex!=='undefined')&&bgGlowTex[tier];
+    const B=(typeof BTS!=='undefined')?BTS:128;
+    const dy=Math.round(t*0.12)%B, dx=Math.round(t*0.04)%B;     // gentle ambient drift
+    if(tex){ for(let yy=dy-B; yy<h; yy+=B) for(let xx=-dx; xx<w; xx+=B) c.drawImage(tex,xx,yy); }
+    const g=c.createLinearGradient(0,0,0,h); g.addColorStop(0,'rgba('+rgb0+',0.5)'); g.addColorStop(1,'rgba('+rgb2+',0)');
+    c.fillStyle=g; c.fillRect(0,0,w,h);
+    if(glow){ c.save(); c.globalCompositeOperation='lighter'; for(let yy=dy-B; yy<h; yy+=B) for(let xx=-dx; xx<w; xx+=B) c.drawImage(glow,xx,yy); c.restore(); }
+    for(let i=0;i<8;i++){ const sx=(i*41+t*0.25)%(w+8)-4, sy=((i*57)+t*0.1+Math.sin(t*0.02+i)*5)%(h+8)-4;
+      c.fillStyle=i%3?'rgba(120,180,200,0.16)':'rgba(150,220,240,0.09)'; c.fillRect(Math.round(sx),Math.round(sy),1,1); }
+    const vg=c.createRadialGradient(w/2,h*0.5,h*0.18,w/2,h*0.5,h*0.78); vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(0,0,0,0.42)'); c.fillStyle=vg; c.fillRect(0,0,w,h);
+  }
+
+  // sceneCraft timing (frames @~60fps): approach lit base → dwell → static → approach offline base → activate → 3s dwell → static → loop
+  const C_APPROACH=96, C_HOLD=44, C_ST=12, C_BAPPR=96, C_BACT=24, C_BHOLD=180;   // C_BHOLD≈3s
+  const cST1=C_APPROACH+C_HOLD, cB0=cST1+C_ST, cBact=cB0+C_BAPPR, cBhold=cBact+C_BACT, cST2=cBhold+C_BHOLD;
+  const CRAFT_CYC=cST2+C_ST;
+  function sceneCraft(c,w,h,t){
+    c.clearRect(0,0,w,h);
+    const k=animClock%CRAFT_CYC;
+    const baseX=w-26, baseY=h-8;
+    // ---- STATIC transitions (level-1 bg between parts, level-2 bg after activation) ----
+    if((k>=cST1&&k<cB0)||(k>=cST2)){
+      tutBgGame(c,w,h,t,(k>=cST2)?1:0); tutStatic(c,w,h,0.85); return;
+    }
+    if(k<cST1){
+      // ---- PART A: dock a powered base (level 1 water) ----
+      tutBgGame(c,w,h,t,0);
+      let dvx, kick=kickAnim(t);
+      if(k<C_APPROACH){ const u=ease(k/C_APPROACH); dvx=lerp(16,baseX-14,u); if(k>=C_APPROACH-12)kick=0; }
+      else { dvx=baseX-14; kick=0; }
+      drawBaseAt(c,baseX,baseY,t,true);
+      tutGlow(c,baseX,baseY-9,15,'70,208,255',0.16);
+      drawDiverAt(c,dvx,baseY-9,1,t,kick);
+    } else {
+      // ---- PART B: power up an OFFLINE base (level-2 water tint) ----
+      tutBgGame(c,w,h,t,1);
+      const kb=k-cB0;
+      let dvx, kick=kickAnim(t), lit=false;
+      if(kb<C_BAPPR){ const u=ease(kb/C_BAPPR); dvx=lerp(16,baseX-14,u); if(kb>=C_BAPPR-12)kick=0; }
+      else if(kb<C_BAPPR+C_BACT){           // activation: flicker on as the diver plugs in
+        dvx=baseX-14; kick=0; const f=kb-C_BAPPR;
+        lit=(f>10)?true:((f%4)<2);
+        if(lit) tutGlow(c,baseX,baseY-9,18,'70,208,255',0.45*Math.min(1,f/12));
+      } else {                              // 3-second dwell with the base now powered
+        dvx=baseX-14; kick=0; lit=true;
+        tutGlow(c,baseX,baseY-9,16,'70,208,255',0.18);
+      }
+      drawBaseAt(c,baseX,baseY,t,lit);
+      drawDiverAt(c,dvx,baseY-9,1,t,kick);
+    }
+  }
+
+  const scenes=[sceneMove,sceneRope,sceneMine,sceneCraft];
+
+  /* ---- main loop ---- */
+  let _slideAcc=0,_slideLast=performance.now();
+  function slideLoop(now){
+    if(!slideLoopOn)return;
+    _slideAcc+=now-_slideLast;_slideLast=now;
+    if(_slideAcc>=15){_slideAcc=0;
+      tutT++; animClock++;
+      scenes[cur](ctxs[cur],cvs[cur].width,cvs[cur].height,tutT);
+    }
+    requestAnimationFrame(slideLoop);
+  }
+  requestAnimationFrame(slideLoop);
+
+  /* ---- navigation ---- */
+  const slides=[...tut.querySelectorAll('.tut-slide')];
+  const dots=[...tut.querySelectorAll('.tut-dot')];
+  const nextBtn=document.getElementById('tut-next');
+  const prevBtn=document.getElementById('tut-prev');
+  const skipBtn=document.getElementById('tut-skip');
+  const haloIds=['dpad','clipbtn','minebtn','ropebtn'];
+
+  function clearHalo(){ haloIds.forEach(id=>{const el=document.getElementById(id);if(el)el.classList.remove('tut-halo');}); }
+  function goto(i){
+    cur=i; animClock=0;
+    slides.forEach((s,n)=>s.classList.toggle('on',n===i));
+    dots.forEach((d,n)=>d.classList.toggle('on',n===i));
+    clearHalo();
+    const tgt=document.getElementById(haloIds[i]); if(tgt)tgt.classList.add('tut-halo');
+    TUT.joyLive=(i===0);
+    if(i===0){ dv.x=48;dv.y=64;dv.vx=0;dv.vy=0;dv.dir=1; joyTouched=false; if(hintEl)hintEl.style.opacity='1'; }
+    prevBtn.disabled=(i===0);
+    if(i===slides.length-1){ nextBtn.textContent='DIVE IN ▸'; nextBtn.classList.add('go'); }
+    else { nextBtn.textContent='NEXT ▸'; nextBtn.classList.remove('go'); }
+    sfx.nav();
+  }
+  function next(){ if(cur>=slides.length-1){endTutorial();} else goto(cur+1); }
+  function prev(){ if(cur>0)goto(cur-1); }
+  function skip(){ endTutorial(); }
+  ['pointerdown'].forEach(ev=>{ nextBtn.addEventListener(ev,audioInit); prevBtn.addEventListener(ev,audioInit); skipBtn.addEventListener(ev,audioInit); });
+  nextBtn.addEventListener('click',next);
+  prevBtn.addEventListener('click',prev);
+  skipBtn.addEventListener('click',skip);
+
+  /* ---- CRT power-off → static → game ---- */
+  function crtSound(){
+    if(typeof beep==='function'){ beep(2100,0.18,'sine',0.12,160); }
+    if(typeof noise==='function'){ noise(0.22,0.16); setTimeout(()=>{try{beep(64,0.2,'sine',0.2);}catch(e){}},120); }
+  }
+  function endTutorial(){
+    if(ended)return; ended=true;
+    TUT.joyLive=false; clearHalo();
+    slideLoopOn=false;
+    crtSound();
+    crtPowerOff(()=>{ tut.style.display='none'; bootStaticToGame(); });
+  }
+
+  function crtPowerOff(done){
+    const crt=document.getElementById('tut-crt');
+    const white=document.createElement('div'); white.className='crt-white'; crt.appendChild(white);
+    const dot=document.createElement('div'); dot.className='crt-dot'; tut.appendChild(dot);
+    // step 1: collapse vertically + flare
+    crt.style.transition='transform 200ms cubic-bezier(.6,0,.9,.4), filter 200ms ease';
+    white.style.transition='opacity 180ms ease';
+    requestAnimationFrame(()=>{
+      crt.style.transform='scaleY(0.012)';
+      crt.style.filter='brightness(1.8)';
+      white.style.opacity='0.85';
+    });
+    setTimeout(()=>{
+      // step 2: collapse horizontally to a point; pop the bright line
+      crt.style.transition='transform 130ms ease-in, opacity 130ms ease-in';
+      crt.style.transform='scaleY(0.012) scaleX(0)';
+      crt.style.opacity='0';
+      dot.style.transition='transform 120ms ease-out, opacity 120ms ease-out';
+      dot.style.transform='translate(-50%,-50%) scaleX(1)';
+      dot.style.opacity='1';
+      setTimeout(()=>{
+        // step 3: the line shrinks to a dot, then fades
+        dot.style.transition='transform 240ms ease-in, opacity 240ms ease-in';
+        dot.style.transform='translate(-50%,-50%) scaleX(0.18) scaleY(0.4)';
+        dot.style.opacity='0';
+        setTimeout(()=>{ done&&done(); }, 240);
+      },130);
+    },205);
+  }
+
+  function bootStaticToGame(){
+    const bf=document.getElementById('bootfx');
+    const sc=document.getElementById('bootfx-static');
+    const blk=document.getElementById('bootfx-black');
+    bf.style.display='block';
+    // size static canvas to stage at reduced res
+    const rect=stage.getBoundingClientRect();
+    const sw=Math.max(80,Math.round(rect.width/3)), sh=Math.max(80,Math.round(rect.height/3));
+    sc.width=sw; sc.height=sh;
+    const sx=sc.getContext('2d'); sx.imageSmoothingEnabled=false;
+    blk.style.opacity='1';
+    sc.style.opacity='0';
+    let staticOn=true;
+    function paintStatic(){
+      if(!staticOn)return;
+      const img=sx.createImageData(sw,sh);
+      const d=img.data;
+      for(let p=0;p<d.length;p+=4){ const v=(Math.random()*255)|0; d[p]=d[p+1]=d[p+2]=v; d[p+3]=255; }
+      sx.putImageData(img,0,0);
+      requestAnimationFrame(paintStatic);
+    }
+    requestAnimationFrame(paintStatic);
+    if(typeof noise==='function'){ try{noise(0.5,0.10);}catch(e){} }
+    // fade static in
+    sc.style.transition='opacity 620ms ease';
+    requestAnimationFrame(()=>{ sc.style.opacity='0.72'; });
+    // just before static peaks, swap to the real game underneath and start fading static/black out
+    setTimeout(()=>{
+      // reset stray inputs/edges before the game starts
+      input.joy=false; input.jx=0; input.jy=0; input.up=input.down=input.left=input.right=input.action=false;
+      actionEdge=false; queueCraft=false; mineEdge=false; clipEdge=false;
+      TUT.active=false;
+      last=performance.now(); acc=0;
+      enterGame();
+      resize();
+      requestAnimationFrame(frame);
+      // reveal game: black fades, static "fails down"
+      blk.style.transition='opacity 760ms ease';
+      sc.style.transition='opacity 820ms ease';
+      requestAnimationFrame(()=>{ blk.style.opacity='0'; sc.style.opacity='0'; });
+    },560);
+    // cleanup
+    setTimeout(()=>{ staticOn=false; bf.style.display='none';
+      if(tut&&tut.parentNode)tut.parentNode.removeChild(tut);
+      if(bf&&bf.parentNode)bf.parentNode.removeChild(bf);
+    },560+900);
+  }
+
+  /* ---- start ---- */
+  goto(0);
+}
+
+/* ===== FIRST-BASE-INTERACTION QUICK GUIDE (3 slides) ===== */
+function startBaseIntro(onDone){
+  const stage=document.getElementById('stage');
+  setMode('craft');                                            // pause the diver; CRT scanlines on
+  const ctl=document.getElementById('controls'); if(ctl)ctl.style.visibility='hidden';
+
+  // category rows reuse the real workshop/shop icon art
+  const WORK=[
+    [DIVICON.crate,'Cargo','raw & refined materials in your hold'],
+    [DIVICON.flask,'Mixer','combine raw materials into refined goods'],
+    [gearIcon(26),'Fab Bay','build dive suits to reach deeper levels'],
+    [ropeIcon(26),'Air Line','extend your base\u2019s air rope'],
+    [sealIcon(26),'Seals','fit hazard seals to cut pollution'],
+    [lensIcon(26),'Lens','grind your lantern for a wider beam'],
+    [medIcon(26),'Patch','craft patch kits that heal you']
+  ];
+  const SHOP=[
+    [coinIcon(26),'Dealer','sell salvaged scrap for coins'],
+    [partIcon('bolt',26),'Parts','buy machine parts with coins'],
+    [machIcon('robot',26),'Machines','build helpful machines from parts'],
+    [DIVICON.wrench,'Outfit','upgrade tanks, filters, O\u2082 & nav'],
+    [DIVICON.swap,'Exchange','buy raw resources with coins']
+  ];
+  function rows(list){return list.map(function(r){return '<div class="bi-row"><span class="bi-ico">'+r[0]+'</span><div class="bi-rtext"><span class="bi-rname">'+r[1]+'</span><span class="bi-rdesc">'+r[2]+'</span></div></div>';}).join('');}
+
+  const bi=document.createElement('div'); bi.id='baseintro';
+  bi.innerHTML=
+    '<div class="bi-crt">'
+   +  '<div class="tut-scan"></div>'
+   +  '<button id="bi-skip">SKIP \u25b8</button>'
+   +  '<div class="bi-head"><span class="t1">BASE TERMINAL</span><span class="t2">QUICK GUIDE</span></div>'
+   +  '<div id="bi-stage">'
+   +    '<div class="bi-slide on" data-b="0"><div class="bi-title">WORKSHOP</div><div class="bi-list">'+rows(WORK)+'</div></div>'
+   +    '<div class="bi-slide" data-b="1"><div class="bi-title">SHOP</div><div class="bi-list">'+rows(SHOP)+'</div></div>'
+   +    '<div class="bi-slide" data-b="2">'
+   +      '<div class="bi-txt"><div class="bi-line">Collect <b class="hl-blue">valuable scrap</b> to sell for coins at the shop.</div></div>'
+   +      '<canvas class="tut-cv bi-cv" id="bicv"></canvas>'
+   +      '<div class="bi-txt"><div class="bi-line"><b class="hl-orange">Collect resources and mine ores</b> to bring back resources to the base and craft new gear.</div>'
+   +        '<div class="bi-line">Deeper levels require you to craft specialised gear at the <b class="hl-yellow">workshop fab bay</b> to access them.</div></div>'
+   +    '</div>'
+   +  '</div>'
+   +  '<div id="bi-dots"><span class="bi-dot on"></span><span class="bi-dot"></span><span class="bi-dot"></span></div>'
+   +  '<div id="bi-nav"><button id="bi-prev" disabled>\u25c2 BACK</button><button id="bi-next">NEXT \u25b8</button></div>'
+   +'</div>';
+  stage.appendChild(bi);
+
+  // ---- slide-3 canvas + self-contained pixel-art helpers ----
+  const cv=document.getElementById('bicv'); cv.width=150; cv.height=82;
+  const cx=cv.getContext('2d'); cx.imageSmoothingEnabled=false;
+  function lerp(a,b,u){return a+(b-a)*u;}
+  function ease(u){u=Math.max(0,Math.min(1,u));return u*u*(3-2*u);}
+  function kick(t){return Math.round(Math.sin(t*0.35)*2);}
+  function glow(c,x,y,r,rgb,a){c.save();c.globalCompositeOperation='lighter';const g=c.createRadialGradient(x,y,0,x,y,r);g.addColorStop(0,'rgba('+rgb+','+a+')');g.addColorStop(1,'rgba('+rgb+',0)');c.fillStyle=g;c.beginPath();c.arc(x,y,r,0,6.283);c.fill();c.restore();}
+  function water(c,w,h,t){const g=c.createLinearGradient(0,0,0,h);g.addColorStop(0,'#0e2630');g.addColorStop(1,'#06141c');c.fillStyle=g;c.fillRect(0,0,w,h);for(let i=0;i<9;i++){const sx=(i*37+t*0.3)%(w+8)-4,sy=((i*53)+Math.sin(t*0.02+i)*6+t*0.12)%(h+8)-4;c.fillStyle=i%3?'rgba(120,180,200,0.16)':'rgba(150,220,240,0.09)';c.fillRect(Math.round(sx),Math.round(sy),1,1);}}
+  function diver(c,t,kk){
+    const DK='#161d24',yelD='#c89414',su='#5d6b62',suD='#3d4942',suL='#76897e';
+    px(c,2,7,3,6,'#69786e');px(c,3,7,1,6,'#86968c');px(c,3,7,1,1,'#aebcb2');px(c,4,6,1,2,suD);px(c,4,5,1,2,'#4a564e');
+    px(c,4,15+(kk>0?1:0),3,2,suD);px(c,3,16+(kk>0?1:0),2,1,suD);
+    px(c,9,15+(kk<0?1:0),3,2,suD);px(c,12,16+(kk<0?1:0),1,1,suD);
+    px(c,6,13,2,2,suD);px(c,9,13,2,2,suD);
+    px(c,5,7,8,7,suD);px(c,5,7,7,6,su);px(c,5,7,7,1,suL);
+    px(c,6,9,2,2,suL);px(c,9,11,2,1,'#46524a');px(c,8,8,1,1,'#46524a');
+    px(c,7,9,3,3,yelD);px(c,7,9,3,1,'#cdb24a');px(c,8,10,1,1,DK);
+    px(c,11,9,3,2,su);px(c,13,9,1,2,suD);
+    px(c,6,1,7,6,'#5e6a76');px(c,6,1,7,5,'#7f8b90');px(c,7,0,5,1,'#98a4a0');px(c,12,1,1,5,'#4f5b57');
+    px(c,9,2,1,4,'#56625e');px(c,8,4,2,1,'#56625e');
+    const f=(Math.sin(t*0.27)>-.35);px(c,7,3,4,2,DK);if(f){px(c,7,3,4,1,'#3aa6c4');px(c,8,3,2,1,'#74d6e6');}
+    if((t>>2)%5<2)px(c,9,Math.max(-2,-((t>>1)%5)),1,1,'#bfe9ff');
+  }
+  function diverAt(c,X,Y,dir,t,kk){c.save();c.translate(Math.round(X-8),Math.round(Y-9));if(dir<0){c.translate(16,0);c.scale(-1,1);}diver(c,t,kk);c.restore();}
+  function oreAt(c,X0,Y0,t){
+    const col='#46d0ff',dk='#1f6f87',lt='#bfefff',X=Math.round(X0),Y=Math.round(Y0);
+    px(c,X-8,Y,16,3,'#28333d');px(c,X-8,Y,16,1,'#37464f');
+    px(c,X-4,Y-8,8,8,dk);px(c,X-3,Y-7,6,6,col);px(c,X-3,Y-7,3,2,lt);
+    px(c,X-7,Y-6,4,5,dk);px(c,X-6,Y-5,3,3,col);
+    px(c,X+3,Y-5,4,5,dk);px(c,X+4,Y-4,2,3,col);px(c,X-2,Y-3,3,3,col);
+    px(c,X-1,Y-10,2,3,dk);px(c,X-1,Y-10,1,2,lt);
+    if((t+7)%52<6)px(c,X,Y-7,1,1,'#ffffff');
+    glow(c,X0,Y0-3,13,'70,208,255',0.26);
+  }
+  function baseAt(c,X0,Y0,t,lit){
+    const X=Math.round(X0),Y=Math.round(Y0);
+    px(c,X-9,Y-17,18,15,'#1b2530');px(c,X-8,Y-16,16,13,'#26333f');px(c,X-8,Y-16,16,2,'#33424f');
+    px(c,X-7,Y-15,2,11,'#33424f');px(c,X+5,Y-15,2,11,'#1b2530');
+    px(c,X-8,Y-20,3,4,'#1b2530');px(c,X+5,Y-20,3,4,'#1b2530');
+    const lc=lit?'#1c6a82':'#5a2230';
+    for(let i=0;i<3;i++){const on=lit&&(((t>>3)+i)%3===0);px(c,X-6+i*5,Y-14,3,2,on?'#bfefff':lc);}
+    px(c,X-5,Y-11,10,6,'#0c1620');px(c,X-4,Y-10,8,4,lit?'#0e3a4a':'#241016');
+    if(lit){const pu=2+Math.round(Math.abs(Math.sin(t*0.08))*2);px(c,X-1,Y-9,2,pu,'#7fe6ff');px(c,X-3,Y-8,6,1,'#46d0ff');}
+    else px(c,X-3,Y-8,6,1,'#7a2030');
+    px(c,X-3,Y-3,6,4,'#3a4a57');px(c,X-4,Y-2,1,3,'#2a3742');px(c,X+3,Y-2,1,3,'#2a3742');
+    px(c,X-1,Y-1,2,3,lit?'#ffd23c':'#4a4a4a');
+    if(lit)glow(c,X0,Y0-9,20,'70,208,255',0.30);
+  }
+  function scrapAt(c,x,y,t){            // VALUABLE scrap — light-blue highlight
+    const bob=Math.round(Math.sin(t*0.08)*1),X=Math.round(x),Y=Math.round(y+bob);
+    glow(c,x,y+bob,11,'120,210,255',0.45+Math.sin(t*0.1)*0.15);
+    px(c,X-3,Y-2,7,5,'#3a5566');px(c,X-2,Y-1,5,3,'#6fb6d8');px(c,X-2,Y-1,2,1,'#bfefff');px(c,X-3,Y+3,7,1,'#0c141b');
+    if((t|0)%40<8){px(c,X+4,Y-4,1,1,'#dffaff');px(c,X+5,Y-5,1,1,'#dffaff');}
+  }
+  function itemAt(c,x,y,t){             // a floating resource canister
+    const bob=Math.round(Math.sin(t*0.07+1)*2),X=Math.round(x),Y=Math.round(y+bob);
+    glow(c,x,y+bob,10,'90,230,160',0.3);
+    px(c,X-3,Y-4,6,9,'#2a3540');px(c,X-2,Y-3,4,7,'#3ce0a0');px(c,X-2,Y-3,1,5,'#bdffea');px(c,X-2,Y-5,4,1,'#8a96a2');
+  }
+
+  const CYC=270;
+  function scene(){
+    const w=cv.width,h=cv.height; cx.clearRect(0,0,w,h);
+    water(cx,w,h,biT);
+    px(cx,0,h-4,w,4,'#0a1c24');
+    const k=anim%CYC;
+    const baseX=18, baseY=h-6, scrapX=58, itemX=92, oreX=126, oreY=h-6, my=h-26;
+    const gotScrap=k>56, gotItem=k>106;
+    baseAt(cx,baseX,baseY,biT,true);
+    if(!gotScrap) scrapAt(cx,scrapX,my,biT);
+    if(!gotItem) itemAt(cx,itemX,my-4,biT);
+    oreAt(cx,oreX,oreY,biT);
+    let dx,dy=my,dir=1,kk=kick(biT);
+    if(k<50){const u=ease(k/50);dx=lerp(baseX+12,scrapX,u);}
+    else if(k<62){dx=scrapX;kk=0;if((k-50)%4<2)glow(cx,scrapX,my,10,'120,210,255',0.6);}
+    else if(k<100){const u=ease((k-62)/38);dx=lerp(scrapX,itemX,u);}
+    else if(k<112){dx=itemX;kk=0;if((k-100)%4<2)glow(cx,itemX,my-4,9,'150,230,255',0.5);}
+    else if(k<150){const u=ease((k-112)/38);dx=lerp(itemX,oreX-13,u);dy=lerp(my,oreY-7,u);}
+    else if(k<180){dx=oreX-13;dy=oreY-7;kk=0;const tap=k-150;if(tap%6<3){glow(cx,oreX,oreY-4,9,'255,226,128',0.5);for(let s=0;s<4;s++){const a=Math.random()*6.28,r=2+Math.random()*6;px(cx,Math.round(oreX+Math.cos(a)*r),Math.round(oreY-4+Math.sin(a)*r),1,1,Math.random()<0.5?'#fff4c2':'#9fe8ff');}}}
+    else if(k<240){const u=ease((k-180)/60);dx=lerp(oreX-13,baseX+12,u);dy=lerp(oreY-7,my,u);dir=-1;}
+    else {dx=baseX+12;dy=my;dir=-1;kk=0;}
+    diverAt(cx,dx,dy,dir,biT,kk);
+  }
+
+  let biT=0, anim=0, loopOn=true, cur=0, done=false;
+  let _biAcc=0,_biLast=performance.now();
+  function loop(now){ if(!loopOn)return;
+    _biAcc+=now-_biLast;_biLast=now;
+    if(_biAcc>=15){_biAcc=0; biT++; anim++; scene();}
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  // ---- navigation ----
+  const slides=Array.prototype.slice.call(bi.querySelectorAll('.bi-slide'));
+  const dots=Array.prototype.slice.call(bi.querySelectorAll('.bi-dot'));
+  const nextB=document.getElementById('bi-next'), prevB=document.getElementById('bi-prev'), skipB=document.getElementById('bi-skip');
+  function go(i){cur=i;slides.forEach(function(s,n){s.classList.toggle('on',n===i);});dots.forEach(function(d,n){d.classList.toggle('on',n===i);});prevB.disabled=(i===0);if(i===slides.length-1){nextB.textContent='GOT IT \u25b8';nextB.classList.add('go');}else{nextB.textContent='NEXT \u25b8';nextB.classList.remove('go');}sfx.nav();}
+  function fin(){if(done)return;done=true;loopOn=false;
+    staticWipe(function(){ const c2=document.getElementById('controls');if(c2)c2.style.visibility=''; if(bi&&bi.parentNode)bi.parentNode.removeChild(bi); if(onDone)onDone(); });
+  }
+  function nx(){if(cur>=slides.length-1)fin();else go(cur+1);}
+  function pv(){if(cur>0)go(cur-1);}
+  [nextB,prevB,skipB].forEach(function(b){b.addEventListener('pointerdown',audioInit);});
+  nextB.addEventListener('click',nx); prevB.addEventListener('click',pv); skipB.addEventListener('click',fin);
+  go(0);
+}
+
+/* ===== reusable grey-static wipe (tutorial end -> gameplay) ===== */
+function staticWipe(onMid,onEnd){
+  const stage=document.getElementById('stage');
+  const fx=document.createElement('div'); fx.id='sfxwipe'; fx.innerHTML='<canvas></canvas>';
+  stage.appendChild(fx);
+  const sc=fx.firstChild;
+  const rect=stage.getBoundingClientRect();
+  const sw=Math.max(80,Math.round(rect.width/3)), sh=Math.max(80,Math.round(rect.height/3));
+  sc.width=sw; sc.height=sh;
+  const sx=sc.getContext('2d'); sx.imageSmoothingEnabled=false;
+  let on=true;
+  (function paint(){ if(!on)return; const img=sx.createImageData(sw,sh),d=img.data; for(let p=0;p<d.length;p+=4){const v=(Math.random()*255)|0;d[p]=d[p+1]=d[p+2]=v;d[p+3]=255;} sx.putImageData(img,0,0); requestAnimationFrame(paint); })();
+  if(typeof noise==='function'){try{noise(0.45,0.1);}catch(e){}}
+  sc.style.opacity='0'; sc.style.transition='opacity 320ms ease';
+  requestAnimationFrame(()=>{ sc.style.opacity='0.93'; });
+  let mid=false;
+  setTimeout(()=>{ if(mid)return; mid=true; if(onMid)onMid(); }, 320);
+  setTimeout(()=>{ sc.style.transition='opacity 440ms ease'; sc.style.opacity='0'; }, 420);
+  setTimeout(()=>{ on=false; if(fx.parentNode)fx.parentNode.removeChild(fx); if(onEnd)onEnd(); }, 900);
+}
+
+/* ===== MINING MINIGAME TUTORIAL (3 slides) ===== */
+function startMineIntro(){
+  mineIntroActive=true;
+  const stage=document.getElementById('stage');
+  const ctl=document.getElementById('controls'); if(ctl)ctl.style.visibility='hidden';
+
+  const mi=document.createElement('div'); mi.id='mineintro';
+  mi.innerHTML=
+    '<div class="bi-crt">'
+   +  '<div class="tut-scan"></div>'
+   +  '<button id="mi-skip">SKIP \u25b8</button>'
+   +  '<div class="bi-head"><span class="t1">MINING RIG</span><span class="t2">FIELD MANUAL</span></div>'
+   +  '<div id="mi-stage">'
+   +    '<div class="bi-slide on" data-b="0"><div class="bi-title">GAS DETECTION</div><canvas class="tut-cv mi-sq" id="micv0"></canvas>'
+   +      '<div class="bi-txt"><div class="bi-line"><b class="hl-red">red</b> means you are very close to gas vents.</div>'
+   +      '<div class="bi-line"><b class="hl-yellow">yellow</b> means you are getting close to gas vents.</div>'
+   +      '<div class="bi-line"><b class="hl-green">green</b> means you are safe.</div></div></div>'
+   +    '<div class="bi-slide" data-b="1"><div class="bi-title">ORE SIGNALS</div><canvas class="tut-cv mi-wide" id="micv1"></canvas>'
+   +      '<div class="bi-txt"><div class="bi-line">your machine will emit <b class="hl-yellow">signals</b> when close to ores \u2014 pay attention to those.</div></div></div>'
+   +    '<div class="bi-slide" data-b="2"><div class="bi-title">GAS VENTS</div><canvas class="tut-cv mi-sq" id="micv2"></canvas>'
+   +      '<div class="bi-txt"><div class="bi-line">hit three <b class="hl-red">vents</b> and the ore will blow up.</div></div></div>'
+   +  '</div>'
+   +  '<div id="mi-dots"><span class="bi-dot on"></span><span class="bi-dot"></span><span class="bi-dot"></span></div>'
+   +  '<div id="mi-nav"><button id="mi-prev" disabled>\u25c2 BACK</button><button id="mi-next">NEXT \u25b8</button></div>'
+   +'</div>';
+  stage.appendChild(mi);
+
+  const cvs=[], ctxs=[], SIZES=[[112,108],[150,66],[120,100]];
+  for(let i=0;i<3;i++){const cv=document.getElementById('micv'+i);cv.width=SIZES[i][0];cv.height=SIZES[i][1];const c=cv.getContext('2d');c.imageSmoothingEnabled=false;cvs.push(cv);ctxs.push(c);}
+
+  /* ---- pixel helpers (mirror the minigame look) ---- */
+  function lerp(a,b,u){return a+(b-a)*u;}
+  function cellStone(c,X,Y,S,sd){
+    const base=['#3c4651','#36404b','#414b56','#313a45','#46505a','#3a4450'][sd%6];
+    px(c,X,Y,S-1,S-1,base);
+    px(c,X,Y,S-1,1,shade(base,1.30));px(c,X,Y,1,S-1,shade(base,1.18));
+    px(c,X,Y+S-2,S-1,1,shade(base,0.64));px(c,X+S-2,Y,1,S-1,shade(base,0.68));
+    if(sd%3===0)px(c,X+3,Y+4,1,1,shade(base,0.55));
+    if(sd%5===0)px(c,X+S-5,Y+3,2,1,shade(base,1.15));
+  }
+  function cellDugStone(c,X,Y,S){px(c,X,Y,S-1,S-1,'#0c141b');px(c,X,Y,S-1,1,'#1a2630');px(c,X,Y,1,S-1,'#16222c');}
+  function cellVent(c,X,Y,S,t,i){px(c,X,Y,S-1,S-1,'#3a140c');px(c,X+2,Y+2,S-5,S-5,'#ff5a3c');if(((t+i)&15)<8)px(c,X+(S>>1)-1,Y+1,2,2,'#ffd23c');}
+  function cellOre(c,X,Y,S,col){px(c,X,Y,S-1,S-1,shade(col,0.4));px(c,X+2,Y+2,S-5,S-5,col);px(c,X+3,Y+3,2,2,shade(col,1.6));}
+  function dots(c,X,Y,S,val,bright){const pos=[[Math.round(S*0.22),Math.round(S*0.22)],[Math.round(S*0.6),Math.round(S*0.22)],[Math.round(S*0.22),Math.round(S*0.6)],[Math.round(S*0.6),Math.round(S*0.6)]];const col=bright?'#ffd23c':'#c9a42e';for(let i=0;i<Math.min(val,4);i++){px(c,X+pos[i][0],Y+pos[i][1],3,3,col);if(bright)px(c,X+pos[i][0],Y+pos[i][1],1,1,'#fff4c2');}}
+  function selBox(c,X,Y,S){c.strokeStyle='#ffffff';c.lineWidth=1;c.strokeRect(X+0.5,Y+0.5,S-2,S-2);px(c,X,Y,2,2,'#46d0ff');px(c,X+S-3,Y,2,2,'#46d0ff');px(c,X,Y+S-3,2,2,'#46d0ff');px(c,X+S-3,Y+S-3,2,2,'#46d0ff');}
+  function pickaxe(c,cx,cy){px(c,cx,cy-2,2,9,'#7a5a2a');px(c,cx,cy-2,1,9,'#9c7438');px(c,cx-4,cy-4,10,2,'#cfd6dd');px(c,cx-4,cy-4,4,1,'#ffffff');px(c,cx+3,cy-4,3,1,'#98a4ac');px(c,cx-4,cy-3,2,1,'#aeb8c0');px(c,cx+5,cy-3,1,1,'#aeb8c0');}
+  function pushSmoke(arr,vx,topY,t){if(arr.length<54&&Math.random()<0.5)arr.push({x:vx+(Math.random()-.5)*5,y:topY,vy:13+Math.random()*15,r:1+((Math.random()*3)|0),ph:Math.random()*6.28});}
+  function drawSmoke(c,arr,topLimit){for(let i=arr.length-1;i>=0;i--){const b=arr[i];b.y-=b.vy/60;b.ph+=0.11;if(b.y<topLimit){arr.splice(i,1);continue;}const wob=Math.sin(b.ph)*1.6,bx=Math.round(b.x+wob),by=Math.round(b.y),a=clamp((b.y-topLimit)/38,0,1)*0.4+0.14;c.globalAlpha=a;c.fillStyle='#dff4ff';c.fillRect(bx-b.r,by-b.r,b.r*2,b.r*2);c.globalAlpha=Math.min(0.9,a+0.25);c.fillStyle='#ffffff';c.fillRect(bx-b.r,by-b.r,1,1);c.globalAlpha=1;}}
+
+  /* ---- scene 1: gas detection aura ---- */
+  const dN=7, dCS=14; const ventC={x:4,y:2}; let bubD=[];
+  function sceneDetect(c,w,h,t){
+    c.clearRect(0,0,w,h);c.fillStyle='#0b141d';c.fillRect(0,0,w,h);
+    const gx0=Math.round((w-dN*dCS)/2), gy0=Math.round((h-dN*dCS)/2)+3;
+    const selx=clamp(Math.round(3+Math.sin(t*0.030)*2.4),0,dN-1), sely=clamp(Math.round(4+Math.sin(t*0.046+1)*1.9),0,dN-1);
+    for(let y=0;y<dN;y++)for(let x=0;x<dN;x++){const X=gx0+x*dCS,Y=gy0+y*dCS;if(x===ventC.x&&y===ventC.y)cellVent(c,X,Y,dCS,t,0);else cellStone(c,X,Y,dCS,(x*7+y*5+3));}
+    const R=2;
+    for(let y=0;y<dN;y++)for(let x=0;x<dN;x++){const dd=Math.max(Math.abs(x-selx),Math.abs(y-sely));if(dd>R)continue;const gd=Math.max(Math.abs(x-ventC.x),Math.abs(y-ventC.y));const col=gd<=1?'255,77,94':gd<=2?'255,210,60':'93,255,140';c.fillStyle='rgba('+col+',0.40)';c.fillRect(gx0+x*dCS,gy0+y*dCS,dCS-1,dCS-1);}
+    pushSmoke(bubD,gx0+ventC.x*dCS+dCS/2,gy0+ventC.y*dCS+2,t);drawSmoke(c,bubD,gy0-2);
+    selBox(c,gx0+selx*dCS,gy0+sely*dCS,dCS);
+  }
+
+  /* ---- scene 2: ore-proximity signal pips (all sprite variants) ---- */
+  function sceneSignals(c,w,h,t){
+    c.clearRect(0,0,w,h);c.fillStyle='#0b141d';c.fillRect(0,0,w,h);
+    const S=24, gap=9, total=4*S+3*gap, x0=Math.round((w-total)/2), y0=Math.round((h-S)/2)-1;
+    const bright=((t>>2)%6<3);
+    for(let k=0;k<4;k++){const X=x0+k*(S+gap),Y=y0;cellDugStone(c,X,Y,S);dots(c,X,Y,S,k+1,bright);}
+  }
+
+  /* ---- scene 3: hit three vents -> blow up ---- */
+  let bub3=[]; const VCYC=246;
+  function sceneVents(c,w,h,t){
+    c.clearRect(0,0,w,h);c.fillStyle='#0b141d';c.fillRect(0,0,w,h);
+    const S=18, n=3, gap=7, total=n*S+(n-1)*gap, x0=Math.round((w-total)/2), rowY=h-S-12;
+    const oreX=Math.round(w/2-S/2), oreY=rowY-S-10;
+    const k=anim%VCYC; if(k<3)bub3.length=0;
+    const hits=k<60?1:k<120?2:k<186?3:3;
+    const struck=[k>=20?1:0, k>=80?1:0, k>=140?1:0];
+    const exploding=(k>=186&&k<224);
+    // crack pips (centered, top)
+    {const filled=(k>=20?(k>=80?(k>=140?3:2):1):0),px0=Math.round(w/2)-13;for(let i=0;i<3;i++){px(c,px0+i*9,5,6,6,i<filled?'#ff5a3c':'#2a3540');px(c,px0+i*9,5,6,1,i<filled?'#ff8a6a':'#3a4450');}}
+    // ore
+    if(!exploding||((k>>1)&1))cellOre(c,oreX,oreY,S,'#46d0ff');
+    // vent row
+    for(let i=0;i<n;i++){const X=x0+i*(S+gap);
+      if(struck[i]){cellVent(c,X,rowY,S,t,i);pushSmoke(bub3,X+S/2,rowY+2,t+i*7);}
+      else cellStone(c,X,rowY,S,(i*11+5));
+    }
+    drawSmoke(c,bub3,oreY-2);
+    // pickaxe striking the current target
+    if(!exploding){const tgt=k<20?0:k<80?0:k<140?1:2; // approaching/striking
+      let phase, hitFrame;
+      if(k<20){phase=k/20;hitFrame=(k>=17);}
+      else if(k<80){phase=(k-20)/60;hitFrame=false;}
+      else if(k<140){phase=(k-80)/60;hitFrame=(k>=137);const tg=1;}
+      else {phase=(k-140)/46;hitFrame=(k>=183);}
+      const ti=k<80?0:k<140?1:2;const TX=x0+ti*(S+gap)+S/2;
+      const bob=Math.round(Math.abs(Math.sin(t*0.4))* -3);
+      pickaxe(c,TX-1,rowY-6+bob);
+      if((k>=18&&k<22)||(k>=78&&k<82)||(k>=138&&k<142)){for(let s=0;s<5;s++){const a=Math.random()*6.28,r=2+Math.random()*6;px(c,Math.round(TX+Math.cos(a)*r),Math.round(rowY+2+Math.sin(a)*r),1,1,Math.random()<0.5?'#fff4c2':'#ffd23c');}px(c,TX-3,rowY,6,2,'#ffffff');}
+    } else {
+      // explosion flash
+      const ef=(k-186)/38;c.globalAlpha=clamp(1-ef,0,1)*0.8;c.fillStyle=((k>>1)&1)?'#ffd23c':'#ff7a3c';c.fillRect(oreX-10,oreY-8,S+20,S+18);c.globalAlpha=1;
+      for(let s=0;s<3;s++){const a=Math.random()*6.28,r=4+Math.random()*14;px(c,Math.round(oreX+S/2+Math.cos(a)*r),Math.round(oreY+S/2+Math.sin(a)*r),2,2,Math.random()<0.5?'#ff5a3c':'#ffd23c');}
+    }
+  }
+
+  const scenes=[sceneDetect,sceneSignals,sceneVents];
+
+  let miT=0, anim=0, loopOn=true, cur=0, done=false;
+  let _miAcc=0,_miLast=performance.now();
+  function loop(now){ if(!loopOn)return;
+    _miAcc+=now-_miLast;_miLast=now;
+    if(_miAcc>=15){_miAcc=0; miT++; anim++; scenes[cur](ctxs[cur],cvs[cur].width,cvs[cur].height,miT);}
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  const slides=Array.prototype.slice.call(mi.querySelectorAll('.bi-slide'));
+  const dots2=Array.prototype.slice.call(mi.querySelectorAll('.bi-dot'));
+  const nextB=document.getElementById('mi-next'), prevB=document.getElementById('mi-prev'), skipB=document.getElementById('mi-skip');
+  function go(i){cur=i;anim=0;bubD.length=0;bub3.length=0;slides.forEach(function(s,n){s.classList.toggle('on',n===i);});dots2.forEach(function(d,n){d.classList.toggle('on',n===i);});prevB.disabled=(i===0);if(i===slides.length-1){nextB.textContent='START \u25b8';nextB.classList.add('go');}else{nextB.textContent='NEXT \u25b8';nextB.classList.remove('go');}sfx.nav();}
+  function fin(){if(done)return;done=true;loopOn=false;
+    staticWipe(function(){ const c2=document.getElementById('controls');if(c2)c2.style.visibility=''; mineIntroActive=false; if(mi&&mi.parentNode)mi.parentNode.removeChild(mi); });
+  }
+  function nx(){if(cur>=slides.length-1)fin();else go(cur+1);}
+  function pv(){if(cur>0)go(cur-1);}
+  [nextB,prevB,skipB].forEach(function(b){b.addEventListener('pointerdown',audioInit);});
+  nextB.addEventListener('click',nx); prevB.addEventListener('click',pv); skipB.addEventListener('click',fin);
+  go(0);
+}
+
+/* ===== SHARED PRIMER DECK ==========================================================
+ * The base guide and the mining primer each carry their own copy of the slideshow
+ * scaffolding. Everything added after them runs through here instead: same CRT frame,
+ * same diamond dot strip, same nav + SKIP, same grey-static wipe on the way out.
+ * A deck freezes whatever it is explaining — `deckActive` is checked by the crank / ICE /
+ * torch / boat input pumps, so no countdown ever ticks behind a slide, exactly like
+ * mineIntroActive does for the dig. Every deck here is gated on `tutorialsOn`, so
+ * answering NO to FIRST TIME HERE silences all of them for the run.
+ *   cfg = {t1, t2, last, onDone, slides:[{title, w, h, wide, lines:[html], draw(c,W,H,t,k)}]}
+ *   t = free-running tick, k = ticks since this slide was shown (so a scene can loop). */
+let deckActive=false;
+// id · keyboard key · gamepad face, for the inline "press this" chips in deck copy
+const DK_BTN={mine:['minebtn','F','X'],clip:['clipbtn','X','Y'],craft:['ropebtn','E','RB'],
+              pack:['invbtn','I','LB'],confirm:['confirmbtn','SPACE','A'],back:['backbtn','ESC','B']};
+// a miniature of the real thumb button on the handheld; the keycap for its binding in PC mode.
+// key/pad override the defaults where a button is remapped for a mode (the boat's mine bay, say).
+function dkBtn(kind,key,pad){
+  const d=DK_BTN[kind]; if(!d)return '';
+  if(pcMode)return '<span class="tut-key">'+(pcSrc==='pad'?(pad||d[2]):(key||d[1]))+'</span>';
+  return '<span class="tut-btn tb-'+kind+'" data-dksrc="'+d[0]+'"></span>';
+}
+function startDeck(cfg){
+  if(deckActive)return;                                        // never stack two decks
+  deckActive=true;
+  const stage=document.getElementById('stage');
+  const ctl=document.getElementById('controls'); if(ctl)ctl.style.visibility='hidden';
+  const dk=document.createElement('div'); dk.id='deckintro';
+  let h='<div class="bi-crt"><div class="tut-scan"></div><button id="dk-skip">SKIP ▸</button>'
+      +'<div class="bi-head"><span class="t1">'+cfg.t1+'</span><span class="t2">'+cfg.t2+'</span></div>'
+      +'<div id="dk-stage">';
+  cfg.slides.forEach(function(s,i){
+    h+='<div class="bi-slide'+(i?'':' on')+'" data-b="'+i+'">'
+      +(s.title?'<div class="bi-title">'+s.title+'</div>':'')
+      +'<canvas class="tut-cv '+(s.wide?'dk-wide':'dk-sq')+'" id="dkcv'+i+'"></canvas>'
+      +'<div class="bi-txt">'+(s.lines||[]).map(function(l){return '<div class="bi-line">'+l+'</div>';}).join('')+'</div>'
+      +'</div>';
+  });
+  h+='</div><div id="dk-dots">'+cfg.slides.map(function(_,i){return '<span class="bi-dot'+(i?'':' on')+'"></span>';}).join('')+'</div>'
+   +'<div id="dk-nav"><button id="dk-prev" disabled>◂ BACK</button><button id="dk-next">NEXT ▸</button></div></div>';
+  dk.innerHTML=h;
+  stage.appendChild(dk);
+  // the inline chips ship hollow — fill each with the live pixel art of the button it names
+  Array.prototype.forEach.call(dk.querySelectorAll('[data-dksrc]'),function(chip){
+    const src=document.getElementById(chip.getAttribute('data-dksrc')); if(!src)return;
+    const svg=src.querySelector('svg'); if(!svg)return;
+    const cl=svg.cloneNode(true); cl.removeAttribute('class'); chip.appendChild(cl);
+  });
+
+  const cvs=[],ctxs=[];
+  cfg.slides.forEach(function(s,i){
+    const cv=document.getElementById('dkcv'+i);
+    cv.width=s.w; cv.height=s.h;
+    const c=cv.getContext('2d'); c.imageSmoothingEnabled=false;
+    cvs.push(cv); ctxs.push(c);
+  });
+
+  let dkT=0,anim=0,loopOn=true,cur=0,done=false;
+  let _dkAcc=0,_dkLast=performance.now();
+  function loop(now){ if(!loopOn)return;
+    _dkAcc+=now-_dkLast;_dkLast=now;
+    if(_dkAcc>=15){_dkAcc=0;dkT++;anim++;
+      const s=cfg.slides[cur]; if(s&&s.draw)s.draw(ctxs[cur],cvs[cur].width,cvs[cur].height,dkT,anim);}
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  const slides=Array.prototype.slice.call(dk.querySelectorAll('.bi-slide'));
+  const dots=Array.prototype.slice.call(dk.querySelectorAll('.bi-dot'));
+  const nextB=document.getElementById('dk-next'),prevB=document.getElementById('dk-prev'),skipB=document.getElementById('dk-skip');
+  const lastLbl=cfg.last||'START ▸';
+  function go(i){cur=i;anim=0;
+    slides.forEach(function(s,n){s.classList.toggle('on',n===i);});
+    dots.forEach(function(d,n){d.classList.toggle('on',n===i);});
+    prevB.disabled=(i===0);
+    if(i===slides.length-1){nextB.textContent=lastLbl;nextB.classList.add('go');}
+    else{nextB.textContent='NEXT ▸';nextB.classList.remove('go');}
+    sfx.nav();}
+  function fin(){if(done)return;done=true;loopOn=false;
+    staticWipe(function(){
+      const c2=document.getElementById('controls'); if(c2)c2.style.visibility='';
+      // a key or a pad face pressed THROUGH the slides must not fire the moment they clear
+      mineEdge=false;actionEdge=false;clipEdge=false;queueCraft=false;subBoostTrig=false;
+      input.action=false;flameFire=false;
+      deckActive=false;
+      if(dk&&dk.parentNode)dk.parentNode.removeChild(dk);
+      if(cfg.onDone)cfg.onDone();
+    });
+  }
+  function nx(){if(cur>=slides.length-1)fin();else go(cur+1);}
+  function pv(){if(cur>0)go(cur-1);}
+  [nextB,prevB,skipB].forEach(function(b){b.addEventListener('pointerdown',audioInit);});
+  nextB.addEventListener('click',nx); prevB.addEventListener('click',pv); skipB.addEventListener('click',fin);
+  go(0);
+}
+
+/* ---- deck-canvas helpers. These draw on the slide's own offscreen context, never the
+ *      game canvas, so nothing in here may reach for ctx / VW / VH.                    */
+function dkClear(c,w,h,col){c.clearRect(0,0,w,h);c.fillStyle=col||'#0b141d';c.fillRect(0,0,w,h);}
+function dkGlow(c,x,y,r,rgb,a){c.save();c.globalCompositeOperation='lighter';
+  const g=c.createRadialGradient(x,y,0,x,y,r);g.addColorStop(0,'rgba('+rgb+','+a+')');g.addColorStop(1,'rgba('+rgb+',0)');
+  c.fillStyle=g;c.beginPath();c.arc(x,y,r,0,6.283);c.fill();c.restore();}
+function dkLerp(a,b,u){return a+(b-a)*u;}
+function dkEase(u){u=u<0?0:u>1?1:u;return u*u*(3-2*u);}
+function dkSparks(c,x,y,n,r,col){for(let i=0;i<n;i++){const a=Math.random()*6.283,d=2+Math.random()*r;
+  px(c,Math.round(x+Math.cos(a)*d),Math.round(y+Math.sin(a)*d),1,1,col);}}
+function dkTextC(c,str,cx,y,col){pxText(c,str,Math.round(cx-pxTextW(str)/2),y,col);}
+function dkPlate(c,x,y,str,col){const pw=pxTextW(str)+6;
+  px(c,x,y,pw,11,'rgba(4,12,16,0.82)');px(c,x,y,pw,1,'#1d4a5c');
+  pxText(c,str,x+3,y+3,col||'#7fd0ee');}
+function dkLine(c,x0,y0,x1,y1,col){const n=Math.max(2,Math.round(Math.hypot(x1-x0,y1-y0)));
+  for(let i=0;i<=n;i++){const u=i/n;px(c,Math.round(dkLerp(x0,x1,u)),Math.round(dkLerp(y0,y1,u)),1,1,col);}}
+
+/* ===== VALVE PRIMER (pressure valve — the CRANK minigame) ===== */
+let crankIntroSeen=false;
+// slide 1 — the two sliding windows and the swept marker, drawn exactly as the console draws them
+function dkCrankTrack(c,w,h,t){
+  dkClear(c,w,h,'#05090f');
+  for(let gy=2;gy<h;gy+=9)px(c,0,gy,w,1,'#0a1420');
+  const bw=w-22,bx=11,by=10;
+  const gc=0.5+Math.sin(t*0.016)*0.26, rc=0.5+Math.sin(t*0.024+1.3)*0.30;
+  const gL=clamp(gc-0.13,0,1),gR=clamp(gc+0.13,0,1),rL=clamp(rc-0.09,0,1),rR=clamp(rc+0.09,0,1);
+  const p=0.5+Math.sin(t*0.030)*0.5;
+  const inR=p>=rL&&p<=rR, live=(p>=gL&&p<=gR)&&!inR;
+  const X=function(u){return bx+Math.round(u*(bw-1));};
+  px(c,bx-3,by-3,bw+6,16,'#060d16');px(c,bx-2,by-2,bw+4,14,'#0c1a26');px(c,bx-2,by-2,bw+4,1,'#173040');
+  dkGlow(c,(X(gL)+X(gR))/2,by+5,16,'61,255,154',0.18);
+  px(c,X(gL),by,X(gR)-X(gL),10,'#123f28');px(c,X(gL),by,X(gR)-X(gL),2,'#3dff9a');
+  dkGlow(c,(X(rL)+X(rR))/2,by+5,16,'255,59,107',0.20);
+  px(c,X(rL),by,X(rR)-X(rL),10,'#3a1020');px(c,X(rL),by,X(rR)-X(rL),2,'#ff3b6b');
+  for(let x=X(rL)+1;x<X(rR)-1;x+=4)px(c,x,by+3,2,4,((t>>2)&1)?'#ffcf3a':'#7a1a30');
+  const nx=X(p),ncol=inR?'#ff5a6b':live?'#5dffa0':'#eef6ff';
+  px(c,nx-1,by-4,3,18,'#060d16');px(c,nx,by-4,1,17,ncol);px(c,nx-2,by-5,5,2,ncol);
+  // the ACTUATE button reads the marker's zone back to you, same three states as the console
+  const btY=by+21,btW=w-40,btX=Math.round((w-btW)/2);
+  let lab,ecol,fill,tcol;
+  if(inR){lab='HOLD';ecol='#ff3b6b';fill='#26090f';tcol='#ff5a6b';}
+  else if(live){lab='ACTUATE';ecol='#3dff9a';fill='#123f28';tcol='#eafff2';}
+  else{lab='STANDBY';ecol='#1c4256';fill='#0a1622';tcol='#6fa0b8';}
+  px(c,btX,btY,btW,15,fill);px(c,btX,btY,btW,1,ecol);px(c,btX,btY+14,btW,1,shade(ecol,0.5));
+  px(c,btX,btY,1,15,ecol);px(c,btX+btW-1,btY,1,15,shade(ecol,0.6));
+  if(live)dkGlow(c,w/2,btY+7,btW*0.5,'61,255,154',0.16);
+  dkTextC(c,lab,w/2,btY+5,tcol);
+  if(live&&((t>>3)&1))dkSparks(c,w/2,btY+7,4,10,'#3dff9a');
+  px(c,10,h-8,6,5,'#3dff9a');pxText(c,'SAFE',19,h-8,'#3dff9a');
+  px(c,w-44,h-8,6,5,'#ff3b6b');pxText(c,'VENT',w-35,h-8,'#ff3b6b');
+}
+// slide 2 — the servo snapping round, one notch per clean pulse, pips filling below it
+function dkCrankServo(c,w,h,t,k){
+  dkClear(c,w,h,'#05090f');
+  const cx=Math.round(w/2),cy=Math.round(h*0.40),r=Math.min(28,(h*0.30)|0);
+  const CYC=54,need=6,KC=CYC*(need+1),kk=k%KC;
+  const turns=Math.min(need,Math.floor(kk/CYC)), ph=kk%CYC, fire=(turns<need)&&ph<8;
+  px(c,6,cy-4,cx-r-6,8,'#16303d');px(c,cx+r,cy-4,w-6-(cx+r),8,'#16303d');
+  px(c,6,cy-4,cx-r-6,1,'#2f7a94');px(c,cx+r,cy-4,w-6-(cx+r),1,'#2f7a94');
+  px(c,6,cy+3,cx-r-6,1,'#0a1620');px(c,cx+r,cy+3,w-6-(cx+r),1,'#0a1620');
+  const foff=(t*1.2)%9;
+  for(let x=8+foff;x<cx-r-1;x+=9)px(c,Math.round(x),cy-1,4,3,'#2be0ff');
+  for(let x=cx+r+2+foff;x<w-7;x+=9)px(c,Math.round(x),cy-1,4,3,'#2be0ff');
+  const ang=turns*1.6+(fire?(8-ph)*0.16:0)+t*0.004;
+  const acc=fire?'#3dff9a':'#39c6ff',dim=fire?'#164a30':'#123848';
+  pxDisc(c,cx,cy,r,'#0c1826');pxDisc(c,cx,cy,r-1,'#0a1420');
+  for(let i=0;i<12;i++){const a=i/12*6.28318;
+    px(c,Math.round(cx+Math.cos(a)*(r-2))-1,Math.round(cy+Math.sin(a)*(r-2))-1,2,2,(i%3===0)?acc:dim);}
+  pxDisc(c,cx,cy,r-4,'#060d16');
+  for(let i=0;i<4;i++){const a=ang+i/4*6.28318,col=(i===0)?acc:'#2a5a72';
+    for(let s=2;s<=r-5;s++)px(c,Math.round(cx+Math.cos(a)*s)-1,Math.round(cy+Math.sin(a)*s)-1,2,2,col);}
+  pxDisc(c,cx,cy,3,shade(acc,0.6));pxDisc(c,cx,cy,2,acc);
+  if(fire){dkGlow(c,cx,cy,r+10,'61,255,154',0.34);dkSparks(c,cx,cy,6,r,'#3dff9a');}
+  const pipW=10,pipG=4,rowW=need*(pipW+pipG)-pipG,ppx=Math.round(cx-rowW/2),pipY=h-14;
+  for(let i=0;i<need;i++){const on=i<turns,X=ppx+i*(pipW+pipG);
+    px(c,X,pipY,pipW,6,on?'#39c6ff':'#122430');if(on)px(c,X,pipY,pipW,1,'#9fe8ff');}
+  const lab=(turns>=need)?'RELEASED':(turns+'/'+need);
+  dkTextC(c,lab,cx,pipY-10,(turns>=need)?'#3dff9a':'#7fe0ff');
+}
+// slide 3 — the purge clock, and what is waiting at the end of it
+function dkCrankClock(c,w,h,t,k){
+  dkClear(c,w,h,'#05090f');
+  const cx=Math.round(w/2),KC=220,kk=k%KC,blow=kk>=150;
+  const u=blow?0:clamp(1-kk/150,0,1);
+  const bw=w-24,bx=12,by=12;
+  px(c,bx-1,by-1,bw+2,9,'#0a1420');
+  const col=u>0.5?'#3dff9a':u>0.25?'#ffcf3a':'#ff4d5e';
+  px(c,bx,by,Math.round(bw*u),7,col);
+  dkTextC(c,(u*16).toFixed(1),cx,by-9,col);
+  if(!blow&&u<0.25&&((t>>2)&1))px(c,bx-1,by-1,bw+2,9,'rgba(255,77,94,0.20)');
+  const vy=Math.round(h*0.66);
+  pxDisc(c,cx,vy,13,'#0c1826');pxDisc(c,cx,vy,10,blow?'#3a1010':'#060d16');
+  if(blow){const bf=(kk-150)/70;
+    dkGlow(c,cx,vy,34,'255,90,60',0.55*(1-bf));
+    dkSparks(c,cx,vy,10,22,((t>>1)&1)?'#ffd23c':'#ff5a3c');
+    dkTextC(c,'BLOWOUT',cx,vy-2,'#ffb27a');
+  }else{
+    for(let i=0;i<4;i++){const a=t*0.05+i*1.5708;
+      for(let s=3;s<=9;s++)px(c,Math.round(cx+Math.cos(a)*s)-1,Math.round(vy+Math.sin(a)*s)-1,2,2,(i===0)?'#39c6ff':'#2a5a72');}
+    pxDisc(c,cx,vy,3,'#39c6ff');
+  }
+}
+function startCrankIntro(){
+  startDeck({t1:'VALVE CTRL',t2:'FIELD MANUAL',last:'START ▸',slides:[
+    {title:'THE TIMING TRACK',w:150,h:58,wide:true,draw:dkCrankTrack,lines:[
+      'a marker sweeps a track under two sliding windows.',
+      'fire on <b class="hl-green">green</b> to bleed one turn out of the main.',
+      'the <b class="hl-red">red</b> window vents scalding steam back at you — wait it out.']},
+    {title:'ACTUATE',w:116,h:100,draw:dkCrankServo,lines:[
+      'press '+dkBtn('confirm','SPACE','A')+' to fire the servo.',
+      'every clean pulse fills one pip. fill them all and the main releases.']},
+    {title:'THE PURGE CLOCK',w:140,h:64,wide:true,draw:dkCrankClock,lines:[
+      'let the clock run out and the valve blows in your face.',
+      'it still counts as done — the failure just costs you a <b class="hl-red">heart</b>.',
+      dkBtn('back','ESC','B')+' backs off; the turns you already bled are kept.']}
+  ]});
+}
+
+/* ===== ICE PRIMER (cyber wall terminal — the HACK minigame) ===== */
+let hackIntroSeen=false;
+const DK_GLYPH=[1,4,6];                    // the demo glyph, shared by both ICE slides
+// flat-topped regular octagon, same geometry the ICE console uses: side k runs vertex k -> k+1
+function dkOctV(cx,cy,r,k){const a=Math.PI/8+k*(Math.PI/4);return [cx+Math.cos(a)*r,cy+Math.sin(a)*r];}
+function dkOctSide(c,cx,cy,r,k,col){const a=dkOctV(cx,cy,r,k),b=dkOctV(cx,cy,r,(k+1)%8);
+  dkLine(c,a[0],a[1],b[0],b[1],col);}
+function dkOctMid(cx,cy,r,k){const a=dkOctV(cx,cy,r,k),b=dkOctV(cx,cy,r,(k+1)%8);
+  return [(a[0]+b[0])/2,(a[1]+b[1])/2];}
+// slide 1 — rotate the cursor onto the lit side, select, watch the side fold into the glyph
+function dkHackRing(c,w,h,t,k){
+  dkClear(c,w,h,'#05090f');
+  for(let gy=3;gy<h;gy+=9)px(c,0,gy,w,1,'#0a1420');
+  const cx=Math.round(w/2),cy=Math.round(h*0.46),R=Math.min(32,(h*0.32)|0);
+  const CYC=58,KC=CYC*(DK_GLYPH.length+1),kk=k%KC;
+  const step=Math.min(DK_GLYPH.length,Math.floor(kk/CYC)),ph=kk%CYC;
+  const building=step<DK_GLYPH.length;
+  const tgt=building?DK_GLYPH[step]:DK_GLYPH[DK_GLYPH.length-1];
+  const prev=step===0?6:DK_GLYPH[step-1];
+  const ang=function(kk2){return Math.PI/8+(kk2+0.5)*(Math.PI/4);};
+  let a0=ang(prev),a1=ang(tgt),d=a1-a0;
+  while(d>Math.PI)d-=6.28318; while(d<-Math.PI)d+=6.28318;
+  const pa=a0+d*dkEase(Math.min(1,ph/24));
+  const sel=building&&ph>=28&&ph<38;
+  for(let s=0;s<8;s++){
+    const got=DK_GLYPH.indexOf(s)>=0&&DK_GLYPH.indexOf(s)<step;
+    const lit=building&&s===tgt;
+    dkOctSide(c,cx,cy,R,s,got?'#3dff9a':lit?(((t>>2)&1)?'#ffd23c':'#8a6a1a'):'#1c4256');
+    if(lit){const m=dkOctMid(cx,cy,R,s);dkGlow(c,m[0],m[1],10,'255,210,60',0.28);}
+  }
+  // the glyph forming at the core: a spoke to every side taken so far
+  for(let i=0;i<(building?step:DK_GLYPH.length);i++){
+    const m=dkOctMid(cx,cy,R*0.62,DK_GLYPH[i]);
+    dkLine(c,cx,cy,m[0],m[1],'#7fe6ff');px(c,Math.round(m[0])-1,Math.round(m[1])-1,2,2,'#bdf4ff');}
+  px(c,cx-1,cy-1,2,2,'#eafcff');
+  // cursor bracket riding the ring
+  const px0=cx+Math.cos(pa)*(R+7),py0=cy+Math.sin(pa)*(R+7);
+  const ccol=sel?'#3dff9a':'#eef6ff';
+  px(c,Math.round(px0)-2,Math.round(py0)-2,4,1,ccol);px(c,Math.round(px0)-2,Math.round(py0)+1,4,1,ccol);
+  px(c,Math.round(px0)-2,Math.round(py0)-1,1,2,ccol);px(c,Math.round(px0)+1,Math.round(py0)-1,1,2,ccol);
+  if(sel){dkGlow(c,px0,py0,12,'61,255,154',0.4);dkSparks(c,px0,py0,5,8,'#3dff9a');}
+  dkTextC(c,building?'BUILD':'FORMED',cx,h-8,building?'#3a6f88':'#3dff9a');
+}
+// slide 2 — the candidate grid, and the cursor hunting down the glyph you just built
+function dkHackGrid(c,w,h,t,k){
+  dkClear(c,w,h,'#05090f');
+  const COLS=6,ROWS=3,CW=22,CH=20;
+  const gx0=Math.round((w-COLS*CW)/2),gy0=24,TGT=9;
+  const KC=230,kk=k%KC,STEP=12;
+  const cur=Math.min(TGT,Math.floor(kk/STEP)),locked=kk>=TGT*STEP+12;
+  function setFor(i){const out=[];for(let s=0;s<8;s++)if(((i*37+s*13)%7)<3)out.push(s);return out.length?out:[0,4];}
+  function glyph(gx,gy,r,sides,col){for(let i=0;i<sides.length;i++)dkOctSide(c,gx,gy,r,sides[i],col);
+    px(c,Math.round(gx)-1,Math.round(gy)-1,2,2,col);}
+  // the reference: what you built on the ring
+  px(c,4,3,52,17,'#0a1620');px(c,4,3,52,1,'#1c4256');
+  pxText(c,'BUILT',7,9,'#3a6f88');
+  glyph(44,11,7,DK_GLYPH,'#7fe6ff');
+  for(let r=0;r<ROWS;r++)for(let cc=0;cc<COLS;cc++){
+    const i=r*COLS+cc,X=gx0+cc*CW,Y=gy0+r*CH,on=(i===cur),hit=locked&&i===TGT;
+    px(c,X+1,Y+1,CW-3,CH-3,hit?'#0e2a1c':'#0a1620');
+    px(c,X+1,Y+1,CW-3,1,hit?'#3dff9a':'#12242e');
+    const sides=(i===TGT)?DK_GLYPH:setFor(i);
+    glyph(X+CW/2-0.5,Y+CH/2-0.5,6.5,sides,hit?'#9dffc0':(i===TGT&&locked?'#9dffc0':'#2f6a82'));
+    if(on&&!locked){c.strokeStyle='#eef6ff';c.lineWidth=1;c.strokeRect(X+1.5,Y+1.5,CW-4,CH-4);}
+    if(hit){dkGlow(c,X+CW/2,Y+CH/2,13,'61,255,154',0.35);
+      if((t>>2)&1){c.strokeStyle='#3dff9a';c.lineWidth=1;c.strokeRect(X+1.5,Y+1.5,CW-4,CH-4);}}
+  }
+  pxText(c,locked?'MATCH':'FIND IT',w-34,9,locked?'#3dff9a':'#3a6f88');
+}
+// slide 3 — three layers of ICE, one clock over all of them
+function dkHackLayers(c,w,h,t,k){
+  dkClear(c,w,h,'#05090f');
+  const cx=Math.round(w/2),KC=260,kk=k%KC;
+  const done=kk<60?0:kk<120?1:kk<180?2:3;
+  const bw=Math.round(w*0.60),bx=Math.round(cx-bw/2);
+  for(let i=0;i<3;i++){const y=8+i*11,on=i<done;
+    px(c,bx,y,bw,8,on?'#0e2a1c':'#12202c');px(c,bx,y,bw,1,on?'#3dff9a':'#1c4256');
+    pxText(c,on?'OPEN':'ICE',bx+4,y+2,on?'#3dff9a':'#3a6f88');
+    if(!on&&i===done)for(let x=bx+22;x<bx+bw-3;x+=4)px(c,x,y+3,2,2,((t>>2)&1)?'#ffcf3a':'#1c4256');
+    if(on)for(let x=bx+22;x<bx+bw-3;x+=4)px(c,x,y+3,2,2,'#1c5a3a');
+  }
+  const u=clamp(1-kk/190,0,1),tb=w-24,tx=12,ty=48;
+  px(c,tx-1,ty-1,tb+2,7,'#0a1420');
+  const col=u>0.5?'#3dff9a':u>0.25?'#ffcf3a':'#ff4d5e';
+  px(c,tx,ty,Math.round(tb*u),5,col);
+  dkTextC(c,(u*28).toFixed(1),cx,ty+9,col);
+  if(kk>=190){const g=(kk-190)/70;dkGlow(c,cx,26,44,'61,255,154',0.35*(1-g));
+    dkTextC(c,'GRANTED',cx,26,'#9dffc0');}
+}
+function startHackIntro(){
+  startDeck({t1:'WALL TERMINAL',t2:'ICE BREAK',last:'START ▸',slides:[
+    {title:'BUILD THE GLYPH',w:118,h:104,draw:dkHackRing,lines:[
+      'the ICE ring lights one side at a time.',
+      'turn the cursor onto the lit side and '+dkBtn('confirm','SPACE','A')+' to fold it in.',
+      'take a <b class="hl-red">wrong side</b> and the whole glyph is scrapped.']},
+    {title:'MATCH IT',w:150,h:88,wide:true,draw:dkHackGrid,lines:[
+      'the console then throws up a grid of near-identical glyphs.',
+      'find the one you just built and input it. a wrong cell scrambles it and you rebuild.']},
+    {title:'THREE LAYERS',w:140,h:62,wide:true,draw:dkHackLayers,lines:[
+      'three glyphs break the node.',
+      'run the clock out and the console arcs in your face — the node still cracks, the failure costs a <b class="hl-red">heart</b>.']}
+  ]});
+}
+
+/* ===== TORCH PRIMER (biohazard sac — the FLAME minigame) ===== */
+let flameIntroSeen=false;
+function dkFlameUrn(c,w,h,bh){
+  px(c,6,6,w-12,bh,'#0d1a22');
+  px(c,6,6,w-12,1,'#1d3a46');px(c,6,6+bh-1,w-12,1,'#1d3a46');
+  px(c,6,6,1,bh,'#1d3a46');px(c,w-7,6,1,bh,'#1d3a46');
+  px(c,4,4,w-8,2,'#132029');
+}
+// slide 1 — the stick aims, but the jet has weight and a sway of its own
+function dkFlameAim(c,w,h,t){
+  dkClear(c,w,h,'#0a1016');
+  const bh=h-32; dkFlameUrn(c,w,h,bh);
+  const spots=[[0.24,0.26],[0.74,0.48],[0.46,0.80]];       // dimmed: the reticle is the subject here
+  for(let i=0;i<3;i++){const X=Math.round(6+(w-12)*spots[i][0]),Y=Math.round(6+bh*spots[i][1]);
+    const r=6+Math.round(Math.sin(t*0.09+i)*1);
+    dkGlow(c,X,Y,r+6,'110,220,120',0.13);
+    pxDisc(c,X,Y,r,'#24572c');pxDisc(c,X,Y,r-2,'#3f9b48');}
+  const rx=6+(w-12)*0.5+Math.sin(t*0.021)*(w-12)*0.30+Math.sin(t*0.047)*3;
+  const ry=6+bh*0.5+Math.sin(t*0.017+1.1)*bh*0.30+Math.cos(t*0.039)*2;
+  const X=Math.round(rx),Y=Math.round(ry);
+  dkGlow(c,rx,ry,13,'120,220,255',0.22);
+  px(c,X-8,Y,5,1,'#9fe8ff');px(c,X+4,Y,5,1,'#9fe8ff');
+  px(c,X,Y-8,1,5,'#9fe8ff');px(c,X,Y+4,1,5,'#9fe8ff');
+  px(c,X-1,Y-1,2,2,'#eafcff');
+  // trailing ghosts: the aim is carrying momentum, it does not stop where you stop
+  for(let i=1;i<4;i++){const gt=t-i*5;
+    const gx=6+(w-12)*0.5+Math.sin(gt*0.021)*(w-12)*0.30+Math.sin(gt*0.047)*3;
+    const gy=6+bh*0.5+Math.sin(gt*0.017+1.1)*bh*0.30+Math.cos(gt*0.039)*2;
+    px(c,Math.round(gx),Math.round(gy),1,1,'rgba(140,220,255,0.30)');}
+  // stick read-out
+  const sx=w-15,sy=h-13,sr=9;
+  pxDisc(c,sx,sy,sr,'#12222c');pxDisc(c,sx,sy,sr-2,'#0a1620');
+  pxDisc(c,Math.round(sx+Math.cos(t*0.021)*4.5),Math.round(sy+Math.cos(t*0.017+1.1)*4.5),3,'#7fe6ff');
+  dkPlate(c,6,h-19,'AIM','#7fd0ee');
+}
+// slide 2 — hold the jet on a pocket until its burn meter tops out. three to a sac.
+function dkFlameBurn(c,w,h,t,k){
+  dkClear(c,w,h,'#0a1016');
+  const bh=h-32; dkFlameUrn(c,w,h,bh);
+  const KC=200,kk=k%KC,idx=Math.min(2,Math.floor(kk/62)),bp=clamp((kk%62)/46,0,1);
+  const spots=[[0.24,0.26],[0.74,0.48],[0.46,0.80]];
+  const nozX=Math.round(w/2),nozY=h-11;
+  const tx=Math.round(6+(w-12)*spots[idx][0]),ty=Math.round(6+bh*spots[idx][1]);
+  for(let i=0;i<3;i++){
+    if(i<idx)continue;                                   // already burnt out
+    const X=Math.round(6+(w-12)*spots[i][0]),Y=Math.round(6+bh*spots[i][1]);
+    const r=6+Math.round(Math.sin(t*0.09+i)*1);
+    dkGlow(c,X,Y,r+7,'110,220,120',0.22);
+    pxDisc(c,X,Y,r,'#2f7a3a');pxDisc(c,X,Y,r-2,'#5fd66a');px(c,X-2,Y-3,2,2,'#bdffc0');
+    if(i===idx){
+      px(c,X-8,Y-r-6,16,3,'#12202c');px(c,X-8,Y-r-6,Math.round(16*bp),3,'#ff9a3c');
+      dkSparks(c,X,Y,4,r+3,((t>>1)&1)?'#ffd23c':'#ff6a3c');}
+  }
+  const n=26;
+  for(let i=0;i<n;i++){const u=i/n;
+    const jx=dkLerp(nozX,tx,u)+Math.sin(t*0.3+i*0.6)*(1.8*u),jy=dkLerp(nozY,ty,u);
+    px(c,Math.round(jx),Math.round(jy),2,2,u<0.35?'#9fe8ff':u<0.7?'#7fd0ee':(((t+i)&3)?'#ff9a3c':'#ffd23c'));}
+  dkGlow(c,tx,ty,12,'255,150,60',0.30);
+  px(c,nozX-4,nozY-1,8,6,'#2a3a44');px(c,nozX-2,nozY-6,4,6,'#3d5560');
+  dkPlate(c,6,h-19,(idx+1)+'/3','#ffd23c');
+}
+// slide 3 — the purge clock, and the fuse waiting at the end of it
+function dkFlameClock(c,w,h,t,k){
+  dkClear(c,w,h,'#0a1016');
+  const cx=Math.round(w/2),KC=230,kk=k%KC,blow=kk>=150;
+  const u=blow?0:clamp(1-kk/150,0,1);
+  const bw=w-24,bx=12,by=12;
+  px(c,bx-1,by-1,bw+2,9,'#0a1420');
+  const col=u>0.5?'#3dff9a':u>0.25?'#ffcf3a':'#ff4d5e';
+  px(c,bx,by,Math.round(bw*u),7,col);
+  dkTextC(c,(u*10).toFixed(1),cx,by-9,col);
+  const vy=Math.round(h*0.66);
+  if(blow){const bf=(kk-150)/80;
+    dkGlow(c,cx,vy,40,'255,110,60',0.55*(1-bf));
+    dkSparks(c,cx,vy,12,26,((t>>1)&1)?'#ffd23c':'#ff6a3c');
+    dkTextC(c,'BURST',cx,vy-2,'#ffcaa0');
+  }else{
+    const r=11+Math.round(Math.sin(t*0.10)*2);
+    dkGlow(c,cx,vy,r+9,'110,220,120',0.24);
+    pxDisc(c,cx,vy,r,'#2f7a3a');pxDisc(c,cx,vy,r-2,'#5fd66a');px(c,cx-3,vy-4,3,3,'#bdffc0');
+    if(u<0.25&&((t>>2)&1))dkGlow(c,cx,vy,r+14,'255,80,80',0.30);
+  }
+}
+function startFlameIntro(){
+  startDeck({t1:'BIOHAZARD SAC',t2:'TORCH DRILL',last:'START ▸',slides:[
+    {title:'AIM',w:112,h:104,draw:dkFlameAim,lines:[
+      'the <b>stick</b> walks the reticle around the sac.',
+      'the jet carries momentum and sways on its own — you never fully let go of it.']},
+    {title:'BURN THEM OUT',w:112,h:104,draw:dkFlameBurn,lines:[
+      'hold '+dkBtn('confirm','SPACE','A')+' to fire the torch.',
+      'keep the flame on one pocket until its meter fills. <b class="hl-green">three pockets</b> to a sac.']},
+    {title:'THE PURGE CLOCK',w:140,h:64,wide:true,draw:dkFlameClock,lines:[
+      'torch all three before the clock runs out.',
+      'a clean burn kills the sac outright. a <b class="hl-red">bust</b> rides an almost-instant fuse and erupts in your face.']}
+  ]});
+}
+
+/* ===== TRANSVERSAL PRIMER (the U-552 pipe run between cities) ===== */
+let subIntroSeen=false;
+function dkSubBore(x,off,h){
+  const T=6,B=h-6,wx=x+off,H=B-T;
+  const m=(T+B)/2+Math.sin(wx*0.021)*H*0.08+Math.sin(wx*0.008+1.3)*H*0.06;
+  const half=H*0.31+Math.sin(wx*0.016+2.3)*H*0.05;
+  let top=m-half,bot=m+half;
+  if(top<T){bot+=T-top;top=T;} if(bot>B){top-=bot-B;bot=B;}
+  return [Math.round(Math.max(T,top)),Math.round(Math.min(B,bot))];
+}
+function dkSubPipe(c,w,h,t,off,ph){
+  const H=ph||h,T=6,B=H-6;
+  const g=c.createLinearGradient(0,0,0,H);                    // black at the crown, silt along the invert
+  g.addColorStop(0,'#061218');g.addColorStop(0.55,'#0b2028');g.addColorStop(1,'#12211a');
+  c.clearRect(0,0,w,h);c.fillStyle=g;c.fillRect(0,0,w,H);
+  if(H<h)px(c,0,H,w,h-H,'#040c11');
+  for(let i=0;i<26;i++){                                      // drifting silt sells the direction of the current
+    const sx=((i*37+off*1.6)%(w+30))-15, sy=T+((i*29+Math.sin(t*0.1+i)*7)%(B-T));
+    px(c,Math.round(w-sx),Math.round(sy),1,1,(i&3)?'#16303a':'#1e4250');}
+  for(let x=0;x<w;x++){
+    const b=dkSubBore(x,off,H),wx=x+off;
+    const ribc=((Math.floor(wx/26)%2)===0)?'#333a35':'#2b312d';
+    px(c,x,0,1,b[0],'#141a17');px(c,x,b[1],1,H-b[1],'#141a17');
+    px(c,x,Math.max(0,b[0]-14),1,Math.min(14,b[0]),ribc);
+    px(c,x,b[1],1,Math.min(14,H-b[1]),ribc);
+    px(c,x,b[0]-2,1,2,'#4a5348');px(c,x,b[1],1,3,'#4a5348');   // concrete lip
+    px(c,x,b[0],1,1,'#2d4a34');px(c,x,b[1]-1,1,1,'#2d4a34');   // algae at the waterline
+    px(c,x,b[1]-3,1,2,'#243a2a');                              // silt bed on the invert
+    if(((wx|0)%26)<2){px(c,x,0,1,b[0],'#3d463f');px(c,x,b[1],1,H-b[1],'#3d463f');}
+  }
+}
+// the primer shows the real U-552 sprite, drawn onto the slide's own canvas
+function dkSubBoat(c,X,Y,t,boost){drawSubBoat(c,X,Y+5,0,boost,t*0.016,false);
+  if(boost)dkGlow(c,X-22,Y,16,'255,180,60',0.34);}
+// dir -1 = swimming left (head on the left), +1 = swimming right; the tail trails behind either way
+function dkSubMob(c,X,Y,t,seed,dir){
+  const d=(dir===undefined?-1:dir);
+  for(let i=0;i<6;i++)px(c,Math.round(X-d*i*3),Math.round(Y+Math.sin(t*0.2+i*0.7+seed)*2),3,3,i?'#7a2f4a':'#b5416a');
+  px(c,Math.round(X+d*2-1),Math.round(Y),2,2,'#ffd23c');
+}
+// slide 1 — the current does the driving; you only own up and down
+function dkSubStream(c,w,h,t){
+  const off=t*2.2; dkSubPipe(c,w,h,t,off);
+  const X=Math.round(w*0.34),b=dkSubBore(X,off,h);
+  const Y=Math.round((b[0]+b[1])/2+Math.sin(t*0.035)*((b[1]-b[0])*0.26));
+  dkSubBoat(c,X,Y,t,false);
+  const ax=X+38,upOn=Math.sin(t*0.035)<0;
+  for(let i=0;i<5;i++)px(c,ax-i,Y-20+i,1+i*2,1,upOn?'#7fe6ff':'#224a5a');
+  for(let i=0;i<5;i++)px(c,ax-(4-i),Y+18+i,9-i*2,1,!upOn?'#7fe6ff':'#224a5a');
+  dkPlate(c,3,3,'STREAM','#7fd0ee');
+  for(let i=0;i<3;i++)px(c,Math.round(46+i*6+((t*1.4)%16)),8,4,1,'#2be0ff');
+}
+// slide 2 — the bow tubes, and why everything comes at you head-on
+function dkSubFire(c,w,h,t,k){
+  const off=t*2.2; dkSubPipe(c,w,h,t,off);
+  const X=Math.round(w*0.24),b=dkSubBore(X,off,h),Y=Math.round((b[0]+b[1])/2);
+  const KC=95,kk=k%KC;
+  const mobX=Math.round(dkLerp(w-6,w*0.60,Math.min(1,kk/55))),my=Y+5+Math.round(Math.sin(t*0.08)*4);
+  if(kk<55||kk>=78)dkSubMob(c,mobX,my,t,0,-1);
+  else{const bf=(kk-55)/23;dkGlow(c,mobX,my,20,'255,140,60',0.55*(1-bf));
+    dkSparks(c,mobX,my,10,15,((t>>1)&1)?'#ffd23c':'#ff6a3c');}
+  dkSubBoat(c,X,Y,t,false);
+  if(kk>=20&&kk<55){const u=(kk-20)/35,tp=Math.round(dkLerp(X+18,mobX,u)),ty2=Y+5;
+    px(c,tp-7,ty2-1,12,3,'#3f4a4e');px(c,tp+5,ty2-1,2,3,'#8fa3a6');px(c,tp-8,ty2,1,1,'#6b7a7e');
+    px(c,tp-7,ty2-2,3,1,'#5b6b6f');px(c,tp-7,ty2+2,3,1,'#5b6b6f');
+    dkGlow(c,tp-9,ty2,8,'180,230,255',0.22);}
+  dkPlate(c,3,3,'BOW TUBES','#7fd0ee');
+}
+// slide 3 — the mine bay: the only thing a boat has for what is already past it
+function dkSubMines(c,w,h,t,k){
+  const off=t*2.2; dkSubPipe(c,w,h,t,off);
+  const X=Math.round(w*0.48),b=dkSubBore(X,off,h),Y=Math.round((b[0]+b[1])/2);
+  const KC=115,kk=k%KC;
+  function mine(mx,my,arm){dkGlow(c,mx,my,9,'255,210,60',arm?0.40:0.16);
+    pxDisc(c,mx,my,4,'#2a3a44');pxDisc(c,mx,my,3,(arm&&((t>>2)&1))?'#ffd23c':'#5a3a10');
+    for(let i=0;i<4;i++){const a=i*1.5708+0.7;
+      px(c,Math.round(mx+Math.cos(a)*5),Math.round(my+Math.sin(a)*5),2,2,'#3d5560');}}
+  const bY=Y+5;
+  if(kk>10){const u=Math.min(1,(kk-10)/40),dx=X-2-Math.round(u*24);
+    mine(dx,bY-Math.round(dkEase(u)*20),kk>46);
+    mine(dx,bY+Math.round(dkEase(u)*16),kk>46);}
+  dkSubBoat(c,X,Y,t,false);
+  const chase=Math.round(dkLerp(-12,X-30,Math.min(1,kk/72)));
+  if(kk<80)dkSubMob(c,chase,bY+Math.round(Math.sin(t*0.1)*3),t,1.4,1);
+  else{const bf=(kk-80)/35;dkGlow(c,X-30,bY,20,'255,140,60',0.55*(1-bf));
+    dkSparks(c,X-30,bY,10,15,((t>>1)&1)?'#ffd23c':'#ff6a3c');}
+  dkPlate(c,3,3,'MINE BAY','#7fd0ee');
+}
+// slide 4 — emergency thrust: one burn, wide open, then a long walk back
+function dkSubBoost(c,w,h,t,k){
+  const KC=310,kk=k%KC,burning=kk>=40&&kk<130;
+  const off=t*2.2+(burning?(kk-40)*3.6:0);
+  const H=h-16;                                     // the coil gauge owns the strip under the bore
+  dkSubPipe(c,w,h,t,off,H);
+  const X=Math.round(w*(burning?0.42:0.28)),b=dkSubBore(X,off,H),Y=Math.round((b[0]+b[1])/2);
+  dkSubBoat(c,X,Y,t,burning);
+  let u;
+  if(kk<40)u=1; else if(burning)u=clamp(1-(kk-40)/90,0,1); else u=clamp((kk-130)/180,0,1);
+  const bw=w-58,bx=54,by=h-11;
+  px(c,bx-1,by-1,bw+2,8,'#0a1420');
+  px(c,bx,by,Math.round(bw*u),6,burning?'#ffd23c':(u>=1?'#3dff9a':'#39c6ff'));
+  const lab=burning?'BURNING':(u>=1?'READY':'REBUILDING');
+  pxText(c,lab,4,by+1,burning?'#ffd23c':(u>=1?'#3dff9a':'#3a6f88'));
+  dkPlate(c,3,3,'BOOST COIL','#7fd0ee');
+}
+function startSubIntro(){
+  startDeck({t1:'U-552 TRANSIT',t2:'PIPE RUN',last:'DIVE ▸',slides:[
+    {title:'THE STREAM CARRIES YOU',w:150,h:96,wide:true,draw:dkSubStream,lines:[
+      'the main pushes the boat forward on its own. all you steer is <b>up</b> and <b>down</b>.',
+      'scrape the wall and the <b class="hl-red">hull</b> pays for it — hull at zero ends the run for good.']},
+    {title:'BOW TUBES',w:150,h:96,wide:true,draw:dkSubFire,lines:[
+      dkBtn('mine','F','X')+' fires forward.',
+      'a boat cannot shoot behind itself, and everything living in the pipe knows it.']},
+    {title:'MINE BAY',w:150,h:96,wide:true,draw:dkSubMines,lines:[
+      dkBtn('craft','Q','LT')+' drops a mine <b>above</b>, '+dkBtn('pack','E','RB')+' drops one <b>below</b>.',
+      'that is your whole answer to something already on your tail.']},
+    {title:'EMERGENCY THRUST',w:150,h:96,wide:true,draw:dkSubBoost,lines:[
+      dkBtn('clip','X','Y')+' lights the coil: <b class="hl-yellow">one burn, wide open, no brakes</b>.',
+      'it rebuilds slowly, so spend it making an exit — not nudging position.',
+      'salvage you drag through the far gate pays for fittings at the dry dock.']}
+  ]});
+}
+
+/* ================================================================================
+ * PC MODE + FULL KEYBOARD / GAMEPAD BINDINGS
+ * The handheld shell is the touch layout. The moment the player uses a keyboard
+ * or a gamepad we drop the plastic and run as a desktop deck: full-window screen,
+ * wider view, integer pixel scaling, and a legend strip where the buttons were.
+ * Every function the on-screen controls expose has a key AND a pad button here.
+ * A touch anywhere hands the handheld back.
+ * ============================================================================== */
+const PC_MAX_VW=760, PC_MAX_VH=470;      // world-pixel budget per frame; the scale grows to respect it
+
+// label · keyboard keys · gamepad buttons  (single source for the panel and the strip)
+const BINDS=[
+  {sec:'DIVING',rows:[
+    ['swim / move',            ['W A S D','↑ ↓ ← →'], ['L-STICK','D-PAD']],
+    ['mine · dig',             ['F'],                 ['X']],
+    ['clip / unclip air line', ['X'],                 ['Y']],
+    ['craft & shop (at a base)',['E','C','TAB'],      ['RB']],
+    ['open pack',              ['I'],                 ['LB']],
+    ['use patch kit',          ['Q'],                 ['LT']],
+    ['interact · hook · confirm',['SPACE','ENTER'],   ['A','RT']],
+    ['layer objectives',       ['O'],                 ['L3']],
+    ['pause / resume',         ['ESC','P'],           ['START']],
+  ]},
+  {sec:'DV-8 "MULE" MECH',rows:[
+    ['drill a vein',           ['F'],                 ['X']],
+    ['fire grappling hook',    ['SPACE'],             ['A']],
+    ['boost (hold, airborne)', ['W','↑'],             ['L-STICK ↑','D-PAD ↑']],
+    ['leave the mech',         ['X'],                 ['Y']],
+  ]},
+  {sec:'MENUS · MINING · HACK · CRANK',rows:[
+    ['move selection',         ['W A S D','↑ ↓ ← →'], ['D-PAD','L-STICK']],
+    ['select · dig · confirm', ['SPACE','ENTER','F'], ['A','X']],
+    ['back one step',          ['ESC'],               ['B']],
+    ['quick exit',             ['BACKSPACE'],         ['R3']],
+  ]},
+  {sec:'PROMPTS & TUTORIAL SLIDES',rows:[
+    ['next slide · yes',       ['SPACE','ENTER','F','Y'],['A','X']],
+    ['previous slide',         ['BACKSPACE'],         ['R3']],
+    ['skip · no',              ['ESC','N'],           ['B']],
+  ]},
+  {sec:'SYSTEM',rows:[
+    ['this panel',             ['?','F1','H'],        ['SELECT']],
+    ['abandon dive (paused)',  ['SHIFT+A'],           ['Y']],
+  ]},
+];
+const PC_LEGEND={
+  key:[['W A S D','swim'],['SPACE','act'],['F','mine'],['X','clip'],['E','craft'],['I','pack'],['Q','patch'],['ESC','pause']],
+  pad:[['L-STICK','swim'],['A','act'],['X','mine'],['Y','clip'],['RB','craft'],['LB','pack'],['LT','patch'],['START','pause']],
+};
+
+let pcMode=false, pcSrc='', pausedForBinds=false;
+
+function pcBuild(){
+  if(document.getElementById('pcbar'))return;
+  const g=document.getElementById('game');
+  const bar=document.createElement('div'); bar.id='pcbar'; g.appendChild(bar);
+  const src=document.createElement('div'); src.id='pcsrc'; g.appendChild(src);
+  let h='<div class="bdwrap"><div class="bdhead"><div class="bdtitle">CONTROLS</div>'
+       +'<div class="bdsub">keyboard &amp; gamepad</div></div><div class="bdcols">';
+  for(const s of BINDS){
+    h+='<div class="bdsec">'+s.sec+'</div>';
+    for(const r of s.rows){
+      h+='<div class="bdrow"><span class="k">'
+        +r[1].map(k=>'<i>'+k+'</i>').join('')+r[2].map(k=>'<i class="pad">'+k+'</i>').join('')
+        +'</span><span>'+r[0]+'</span></div>';
+    }
+  }
+  h+='</div><div class="bdfoot">press <b>?</b> · <b>ESC</b> · <b>SELECT</b> to close</div></div>';
+  const bd=document.createElement('div'); bd.id='binds'; bd.innerHTML=h; document.body.appendChild(bd);
+  bd.addEventListener('pointerdown',e=>{if(e.target===bd)bindsToggle(false);});
+}
+function pcLegend(kind){
+  const bar=document.getElementById('pcbar'); if(!bar)return;
+  bar.innerHTML=(PC_LEGEND[kind]||PC_LEGEND.key).map(l=>'<span class="pcb"><kbd>'+l[0]+'</kbd>'+l[1]+'</span>').join('')
+    +'<span class="pcb pcb-hint"><kbd>'+(kind==='pad'?'SELECT':'?')+'</kbd>all bindings</span>';
+}
+function pcOn(src){
+  if(!pcMode){pcMode=true;document.body.classList.add('pc-mode');pcBuild();resize();}
+  if(pcSrc!==src){pcSrc=src;pcLegend(src);
+    const el=document.getElementById('pcsrc'); if(el)el.textContent='input · '+(src==='pad'?'gamepad':'keyboard');}
+}
+function pcOff(){ if(!pcMode)return; pcMode=false;pcSrc='';document.body.classList.remove('pc-mode');resize(); }
+// a real finger means a real handheld — hand the casing back
+window.addEventListener('pointerdown',e=>{if(e.pointerType==='touch')pcOff();},true);
+
+function bindsToggle(on){
+  const el=document.getElementById('binds'); if(!el)return;
+  const show=(on===undefined)?!el.classList.contains('on'):!!on;
+  el.classList.toggle('on',show);
+  if(show){ if(state.mode==='play'){pausedForBinds=true;pauseGame();} }
+  else if(pausedForBinds){ pausedForBinds=false; if(state.mode==='pause')resumeGame(); }
+}
+
+/* ---- click-only dialogs --------------------------------------------------
+ * The studio intro's FIRST TIME HERE prompt and the three slide decks (tutorial,
+ * briefing, mining primer) shipped as buttons you had to tap. They answer to keys
+ * and the pad now. Movement keys are deliberately left alone so the tutorial's
+ * "try it" steps still work while a deck is up.                              */
+const DLG=[
+  {el:'#intro-ft-btns',yes:'#intro-yes',no:'#intro-no'},
+  {el:'#tut-nav',next:'#tut-next',prev:'#tut-prev',skip:'#tut-skip'},
+  {el:'#bi-nav', next:'#bi-next', prev:'#bi-prev', skip:'#bi-skip'},
+  {el:'#mi-nav', next:'#mi-next', prev:'#mi-prev', skip:'#mi-skip'},
+  {el:'#dk-nav', next:'#dk-next', prev:'#dk-prev', skip:'#dk-skip'},
+];
+function dlgOpen(){
+  for(const d of DLG){
+    const el=document.querySelector(d.el); if(!el)continue;
+    const r=el.getBoundingClientRect();
+    if(r.width>0&&r.height>0&&getComputedStyle(el).visibility!=='hidden')return d;
+  }
+  return null;
+}
+function dlgKey(d,code){
+  const hit=s=>{const b=s&&document.querySelector(s);if(b&&!b.disabled){b.click();return true;}return false;};
+  if(d.yes){
+    if(code==='Space'||code==='Enter'||code==='KeyF'||code==='KeyY')return hit(d.yes);
+    if(code==='Escape'||code==='KeyN'||code==='Backspace')return hit(d.no);
+    return false;
+  }
+  if(code==='Space'||code==='Enter'||code==='KeyF')return hit(d.next);
+  if(code==='Backspace')return hit(d.prev);
+  if(code==='Escape')return hit(d.skip);
+  return false;
+}
+
+// Capture phase: this runs BEFORE the main key handler, so the panel can swallow
+// input outright and the extra bindings never double-fire with the originals.
+let padSynth=false;
+window.addEventListener('keydown',e=>{
+  if(e.key==='Shift'||e.key==='Control'||e.key==='Alt'||e.key==='Meta')return;
+  if(!padSynth)pcOn('key');
+  const bd=document.getElementById('binds');
+  if(bd&&bd.classList.contains('on')){
+    e.preventDefault();e.stopPropagation();
+    if(e.code==='Escape'||e.code==='F1'||e.code==='KeyH'||e.code==='Slash'||e.key==='?'||e.code==='Space'||e.code==='Enter')bindsToggle(false);
+    return;
+  }
+  if(e.code==='F1'||e.code==='KeyH'||e.code==='Slash'||e.key==='?'){bindsToggle(true);e.preventDefault();e.stopPropagation();return;}
+  if(e.repeat)return;
+  const eat=()=>{audioInit();e.preventDefault();e.stopPropagation();};
+  const dlg=dlgOpen();
+  if(dlg&&dlgKey(dlg,e.code)){eat();return;}
+  if(e.code==='KeyO'){                       // layer briefing, on demand
+    if(state.mode==='play'&&player)openObjectives(tierAtY(player.y));
+    else if(state.mode==='objectives')closeObjectives();
+    eat();return;}
+  if(e.code==='KeyP'){                       // pause alias (ESC also works)
+    if(state.mode==='play')pauseGame(); else if(state.mode==='pause')resumeGame();
+    eat();return;}
+  if(e.code==='Backspace'){menuExit();eat();return;}                       // the red EXIT pill
+  if(e.code==='KeyA'&&e.shiftKey&&state.mode==='pause'){abandonDive();eat();return;}
+},true);
+
+/* ---- GAMEPAD ---------------------------------------------------------------
+ * Pad buttons are replayed as the keyboard events the game already understands,
+ * so the two schemes can never drift apart. The left stick stays analog while
+ * swimming and turns into a repeating d-pad inside menus.                     */
+const PAD_BTN={0:'Space',1:'Escape',2:'KeyF',3:'KeyX',4:'KeyI',5:'KeyE',6:'KeyQ',7:'Space',9:'Escape',10:'KeyO',11:'Backspace'};
+const PAD_DIR={12:'ArrowUp',13:'ArrowDown',14:'ArrowLeft',15:'ArrowRight'};
+const PAD_DEAD=0.28;
+let padPrev={},padJoy=false,padDir=null,padRepeat=0;
+function padKey(code,down,shift){
+  padSynth=true;
+  try{window.dispatchEvent(new KeyboardEvent(down?'keydown':'keyup',{code:code,key:code,shiftKey:!!shift,bubbles:true}));}
+  finally{padSynth=false;}
+}
+function padRelease(){ if(padDir){padKey(padDir,false);padDir=null;} if(padJoy){padJoy=false;input.joy=false;input.jx=0;input.jy=0;} }
+function padPoll(){
+  const pads=navigator.getGamepads?navigator.getGamepads():[];
+  let gp=null; for(let i=0;i<pads.length;i++){if(pads[i]&&pads[i].connected){gp=pads[i];break;}}
+  if(gp){
+    let live=false;
+    for(let i=0;i<gp.buttons.length;i++){
+      const b=gp.buttons[i], dn=b.pressed||b.value>0.5;
+      if(dn)live=true;
+      if(dn===!!padPrev[i])continue;
+      padPrev[i]=dn;
+      if(i===8){if(dn)bindsToggle();continue;}                                  // SELECT — bindings panel
+      if(i===3&&dn&&state.mode==='pause'){abandonDive();continue;}              // Y on the pause screen
+      const code=PAD_BTN[i]||PAD_DIR[i];
+      if(code)padKey(code,dn);
+    }
+    const ax=gp.axes[0]||0, ay=gp.axes[1]||0, mag=Math.hypot(ax,ay);
+    if(mag>PAD_DEAD)live=true;
+    const analog=(state.mode==='play'||state.mode==='flame'||state.mode==='sub');
+    if(analog){
+      if(padDir){padKey(padDir,false);padDir=null;}
+      if(mag>PAD_DEAD){input.joy=true;input.jx=ax;input.jy=ay;padJoy=true;}
+      else if(padJoy){padJoy=false;input.joy=false;input.jx=0;input.jy=0;}
+    }else{
+      if(padJoy){padJoy=false;input.joy=false;input.jx=0;input.jy=0;}
+      const d=mag>0.5?(Math.abs(ax)>=Math.abs(ay)?(ax>0?'ArrowRight':'ArrowLeft'):(ay>0?'ArrowDown':'ArrowUp')):null;
+      const now=performance.now();
+      if(d!==padDir){ if(padDir)padKey(padDir,false); padDir=d; if(d){padKey(d,true);padRepeat=now+260;} }
+      else if(d&&now>padRepeat){ padKey(d,false);padKey(d,true);padRepeat=now+110; }
+    }
+    if(live)pcOn('pad');
+  }else if(padDir||padJoy){padRelease();padPrev={};}
+  requestAnimationFrame(padPoll);
+}
+window.addEventListener('gamepadconnected',()=>{pcOn('pad');});
+window.addEventListener('gamepaddisconnected',()=>{padRelease();padPrev={};});
+requestAnimationFrame(padPoll);
+
+/* ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║  ███  DEV TEST PANEL  ███   NOT FOR RELEASE                              ║
+ * ╠══════════════════════════════════════════════════════════════════════════╣
+ * ║  TO REMOVE FOR RELEASE: delete everything from this banner down to the    ║
+ * ║  "END DEV TEST PANEL" banner. That is the whole thing — one contiguous    ║
+ * ║  block. No other line in this file mentions the panel: its markup, its    ║
+ * ║  styles and its behaviour are all created from in here at runtime, and    ║
+ * ║  the cheats work by wrapping existing functions rather than by editing    ║
+ * ║  them, so nothing else has a hook to leave behind.                        ║
+ * ║                                                                          ║
+ * ║  TO DISABLE WITHOUT DELETING: set DEV_PANEL_ON to false, one line down.   ║
+ * ║  (Verify a release build with: grep -c "DEV TEST PANEL" — expect 0.)      ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝ */
+const DEV_PANEL_ON = true;
+if(DEV_PANEL_ON)(function devTestPanel(){
+  const S={oxy:false,shop:false,invuln:false};
+  let coinsBefore=null;
+
+  // ---- cheats that need to override game functions --------------------------
+  // Wrapped, not edited: the originals are kept and called whenever the toggle
+  // is off, so switching a cheat off restores stock behaviour exactly.
+  const _canPay=canPay, _pay=pay, _canPayParts=canPayParts, _payParts=payParts;
+  canPay      = m => S.shop ? true : _canPay(m);
+  pay         = m => { if(!S.shop) _pay(m); };
+  canPayParts = c => S.shop ? true : _canPayParts(c);
+  payParts    = c => { if(!S.shop) _payParts(c); };
+
+  // ---- cheats enforced per frame (no game code involved at all) -------------
+  function devTick(){
+    if(player){
+      if(S.oxy){player.oxygen=player.maxOxygen;player.drown=0;}
+      if(S.invuln){player.hearts=player.maxHearts;player.burn=0;player.invuln=Math.max(player.invuln,6);}
+    }
+    if(S.shop&&coins<9999)coins=9999;
+    requestAnimationFrame(devTick);
+  }
+  requestAnimationFrame(devTick);
+
+  function setShop(on){
+    if(on&&coinsBefore===null){coinsBefore=coins;}
+    else if(!on&&coinsBefore!==null){coins=coinsBefore;coinsBefore=null;}   // hand back the real wallet
+    S.shop=on;
+  }
+
+  // ---- teleport ------------------------------------------------------------
+  function devSpot(t){                                   // first cell in layer t the diver actually fits in
+    const cx=Math.max(1,Math.min(MW-2,Math.round(player.x/TS)));
+    for(let ty=tierTop[t]+1; ty<tierTop[t]+28 && ty<MH-1; ty++)
+      for(let r=0;r<28;r++)
+        for(const s of (r?[-1,1]:[0])){
+          const tx=Math.max(1,Math.min(MW-2,cx+r*s)), X=tx*TS+3, Y=ty*TS+3;
+          if(!rectHit(X,Y,player.w,player.h))return{x:X,y:Y};
+        }
+    return {x:((MW/2)|0)*TS, y:(tierTop[t]+3)*TS};
+  }
+  function devTeleport(dir){
+    if(!player||state.mode==='title'){devSay('start a dive first');return;}
+    const cur=tierAtY(player.y), tgt=cur+dir;
+    if(tgt<0){devSay('already on the top layer');return;}
+    if(tgt>=SCHED.length){devSay('no layer below — this is the city finale');return;}
+    while(generatedTiers<=tgt&&generatedTiers<SCHED.length)growTier(generatedTiers);   // build it if it isn't there yet
+    if(dir>0){tierDry[tgt]=false;finishBulkAnim(cur);}   // flood the deck and release the seal you drop through
+    const p=devSpot(tgt);
+    player.x=p.x;player.y=p.y;player.vx=0;player.vy=0;player.drown=0;player.invuln=90;
+    player.attached=false;player.attachedBase=null;      // the line above can't stretch this far
+    camera.x=clamp(player.x-VW/2,0,MW*TS-VW);camera.y=clamp(player.y-VH/2,0,MH*TS-VH);
+    ensureDepth();
+    if(state.mode!=='play')setMode('play');
+    devSay('teleported to layer '+(tgt+1)+'/'+SCHED.length);
+  }
+  function devSay(m){ try{showMsg(m);}catch(_){} const t=el.querySelector('#dev-say'); if(t){t.textContent=m;} }
+
+  // ---- auto-complete the layer's current objective --------------------------
+  // Marks every machine of the current step done through the game's own
+  // completeMissionObj(), so progress, messages and the control unit / transit
+  // gate coming online all behave exactly as they do when you play it out.
+  function devCompleteObjective(){
+    if(!player||state.mode!=='play'){devSay('start a dive first');return;}
+    const t=tierAtY(player.y), m=layerMissions[t];
+    if(!m){devSay('no quest on this layer');return;}
+    if(m.complete){devSay('layer '+(t+1)+' quest is already clear');return;}
+    ensureDepth();                       // re-assert this layer's machines before touching them
+    const step=m.progress;
+    const objs=missionObjs.filter(q=>q.tier===t&&q.type!=='gate'&&q.step===step&&!q.done);
+    if(!objs.length){devSay('no machines found for the current step');return;}
+    for(const o of objs){ if(m.progress!==step)break; completeMissionObj(o); }
+    devSay(m.complete ? 'layer '+(t+1)+' quest COMPLETE'
+                      : 'step cleared — next: '+m.steps[m.progress].title);
+  }
+
+  // ---- straight into the pipe run, skipping the descent that normally earns it ----
+  function devLaunchTransversal(){
+    if(!player||state.mode!=='play'){devSay('start a dive first');return;}
+    const c=nextCityChoices()[0];
+    subLaunch(c);
+    devSay('transversal to '+c.name+' — '+Math.round(subS.len)+'px of pipe');
+  }
+
+  // ---- panel ---------------------------------------------------------------
+  const css=document.createElement('style');
+  css.textContent=`
+    /* thin tab on the left edge — the one spot free in BOTH the handheld and PC layouts */
+    #devtab{position:fixed;left:0;top:50%;transform:translateY(-50%);z-index:500;
+      writing-mode:vertical-rl;font:700 9px 'Courier New',monospace;
+      letter-spacing:3px;color:#ff9a3c;background:rgba(30,12,4,.9);border:1px solid #6b3410;
+      border-left:none;border-radius:0 4px 4px 0;padding:9px 3px;cursor:pointer;opacity:.7;}
+    #devtab:hover{opacity:1;}
+    #devpanel{position:fixed;left:22px;top:50%;transform:translateY(-50%);
+      max-height:82vh;overflow-y:auto;z-index:501;display:none;width:250px;
+      font-family:'Courier New',monospace;color:#e8d9c8;background:rgba(14,9,5,.97);
+      border:1px solid #6b3410;border-radius:7px;padding:10px 11px 11px;
+      box-shadow:0 0 30px rgba(255,140,50,.14),inset 0 0 40px rgba(0,0,0,.5);}
+    #devpanel.on{display:block;}
+    #devpanel h5{font-size:9px;letter-spacing:2px;color:#ff6b3c;font-weight:700;margin-bottom:2px;}
+    #devpanel .sub{font-size:8px;letter-spacing:1px;color:#7a6252;margin-bottom:9px;
+      border-bottom:1px solid #3a2113;padding-bottom:7px;}
+    #devpanel button.row{display:flex;justify-content:space-between;align-items:center;gap:8px;
+      width:100%;font:700 10px 'Courier New',monospace;letter-spacing:1px;text-align:left;
+      color:#cbbcae;background:rgba(40,24,12,.6);border:1px solid #4a2c14;border-radius:4px;
+      padding:6px 8px;margin-bottom:4px;cursor:pointer;}
+    #devpanel button.row:hover{border-color:#8a4a1c;color:#fff;}
+    #devpanel button.row .st{font-size:9px;color:#6d5a4a;flex:none;}
+    #devpanel button.row.on{color:#ffd7a8;border-color:#ff9a3c;background:rgba(90,45,12,.6);}
+    #devpanel button.row.on .st{color:#7dff6a;}
+    #devpanel .act{margin-top:7px;padding-top:7px;border-top:1px solid #3a2113;}
+    #dev-say{font-size:8px;color:#7a6252;letter-spacing:1px;margin-top:7px;min-height:10px;}
+    #devpanel .warn{font-size:8px;color:#a8674a;letter-spacing:1px;margin-top:8px;line-height:1.5;}`;
+  document.head.appendChild(css);
+
+  const el=document.createElement('div'); el.id='devpanel';
+  el.innerHTML=
+     '<h5>DEV TEST PANEL</h5>'
+    +'<div class="sub">not for release &middot; F8</div>'
+    +'<button class="row" data-t="oxy"><span>Stop oxygen drain</span><span class="st">OFF</span></button>'
+    +'<button class="row" data-t="shop"><span>Shop resources free</span><span class="st">OFF</span></button>'
+    +'<button class="row" data-t="invuln"><span>Invulnerable</span><span class="st">OFF</span></button>'
+    +'<div class="act">'
+    +'<button class="row" data-a="obj"><span>Complete current objective</span><span class="st">&#10003;</span></button>'
+    +'<button class="row" data-a="down"><span>Teleport to next layer</span><span class="st">&#9660;</span></button>'
+    +'<button class="row" data-a="up"><span>Teleport to layer above</span><span class="st">&#9650;</span></button>'
+    +'<button class="row" data-a="sub"><span>Launch city transversal</span><span class="st">&#9654;</span></button>'
+    +'</div>'
+    +'<div id="dev-say"></div>'
+    +'<div class="warn">&#9888; free shop waives every resource, part and coin cost &mdash; base power and bulkhead tolls included.<br>&#9888; complete objective clears ONE step &mdash; press again to finish the layer and bring the control unit / transit gate online.</div>';
+  document.body.appendChild(el);
+
+  const tab=document.createElement('button'); tab.id='devtab'; tab.textContent='DEV'; document.body.appendChild(tab);
+
+  function paint(){
+    el.querySelectorAll('button.row[data-t]').forEach(b=>{
+      const on=!!S[b.dataset.t];
+      b.classList.toggle('on',on);
+      b.querySelector('.st').textContent=on?'ON':'OFF';
+    });
+  }
+  function toggle(show){ el.classList.toggle('on',show===undefined?!el.classList.contains('on'):!!show); }
+
+  el.addEventListener('click',e=>{
+    const b=e.target.closest('button.row'); if(!b)return;
+    if(b.dataset.t){
+      const k=b.dataset.t;
+      if(k==='shop')setShop(!S.shop); else S[k]=!S[k];
+      paint(); devSay(b.textContent.replace(/ON|OFF/,'').trim()+' → '+(S[k]?'ON':'OFF'));
+    } else if(b.dataset.a==='obj')devCompleteObjective();
+    else if(b.dataset.a==='sub')devLaunchTransversal();
+    else devTeleport(b.dataset.a==='down'?1:-1);
+    b.blur();                                   // never leave a button holding the keyboard
+  });
+  tab.addEventListener('click',()=>{toggle();tab.blur();});
+  // the panel eats its own keys so nothing reaches the diver
+  el.addEventListener('keydown',e=>e.stopPropagation());
+  window.addEventListener('keydown',e=>{
+    if(e.code==='F8'){toggle();e.preventDefault();e.stopPropagation();}
+  },true);
+
+  paint();
+  console.warn('SEWER DIVER: dev test panel is active (F8). Remove the DEV TEST PANEL block before release.');
+})();
+/* ╚═══════════════════  END DEV TEST PANEL — NOT FOR RELEASE  ═══════════════╝ */
+
+if(TH)TH.bind({
+  get state(){return state;}, get player(){return player;}, get camera(){return camera;},
+  get particles(){return particles;}, get glows(){return glows;}, get creatures(){return creatures;},
+  get mech(){return mech;}, get subS(){return subS;}, get VW(){return VW;}, get VH(){return VH;},
+  get RCX(){return RCX;}, get RCY(){return RCY;}, get map(){return map;}, get MW(){return MW;}, get MH(){return MH;},
+  get floodFx(){return floodFx;}, get tierDry(){return tierDry;}, get THEME(){return THEME;}, get TIERS(){return TIERS;},
+  get shake(){return shake;}, get tierTop(){return tierTop;},
+  TS, SLUDGE, THERMAL, EMPTY, tAt, ambientAt, envOfTier, tileTypePx, solidPx, subBandTop, subBandBot,
+  canvas, flatCtx,
+});
+init();
+})();
