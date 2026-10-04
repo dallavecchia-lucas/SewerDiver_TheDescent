@@ -1,7 +1,7 @@
 // CPU side of the theatre: where the plates float, how they hover, which lights burn and
 // what the water looks like this frame. Everything here ends up in GPUState uniforms.
 import * as THREE from 'three/webgpu';
-import { OPT, calibratePlate } from './optics.js';
+import { OPT, calibratePlate, fitTube } from './optics.js';
 import { PLATES, NPLATES, MARGIN, P_CARD, P_ACT, P_ROCK, P_BACK } from './sheets.js';
 import { MAX_LIGHTS } from './gpu.js';
 
@@ -45,12 +45,13 @@ export class TheatreScene {
   // ---- layout: called when the view rect / game view size changes
   layout(vw, vh, halfW, halfH) {
     this.vw = vw; this.vh = vh; this.halfW = halfW; this.halfH = halfH;
+    this.tube = fitTube(halfW, halfH);        // first: every calibration below sees the fitted glass
     for (const p of this.plates) {
       const c = calibratePlate(p.z, halfW, halfH, vw, vh);
       p.s = c.s; p.cx = c.cx; p.cy = c.cy;
       // the card flat is a little smaller than the stage opening, so its hovering edge and the
       // shadow it throws on the theatre behind always show
-      if (p.i === P_CARD) p.s *= 0.93;
+      if (p.i === P_CARD) p.s *= this.tube.card;
     }
     // fit view-px <-> box mapping as a function of depth (particles, splats, prompts)
     this.depthFit = [0, 10, 20, 30, 40, 50, 57].map((z) => ({ z, ...calibratePlate(z, halfW, halfH, vw, vh) }));

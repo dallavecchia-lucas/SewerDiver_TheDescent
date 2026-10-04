@@ -5373,6 +5373,9 @@ function hackSpark(x,y,col,spd,n){for(let i=0;i<(n||6);i++)hackS.fx.push({x:x+(M
   vx:(Math.random()-.5)*spd,vy:-14-Math.random()*spd*0.6,life:0.4+Math.random()*0.4,r:1+((Math.random()*2)|0),col});}
 function hackBanner(txt,t){hackS.banner=txt;hackS.bannerT=t||1.1;}
 // a fresh glyph to build: 1–8 sides (deeper nodes lean toward more sides, but any given node is random)
+// centre and size the octagon for the current view (re-run if the phone is flipped mid-game)
+function hackFit(){const S=hackS;S.lw=VW;S.lh=VH;
+  S.cx=Math.round(VW/2);S.cy=Math.round(VH*0.42);S.R=Math.round(Math.min(VW*0.30,VH*0.17,64));}
 function hackStartBuild(){const S=hackS,tc=Math.min(S.tier,3);
   const lo=1+Math.min(tc,3);                       // deeper ICE needs at least a few sides
   S.need=clamp(lo+((Math.random()*(9-lo))|0),1,8);
@@ -5394,8 +5397,7 @@ function hackBuildGrid(set){const S=hackS,tk=hackSetKey(set),used={};used[tk]=1;
 }
 function openHack(o){
   hackObj=o;const S=hackS,tier=o.tier||0;
-  S.tier=tier;S.cx=Math.round(VW/2);S.cy=Math.round(VH*0.42);
-  S.R=Math.round(Math.min(VW*0.30,VH*0.17,64));
+  S.tier=tier;hackFit();
   S.shapesDone=0;S.doneT=0;S.formT=0;S.flash=0;S.hitFlash=0;S.wrongT=0;S.hint=3.5;S.pulse=0;S.banner='';S.bannerT=0;S.fx.length=0;
   S.time=0;S.limit=28+tier*2;S.bust=false;
   mineEdge=false;actionEdge=false;input.action=false;
@@ -5489,6 +5491,7 @@ function hackGridGeom(){const gx=8,gw=VW-16,cellW=gw/HACK_COLS,gTop=Math.round(V
   return {gx,gw,cellW,gTop,rowH,r,cx:(c)=>Math.round(gx+cellW*(c+0.5)),cy:(rr)=>Math.round(gTop+rowH*(rr+0.5))};}
 function renderHack(){
   const S=hackS,o=hackObj;if(!o){if(state.mode==='hack')setMode('play');return;}
+  if(S.lw!==VW||S.lh!==VH)hackFit();
   RCX=0;RCY=0;const t=state.tick;
   const sh=shake>0?(Math.random()-.5)*shake:0,sv=shake>0?(Math.random()-.5)*shake:0;
   // ---- console backdrop: near-black with a faint scrolling grid + drifting cyan glow ----
@@ -5632,16 +5635,14 @@ canvas.addEventListener('pointerdown',e=>{if(state.mode!=='hack')return;e.preven
  * Torch all three before an 8s timer busts. A clean WIN burns the sac out with no blowback at all; a
  * BUST rides an almost-instant fuse (podBlasts, out in the world) so the gas erupts right in the diver's face. */
 let flameObj=null;
-const flameS={slimes:[],cx:110,rimTop:70,baseBot:300,bx:46,by:104,bw:128,bh:150,
+const flameS={slimes:[],cx:110,rimTop:70,baseBot:300,bx:46,by:104,bw:128,bh:150,vk:1,vy0:70,hintY:318,
   aimX:110,aimY:180,vx:0,vy:0,rx:110,ry:180,swx:0,swy:0,nozX:110,nozY:294,
   limit:10,time:0,killed:0,won:false,doneT:0,outcome:null,hint:3.0,flash:0,hitFlash:0,
   firing:false,onTarget:false,swayAmp:2.4,aimAcc:0.82,aimDrag:0.86,burnRate:6.0,fx:[]};
 function openFlame(o){
   flameObj=o;const B=flameS,tier=o.tier||0,tc=Math.min(tier,3);
-  B.cx=Math.round(VW/2);B.rimTop=70;B.baseBot=300;
-  B.bx=46;B.by=104;B.bw=VW-92;B.bh=150;                 // aim / slime interior (inside the urn belly)
+  flameFit();
   B.aimX=B.cx;B.aimY=Math.round(B.by+B.bh*0.5);B.vx=0;B.vy=0;B.rx=B.aimX;B.ry=B.aimY;B.swx=0;B.swy=0;
-  B.nozX=B.cx;B.nozY=VH-58;
   const spots=[[0.24,0.20],[0.76,0.44],[0.42,0.82]];    // three well-separated pockets — never clustered
   B.slimes=spots.map(s=>{const r=9+((Math.random()*3)|0);   // bigger, far easier to land the reticle on
     const nl=5+((Math.random()*2)|0),lobes=[];             // irregular pulsating-splash silhouette
@@ -5657,6 +5658,26 @@ function openFlame(o){
   setMode('flame');sfx.start();
   if(tutorialsOn&&!flameIntroSeen){flameIntroSeen=true;startFlameIntro();}
 }
+// lay the urn out for the current view. Returns the old interior box so a refit can carry
+// what is already placed in it.
+function flameFit(){const B=flameS,old={bx:B.bx,by:B.by,bw:B.bw,bh:B.bh};
+  B.lw=VW;B.lh=VH;B.cx=Math.round(VW/2);
+  // the urn is laid out for the 352px-tall portrait view. A short landscape view drops the hint
+  // line to the bottom edge and scales the urn down (evenly, so it stays the same pot) until it
+  // and its label fit above it, instead of letting its base and the nozzle fall off the screen
+  B.vk=Math.min(1,(VH-92)/240);B.vy0=B.vk<1?62:70;B.hintY=B.vk<1?VH-16:VH-34;
+  B.rimTop=flameY(70);B.baseBot=flameY(300);
+  B.bh=Math.round(150*B.vk);B.bw=Math.min(VW-92,Math.round(148*B.vk));   // aim / slime interior (inside the urn belly)
+  B.bx=Math.round(B.cx-B.bw/2);B.by=flameY(104);
+  B.nozX=B.cx;B.nozY=flameY(294);
+  return old;}
+// the view changed size mid-game (phone flipped): refit the urn and carry the pups, the aim
+// and the sparks to the same spot in the new urn, so nothing is left hanging off-centre
+function flameRefit(){const B=flameS,o=flameFit();
+  const mx=x=>B.bx+(x-o.bx)*B.bw/(o.bw||1),my=y=>B.by+(y-o.by)*B.bh/(o.bh||1);
+  for(const s of B.slimes){s.x=Math.round(mx(s.x));s.y=Math.round(my(s.y));}
+  B.aimX=mx(B.aimX);B.aimY=my(B.aimY);B.rx=mx(B.rx);B.ry=my(B.ry);
+  for(const p of B.fx){p.x=mx(p.x);p.y=my(p.y);}}
 function closeFlame(){                                   // abort — the sac stays live, no progress
   if(!flameObj){if(state.mode==='flame')setMode('play');return;}
   flameObj=null;flameFire=false;setMode('play');sfx.back();
@@ -5739,26 +5760,28 @@ function flameInput(){
 // --- pixel cyberpunk metal urn: knot-driven silhouette, metal scanlines, seams, rivets, lit interior ---
 function vaseHW(knots,y){if(y<knots[0][0]||y>knots[knots.length-1][0])return 0;
   for(let i=0;i<knots.length-1;i++){const a=knots[i],b=knots[i+1];if(y>=a[0]&&y<=b[0]){const f=(y-a[0])/(b[0]-a[0]||1);return a[1]+(b[1]-a[1])*f;}}return 0;}
+// urn design y (portrait px) -> screen y: identity on a portrait view, shrunk to fit a short one
+function flameY(y){const B=flameS;return B.vy0+Math.round((y-70)*B.vk);}
 function drawVase(cx,sv){
-  const B=flameS,knots=[[70,54],[76,60],[82,30],[104,38],[150,72],[190,78],[228,72],[266,46],[280,32],[292,40],[300,36]];
+  const B=flameS,k=B.vk,knots=[[70,54],[76,60],[82,30],[104,38],[150,72],[190,78],[228,72],[266,46],[280,32],[292,40],[300,36]];
   ctx.globalCompositeOperation='lighter';
-  radial(ctx,cx,B.by+B.bh*0.5+sv,92,'rgba(70,200,90,0.10)','rgba(0,0,0,0)');   // interior bio-glow behind
+  radial(ctx,cx,B.by+B.bh*0.5+sv,Math.round(92*k),'rgba(70,200,90,0.10)','rgba(0,0,0,0)');   // interior bio-glow behind
   ctx.globalCompositeOperation='source-over';
-  const y0=knots[0][0],y1=knots[knots.length-1][0];
-  for(let y=y0;y<=y1;y++){const hw=Math.round(vaseHW(knots,y));if(hw<=0)continue;const Y=y+sv;
+  const r0=flameY(knots[0][0]),r1=flameY(knots[knots.length-1][0]),wall=Math.max(3,Math.round(6*k));
+  for(let r=r0;r<=r1;r++){const y=70+(r-B.vy0)/k,hw=Math.round(vaseHW(knots,y)*k);if(hw<=0)continue;const Y=r+sv;
     px(ctx,cx-hw,Y,hw*2,1,'#243743');                                          // metal body
     px(ctx,cx-hw,Y,Math.max(1,Math.round(hw*0.5)),1,'#31505f');                // left highlight
     px(ctx,cx+Math.round(hw*0.4),Y,Math.max(1,Math.round(hw*0.6)),1,'#182833');// right shade
-    const inner=hw-6;
+    const inner=hw-wall;
     if(inner>4&&y>96&&y<268){px(ctx,cx-inner,Y,inner*2,1,'#08140f');           // dark cavity
       px(ctx,cx-Math.round(inner*0.5),Y,inner,1,'#0c1f14');}                    // faint green core
     px(ctx,cx-hw,Y,1,1,'#0a1620');px(ctx,cx+hw-1,Y,1,1,'#0a1620');}            // edge outline
-  for(const sy of [92,150,196,240]){const hw=Math.round(vaseHW(knots,sy));if(hw<=0)continue;const Y=sy+sv;
+  for(const sy of [92,150,196,240]){const hw=Math.round(vaseHW(knots,sy)*k);if(hw<=0)continue;const Y=flameY(sy)+sv;
     px(ctx,cx-hw,Y,hw*2,1,'#0e1e28');                                          // seam band
     px(ctx,cx-hw+1,Y-1,2,2,'#40707f');px(ctx,cx+hw-3,Y-1,2,2,'#40707f');}      // rivets
-  for(let y=84;y<104;y++)px(ctx,cx-1,y+sv,2,1,'rgba(60,200,255,0.25)');        // lit neck seam
-  {const hw=Math.round(vaseHW(knots,74));px(ctx,cx-hw,73+sv,hw*2,1,'#4d7f92');px(ctx,cx-hw,74+sv,hw*2,2,'#3a5f6f');}
-  pxTextC('CONTAINMENT URN',cx,304+sv,'#2f5a6a');
+  for(let y=flameY(84);y<flameY(104);y++)px(ctx,cx-1,y+sv,2,1,'rgba(60,200,255,0.25)');        // lit neck seam
+  {const hw=Math.round(vaseHW(knots,74)*k);px(ctx,cx-hw,flameY(73)+sv,hw*2,1,'#4d7f92');px(ctx,cx-hw,flameY(74)+sv,hw*2,2,'#3a5f6f');}
+  pxTextC('CONTAINMENT URN',cx,flameY(304)+sv,'#2f5a6a');
 }
 // a mutant angler-fish pup, curled up and clinging to its pocket of the urn: a bulbous
 // hunched body, an underbite full of needle teeth, and a bioluminescent lure that bobs
@@ -5831,6 +5854,7 @@ function drawNozzle(cx){
 }
 function renderFlame(){
   const o=flameObj,B=flameS;if(!o){if(state.mode==='flame')setMode('play');return;}
+  if(B.lw!==VW||B.lh!==VH)flameRefit();
   const t=state.tick;RCX=0;RCY=0;
   const sh=shake>0?(Math.random()-.5)*shake:0,sv=shake>0?(Math.random()-.5)*shake:0;
   ctx.fillStyle='#04080e';ctx.fillRect(0,0,VW,VH);
@@ -5867,8 +5891,8 @@ function renderFlame(){
     else{ctx.globalAlpha=0.85*a;ctx.fillStyle=s.col;const r=Math.max(1,s.size);ctx.fillRect(s.x+sh-r/2,s.y+sv-r/2,r,r);}}
   ctx.globalAlpha=1;
   // hint / status line + fire button glyph
-  if(B.hint>0){const a=clamp(B.hint/3,0,1);ctx.globalAlpha=a;pxTextC('STICK TO AIM  ·  HOLD FIRE TO BURN',cx,VH-34,'#6f93a6');ctx.globalAlpha=1;}
-  else pxTextC(B.onTarget?(B.firing?'BURNING':'ON TARGET — HOLD FIRE'):'MOVE ONTO A PUP',cx,VH-34,B.onTarget?'#9fe0a0':'#3a5a6a');
+  if(B.hint>0){const a=clamp(B.hint/3,0,1);ctx.globalAlpha=a;pxTextC('STICK TO AIM  ·  HOLD FIRE TO BURN',cx,B.hintY,'#6f93a6');ctx.globalAlpha=1;}
+  else pxTextC(B.onTarget?(B.firing?'BURNING':'ON TARGET — HOLD FIRE'):'MOVE ONTO A PUP',cx,B.hintY,B.onTarget?'#9fe0a0':'#3a5a6a');
   // end overlays
   if(B.doneT>0){const k=clamp(B.doneT/1.0,0,1);
     if(B.won){ctx.fillStyle='rgba(194,255,95,'+(0.22*k).toFixed(2)+')';ctx.fillRect(0,0,VW,VH);

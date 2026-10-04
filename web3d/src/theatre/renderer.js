@@ -134,13 +134,14 @@ export class TheatreRenderer {
     const halfW = (this.view.w / 2) * mmPerPx;
     if (S.vw !== a.vw || S.vh !== a.vh || Math.abs(S.halfW - halfW) > 1e-3 || f.relayout) {
       S.layout(a.vw, a.vh, halfW, OPT.HH);
+      G.uGlass.value.y = OPT.R_OUT;
+      G.uBulb.value.set(S.tube.bx, S.tube.by, S.tube.pow, 0.6);
       const fr = calibratePlate(48, halfW, OPT.HH, a.vw, a.vh);
       G.uFrame.value.set(fr.s * a.vw * 0.5 * 1.035, fr.s * a.vh * 0.5 * 1.022, 48, 5.5);
       this.reset = true;
     }
     G.uCanvas.value.set(this.size.w, this.size.h);
     G.uWin.value.set(this.view.x + this.view.w / 2, this.view.y + this.view.h / 2, mmPerPx, 0);
-    G.uBulb.value.set(halfW * OPT.BULB_PAD, OPT.HH * OPT.BULB_PAD, OPT.BULB_POW, 0.6);
     const eye = eyePos(S.head);
     G.uEye.value.set(eye[0], eye[1], eye[2]);
     G.uAtlas.value.set(a.vw, a.vh, MARGIN, NPLATES);
