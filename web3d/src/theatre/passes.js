@@ -166,7 +166,7 @@ export function makeVolume(G, T, uVolAlpha, steps) {
           const wa = exp(sigA.add(sigS).mul(dWater).negate());
           const LX = G.uLX.element(li);
           const near = select(LX.z.greaterThan(0.0), smoothstep(LX.z.mul(0.3), LX.z, dist), float(1));
-          const base = LC.rgb.mul(att.mul(spot).mul(near)).mul(wa).toVar();
+          const base = LC.rgb.mul(att.mul(spot).mul(near).mul(LX.w)).mul(wa).toVar();
           If(maxc(base).greaterThan(1e-4), () => {
             // Henyey-Greenstein, forward-scattering silt (g ~ 0.62)
             const g = float(0.62);
@@ -309,13 +309,25 @@ export function makeCompose(G, T, U) {
         // ...but the plastic still catches the room light everywhere: an even satin sheen (no
         // view-dependent lobe, so no patch) that carries the key light's shadows (irr.a) and
         // is what lifts the dark walls and makes the shadow play read
-        const sheen = keyC.mul(max(dot(N, lk), 0.0)).mul(U.uSheen).mul(select(k.equal(int(P_CARD)), float(0), float(1)));
+        // Platforms and actors are glossier than the walls behind them, so in a dark, tinted
+        // layer they still read as solid shapes against the lamp-lit back cloth
+        // (dark paint only: bright paint already reads, and the gloss would grey it out)
+        const isProp = k.equal(int(2)).or(k.equal(int(3)));
+        const dark = float(1).sub(smoothstep(float(0.12), float(0.45), maxc(alb.rgb)));
+        // the props' gloss keeps the paint's hue (a brighter version of its own colour, not a
+        // grey film), and is set per layer so it reads the same at every depth (index.js)
+        const hue = mix(vec3(1), alb.rgb.div(max(maxc(alb.rgb), 0.04)), 0.75);
+        const sheen = keyC.mul(max(dot(N, lk), 0.0)).mul(select(isProp, hue.mul(mix(U.uSheen, U.uPropSheen, dark)), vec3(U.uSheen))).mul(select(k.equal(int(P_CARD)), float(0), float(1)));
         const spec = specOf(lk, keyC).mul(kSpec).add(specOf(l1n, lanC).mul(lSpec)).add(sheen).mul(irr.a).mul(float(1).sub(side.mul(0.5)));
         // light piping in acrylic: translucent props glow along their cut edges
         const edgeGlow = alb.rgb.mul(tr).mul(abs(gx).add(abs(gy)).mul(0.9).add(side.mul(0.6))).mul(irr.rgb.add(0.05));
         const paintGlow = alb.rgb.mul(tr).mul(0.08);
+        // the moulded edges of platforms catch a thin line of light (room fill + the water's own
+        // glow, so it takes each layer's tint): shapes read even where nothing lights them
+        const edgeA = saturate(abs(gx).add(abs(gy)).mul(1.4)).mul(float(1).sub(side.mul(0.5)));
+        const rim = keyC.mul(0.5).add(G.uWaterCol.mul(2.5)).add(irr.rgb.mul(0.3)).mul(hue).mul(edgeA).mul(max(dot(N, lk), 0.25)).mul(U.uRim).mul(select(isProp, float(1), float(0)));
         const cardGlow = select(k.equal(int(P_CARD)), alb.rgb.mul(U.uCardGlow), vec3(0));   // (replaced by the faithful path below once the card has settled)
-        col.assign(diff.add(spec).add(edgeGlow).add(paintGlow).add(emi.rgb.mul(0.5)).add(cardGlow));
+        col.assign(diff.add(spec).add(rim).add(edgeGlow).add(paintGlow).add(emi.rgb.mul(0.5)).add(cardGlow));
         If(k.equal(int(P_CARD)), () => { cardAlb.assign(alb.rgb); onCard.assign(1); });
       }).Else(() => {
         // the box's back wall, behind every plate (only visible past an unfilled bleed)
@@ -574,6 +586,8 @@ export function passUniforms() {
     uDebugView: uniform(0, 'int'),
     uIrrDiv: uniform(2),
     uSheen: uniform(0.045),                                    // even satin reflection of the room light
+    uPropSheen: uniform(0.16),                                 // ...stronger on platforms + actors
+    uRim: uniform(0.5),                                        // edge catch-light on platforms + actors
     uTint: uniform(new THREE.Vector4(0, 0, 0, 0)),          // display-space wash: rgb (0..1 sRGB) + alpha
   };
 }

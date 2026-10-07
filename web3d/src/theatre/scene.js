@@ -12,7 +12,8 @@ const srgb2lin = (c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055
 // light rig (sewer-dark): the faint room fill, and the wall lamps read from the back cloth
 const KEY_I = 1.5, KEY_P = [-30, 34, 235];
 const WALL_LIFT = 3.5;      // mm the lamp's light hangs in front of the back cloth
-const WALL_GAIN = 3.4, WALL_CAP = 20, WALL_RANGE = 17, WALL_MAX = 8;
+const WALL_GAIN = 3.4, WALL_CAP = 9, WALL_RANGE = 17, WALL_MAX = 8;
+const WALL_VOL = 0.35;      // wall lamps scatter in the water at this fraction (a haze, not a fog bank)
 
 // critically-ish damped spring, integrated per frame
 class Spring {
@@ -199,6 +200,30 @@ export class TheatreScene {
     return chainLamps(out);
   }
 
+  // A wall with more lamps than light slots (a row of vent grilles) must not pick a different
+  // handful every frame: lamps are tracked from scan to scan (they slide with the back cloth's
+  // scroll), lamps already burning win ties, and a lamp entering or leaving the set fades over
+  // ~0.2 s instead of popping. Lamps out in the bleed count for less than lamps on view.
+  trackWall(cands, sc, dt) {
+    const T = this.wallT || (this.wallT = []);
+    if (!cands) { T.length = 0; return T; }
+    for (const t of T) { if (sc) { t.x -= sc[0]; t.y -= sc[1]; } t.hit = false; }
+    for (const c of cands) {
+      if (!(c.p > 0.5)) continue;
+      let best = null, bd = 16;
+      for (const t of T) { if (t.hit) continue; const d = Math.hypot(t.x - c.x, t.y - c.y); if (d < bd) { bd = d; best = t; } }
+      if (best) { Object.assign(best, c); best.hit = true; } else T.push({ ...c, w: 0, hit: true });
+    }
+    const onView = (t) => (t.x < 0 || t.y < 0 || t.x > this.vw || t.y > this.vh ? 0.5 : 1);
+    const score = (t) => (t.hit ? t.p * onView(t) * (1 + t.w) : 0);
+    T.sort((a, b) => score(b) - score(a));
+    const k = Math.min(1, dt * 7);
+    for (let i = 0; i < T.length; i++) { const t = T[i], on = t.hit && i < WALL_MAX; t.w += ((on ? 1 : 0) - t.w) * k; t.on = on; }
+    for (let i = T.length - 1; i >= 0; i--) if (!T[i].on && T[i].w < 0.02) T.splice(i, 1);
+    // the set that burns, plus a couple of slots for lamps still fading out
+    return T.filter((t) => t.w > 0.02).sort((a, b) => b.w * b.p - a.w * a.p).slice(0, WALL_MAX + 2);
+  }
+
   // ---- lights. Order matters: [0] key (room light through the glass), [1] lantern,
   // [2] lantern self-pool, then glows by strength. The first uNVL also scatter in the water.
   buildLights(info) {
@@ -237,12 +262,12 @@ export class TheatreScene {
     // wall lamps: capsule lights hanging just off the back cloth, along the painted strip. They
     // light the walls in long pools and scatter in the water, so everything floating in front
     // of them stands out as a silhouette in the glow
-    const wall = (info.wall || []).filter((e) => e.p > 0.5).sort((p, q) => q.p - p.p).slice(0, WALL_MAX);
+    const wall = this.trackWall(info.wall, info.wallScroll, info.dt || 1 / 60);
     for (const e of wall) {
       const s = this.plates[e.k].s, P = this.viewToBox(e.k, e.x, e.y, WALL_LIFT);
-      const I = Math.min(WALL_CAP, WALL_GAIN * Math.sqrt(e.p));
+      const I = Math.min(WALL_CAP, WALL_GAIN * Math.sqrt(e.p)) * e.w;
       const half = Math.hypot(e.hx, e.hy) * s;
-      L.push({ p: P, r: 1.2, c: [e.col[0] * I, e.col[1] * I, e.col[2] * I], range: WALL_RANGE + half * 0.5, dir: null, k: e.k, seg: [e.hx * s, -e.hy * s, 0], tag: 'wall' });
+      L.push({ p: P, r: 1.2, c: [e.col[0] * I, e.col[1] * I, e.col[2] * I], range: WALL_RANGE + half * 0.5, dir: null, k: e.k, seg: [e.hx * s, -e.hy * s, 0], vol: WALL_VOL, tag: 'wall' });
     }
     // glows -> small area lights hovering just in front of their plate. Neighbouring glows
     // (a row of sludge tiles, a lamp column) merge into one light per 40 px cell with a
@@ -279,7 +304,8 @@ export class TheatreScene {
     for (let i = 0; i < MAX_LIGHTS; i++) {
       const l = L[i];
       if (!l) { G.uLS.array[i].set(0, 0, 0, 0); G.uLP.array[i].set(0, 0, -999, 0); G.uLC.array[i].set(0, 0, 0, 0); G.uLD.array[i].set(0, 0, 0, -2); G.uLX.array[i].set(-1, 0, 0, 0); continue; }
-      if (l.x) G.uLX.array[i].set(l.x[0], l.x[1], l.x[2], 0); else G.uLX.array[i].set(-1, 0, 0, 0);
+      const vol = l.vol == null ? 1 : l.vol;
+      if (l.x) G.uLX.array[i].set(l.x[0], l.x[1], l.x[2], vol); else G.uLX.array[i].set(-1, 0, 0, vol);
       if (l.seg) G.uLS.array[i].set(l.seg[0], l.seg[1], l.seg[2], 1); else G.uLS.array[i].set(0, 0, 0, 0);
       G.uLP.array[i].set(l.p[0], l.p[1], l.p[2], l.r);
       G.uLC.array[i].set(l.c[0], l.c[1], l.c[2], l.range);

@@ -38,7 +38,7 @@ export class GPUState {
     this.uLP = uniformArray(arr4(MAX_LIGHTS), 'vec4');
     this.uLC = uniformArray(arr4(MAX_LIGHTS), 'vec4');
     this.uLD = uniformArray(arr4(MAX_LIGHTS), 'vec4');
-    // per-light extras: plate it is carried on · carrier exclusion radius mm · volumetric near-field fade mm
+    // per-light extras: plate it is carried on · carrier exclusion radius mm · volumetric near-field fade mm · volumetric weight
     this.uLX = uniformArray(arr4(MAX_LIGHTS), 'vec4');
     // capsule lights (wall lamp strips): half-axis of the segment in mm · 1 if a capsule
     this.uLS = uniformArray(arr4(MAX_LIGHTS), 'vec4');
