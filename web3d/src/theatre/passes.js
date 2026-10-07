@@ -54,9 +54,11 @@ export function makeIrradiance(G, T, uScroll, uIrrAlpha, uIrrReset, uKeySamples)
       const sigE = G.uSigA.add(G.uSigS);
       loop(G.uNL, 'irl', (i) => {
         const LP = G.uLP.element(i), LC = G.uLC.element(i), LD = G.uLD.element(i);
-        // key + lantern get several stratified samples per frame, glows one
-        const ns = select(i.lessThan(2), uKeySamples, int(1));
-        const nsF = select(i.lessThan(2), float(uKeySamples), float(1)).toVar();
+        const LS = G.uLS.element(i);
+        // key + lantern get several stratified samples per frame, wall-lamp strips two, glows one
+        const nWall = select(LS.w.greaterThan(0.5), int(2), int(1));
+        const ns = select(i.lessThan(2), uKeySamples, nWall);
+        const nsF = float(ns).toVar();
         const wS = float(1).div(nsF);
         const rot = vec2(ign(screenCoordinate.xy.add(vec2(float(i).mul(17.0), 3.0)), G.uFrameIdx),
           ign(screenCoordinate.xy.add(vec2(5.0, float(i).mul(29.0))), G.uFrameIdx.add(1013.0)));
@@ -70,7 +72,9 @@ export function makeIrradiance(G, T, uScroll, uIrrAlpha, uIrrReset, uKeySamples)
           const fsi = float(si);
           const ang = fsi.mul(2.39996323).add(rot.x.mul(2 * PI));
           const rad = sqrt(fsi.add(rot.y).div(nsF)).mul(LP.w);
-          const S = LP.xyz.add(t1.mul(cos(ang).mul(rad))).add(t2.mul(sin(ang).mul(rad))).toVar();
+          // capsule lights (wall strips) also spread their samples along the strip, stratified
+          const along = fsi.add(fract(rot.x.mul(7.31).add(rot.y.mul(3.7)))).div(nsF).mul(2).sub(1);
+          const S = LP.xyz.add(t1.mul(cos(ang).mul(rad))).add(t2.mul(sin(ang).mul(rad))).add(LS.xyz.mul(along)).toVar();
           const dv = S.sub(P);
           const dist = length(dv);
           const l = dv.div(dist);
@@ -149,7 +153,9 @@ export function makeVolume(G, T, uVolAlpha, steps) {
         const Lin = vec3(0).toVar();
         loop(G.uNVL, 'vli', (li) => {
           const LP = G.uLP.element(li), LC = G.uLC.element(li), LD = G.uLD.element(li);
-          const toL = LP.xyz.sub(X);
+          // a point along a capsule light (wall strip), different per pixel and step
+          const LPs = LP.xyz.add(G.uLS.element(li).xyz.mul(fract(j.mul(1.618).add(float(i).mul(0.381)).add(float(li).mul(0.27))).mul(2).sub(1))).toVar();
+          const toL = LPs.sub(X);
           const dist = length(toL);
           const l = toL.div(dist);
           const rng = LC.w;
@@ -166,7 +172,7 @@ export function makeVolume(G, T, uVolAlpha, steps) {
             const g = float(0.62);
             const ct = dot(l, d.negate()).negate();
             const ph = float(1).sub(g.mul(g)).div(pow(float(1).add(g.mul(g)).sub(g.mul(2).mul(ct)), 1.5)).mul(1 / (4 * PI));
-            const vis = G.shadow(X, LP.xyz, -1, T.albedo);
+            const vis = G.shadow(X, LPs, -1, T.albedo);
             Lin.addAssign(base.mul(vis).mul(ph));
           });
         });

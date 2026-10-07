@@ -26,7 +26,7 @@ export class PlateAtlas {
     this.alb = document.createElement('canvas');
     this.emi = document.createElement('canvas');
     this.actx = this.alb.getContext('2d', { willReadFrequently: false });
-    this.ectx = this.emi.getContext('2d');
+    this.ectx = this.emi.getContext('2d', { willReadFrequently: true });   // the wall-lamp scan reads it back
     this.hud = document.createElement('canvas');
     this.hctx = this.hud.getContext('2d');
     this.vw = 0; this.vh = 0; this.pw = 0; this.ph = 0;

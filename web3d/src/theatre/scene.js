@@ -9,6 +9,11 @@ const hex = (h) => { h = (h || '#000').replace('#', ''); if (h.length === 3) h =
   return [parseInt(h.slice(0, 2), 16) / 255, parseInt(h.slice(2, 4), 16) / 255, parseInt(h.slice(4, 6), 16) / 255]; };
 const srgb2lin = (c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
 
+// light rig (sewer-dark): the faint room fill, and the wall lamps read from the back cloth
+const KEY_I = 1.5, KEY_P = [-30, 34, 235];
+const WALL_LIFT = 3.5;      // mm the lamp's light hangs in front of the back cloth
+const WALL_GAIN = 3.4, WALL_CAP = 20, WALL_RANGE = 17, WALL_MAX = 8;
+
 // critically-ish damped spring, integrated per frame
 class Spring {
   constructor(k = 38, c = 7.5) { this.x = 0; this.v = 0; this.k = k; this.c = c; this.target = 0; }
@@ -122,16 +127,89 @@ export class TheatreScene {
     }
   }
 
+  // ---- wall lights: the strip lamps, neon and glowing grilles painted into the back cloth's
+  // emissive layer are real light sources. The emissive plate is read back at 1/4 res, bright
+  // cells are joined into blobs, and each blob becomes a capsule light lying along it (a long
+  // strip is cut into a few segments). Returns emitters in view px of plate k.
+  scanWall(atlas, k = P_BACK) {
+    const C = 4, pw = atlas.pw, ph = atlas.ph;
+    if (!pw || !ph) return [];
+    const gw = Math.floor(pw / C), gh = Math.floor(ph / C);
+    let d;
+    try { d = atlas.ectx.getImageData(0, k * ph, gw * C, gh * C).data; } catch { return []; }
+    const W = gw * C, n = gw * gh;
+    if (!this._wl || this._wl.length !== n) { this._wl = new Float32Array(n); this._wr = new Float32Array(n * 3); this._wq = new Int32Array(n); this._wm = new Uint8Array(n); }
+    const lum = this._wl, rgb = this._wr, seen = this._wm, Q = this._wq;
+    lum.fill(0); rgb.fill(0); seen.fill(0);
+    const lut = this._lut || (this._lut = Float32Array.from({ length: 256 }, (_, i) => srgb2lin(i / 255)));
+    for (let y = 0; y < gh * C; y++) {
+      const row = (y / C | 0) * gw, o = y * W * 4;
+      for (let x = 0; x < W; x++) {
+        const i = o + x * 4, a = d[i + 3];
+        if (a < 8) continue;
+        // the compose pass shows emissive paint at its full (unpremultiplied) colour wherever it
+        // covers, so that is what the lamp's light carries too; faint halos count a little less
+        const cov = Math.min(1, a / 48), r = lut[d[i]] * cov, g = lut[d[i + 1]] * cov, b = lut[d[i + 2]] * cov;
+        const c = row + (x / C | 0);
+        rgb[c * 3] += r; rgb[c * 3 + 1] += g; rgb[c * 3 + 2] += b;
+        lum[c] += 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      }
+    }
+    const thr = 0.06 * C * C;                    // a cell that is at least ~6% lit lamp
+    const out = [];
+    for (let s0 = 0; s0 < n; s0++) {
+      if (seen[s0] || lum[s0] < thr) continue;
+      // flood fill one blob (8-connected), accumulating power-weighted moments
+      let qh = 0, qt = 0; Q[qt++] = s0; seen[s0] = 1;
+      let w = 0, mx = 0, my = 0, mxx = 0, myy = 0, mxy = 0, cr = 0, cg = 0, cb = 0;
+      const cells = [];
+      while (qh < qt) {
+        const c = Q[qh++], cx = c % gw, cy = (c / gw) | 0, l = lum[c];
+        const X = (cx + 0.5) * C - MARGIN, Y = (cy + 0.5) * C - MARGIN;
+        w += l; mx += X * l; my += Y * l; mxx += X * X * l; myy += Y * Y * l; mxy += X * Y * l;
+        cr += rgb[c * 3]; cg += rgb[c * 3 + 1]; cb += rgb[c * 3 + 2];
+        cells.push(X, Y, l);
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const nx = cx + dx, ny = cy + dy;
+          if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue;
+          const nc = ny * gw + nx;
+          if (!seen[nc] && lum[nc] >= thr) { seen[nc] = 1; Q[qt++] = nc; }
+        }
+      }
+      mx /= w; my /= w;
+      const sxx = mxx / w - mx * mx, syy = myy / w - my * my, sxy = mxy / w - mx * my;
+      // principal axis of the blob
+      const tr = sxx + syy, det = sxx * syy - sxy * sxy, l1 = tr / 2 + Math.sqrt(Math.max(0, tr * tr / 4 - det));
+      let ax = sxy, ay = l1 - sxx;
+      if (Math.abs(ax) + Math.abs(ay) < 1e-6) { ax = sxx >= syy ? 1 : 0; ay = sxx >= syy ? 0 : 1; }
+      const al = Math.hypot(ax, ay); ax /= al; ay /= al;
+      let t0 = 1e9, t1 = -1e9;
+      for (let i = 0; i < cells.length; i += 3) { const t = (cells[i] - mx) * ax + (cells[i + 1] - my) * ay; t0 = Math.min(t0, t); t1 = Math.max(t1, t); }
+      t0 -= C / 2; t1 += C / 2;
+      const len = t1 - t0, segs = Math.max(1, Math.ceil(len / 90));
+      const cs = cr + cg + cb || 1, col = [cr / cs * 3, cg / cs * 3, cb / cs * 3];
+      for (let j = 0; j < segs; j++) {
+        const a0 = t0 + (len * j) / segs, a1 = t0 + (len * (j + 1)) / segs, am = (a0 + a1) / 2;
+        // power of the cells that fall in this segment
+        let pw2 = 0;
+        for (let i = 0; i < cells.length; i += 3) { const t = (cells[i] - mx) * ax + (cells[i + 1] - my) * ay; if (t >= a0 - C / 2 && t < a1 + C / 2) pw2 += cells[i + 2]; }
+        out.push({ k, x: mx + ax * am, y: my + ay * am, hx: ax * (a1 - a0) / 2, hy: ay * (a1 - a0) / 2, p: pw2 / (C * C), col });
+      }
+    }
+    return chainLamps(out);
+  }
+
   // ---- lights. Order matters: [0] key (room light through the glass), [1] lantern,
   // [2] lantern self-pool, then glows by strength. The first uNVL also scatter in the water.
   buildLights(info) {
     const L = [];
-    // room key light: far above the viewer's shoulder, shining down through the faceplate.
-    // Big angular size -> soft, distance-true penumbrae. Warm-white, attenuated by the water.
-    // the stage's key light dims with every environment you descend (darkness is a mechanic
-    // in this game); the Floodlight Rig upgrade lifts it again
-    const kI = 4.4 * (info.keyScale == null ? 1 : info.keyScale);
-    L.push({ p: [-46, 82, 235], r: 26, c: [1.0 * kI, 0.95 * kI, 0.86 * kI], range: -1, dir: null, k: -1, tag: 'key' });
+    // room fill: a faint, cold light from just off the viewer's shoulder, nearly head-on through
+    // the faceplate. It is not what lights the sewer (the wall lamps, glows and your lantern
+    // do); it only keeps the stage readable in the dark gaps and gives every prop a short,
+    // soft, distance-true shadow on the plates behind it. It dims with every environment you
+    // descend (darkness is a mechanic in this game); the Floodlight Rig upgrade lifts it again
+    const kI = KEY_I * (info.keyScale == null ? 1 : info.keyScale);
+    L.push({ p: KEY_P, r: 22, c: [0.78 * kI, 0.9 * kI, 1.0 * kI], range: -1, dir: null, k: -1, tag: 'key' });
     const lan = info.lantern;
     let selfPool = null;
     if (lan) {
@@ -156,6 +234,16 @@ export class TheatreScene {
       L.push({ p: P, r: 1.4, c: [0.85 * 3.6, 0.9 * 3.6, 1.0 * 3.6], range: 140 * this.plates[P_ACT].s, dir: [0.96, 0, -0.28, Math.cos(0.55)], k: P_ACT, x: [P_ACT, 6 * this.plates[P_ACT].s, 9], tag: 'lantern' });
       selfPool = { p: [P[0] - 6, P[1], P[2] + 1], r: 1, c: [0.4, 0.5, 0.6], range: 30 * this.plates[P_ACT].s, dir: null, k: P_ACT, x: [P_ACT, 14 * this.plates[P_ACT].s, 0], tag: 'lantern' };
     }
+    // wall lamps: capsule lights hanging just off the back cloth, along the painted strip. They
+    // light the walls in long pools and scatter in the water, so everything floating in front
+    // of them stands out as a silhouette in the glow
+    const wall = (info.wall || []).filter((e) => e.p > 0.5).sort((p, q) => q.p - p.p).slice(0, WALL_MAX);
+    for (const e of wall) {
+      const s = this.plates[e.k].s, P = this.viewToBox(e.k, e.x, e.y, WALL_LIFT);
+      const I = Math.min(WALL_CAP, WALL_GAIN * Math.sqrt(e.p));
+      const half = Math.hypot(e.hx, e.hy) * s;
+      L.push({ p: P, r: 1.2, c: [e.col[0] * I, e.col[1] * I, e.col[2] * I], range: WALL_RANGE + half * 0.5, dir: null, k: e.k, seg: [e.hx * s, -e.hy * s, 0], tag: 'wall' });
+    }
     // glows -> small area lights hovering just in front of their plate. Neighbouring glows
     // (a row of sludge tiles, a lamp column) merge into one light per 40 px cell with a
     // sub-linear intensity, so dense glow fields light the stage instead of flooding it.
@@ -164,6 +252,7 @@ export class TheatreScene {
       if (!(g.a > 0.02) || !(g.r > 1)) continue;
       if (g.x < -60 || g.y < -60 || g.x > this.vw + 60 || g.y > this.vh + 60) continue;
       const k = g.k == null ? P_ACT : g.k;
+      if (k === P_BACK && info.wall) continue;      // already lit by the wall-lamp scan
       const key = k + ':' + Math.floor(g.x / 40) + ':' + Math.floor(g.y / 40);
       const rgb = String(g.col || '255,255,255').split(',').map((n) => (+n || 0) / 255);
       let c = cells.get(key);
@@ -189,8 +278,9 @@ export class TheatreScene {
     const L = this.lights;
     for (let i = 0; i < MAX_LIGHTS; i++) {
       const l = L[i];
-      if (!l) { G.uLP.array[i].set(0, 0, -999, 0); G.uLC.array[i].set(0, 0, 0, 0); G.uLD.array[i].set(0, 0, 0, -2); G.uLX.array[i].set(-1, 0, 0, 0); continue; }
+      if (!l) { G.uLS.array[i].set(0, 0, 0, 0); G.uLP.array[i].set(0, 0, -999, 0); G.uLC.array[i].set(0, 0, 0, 0); G.uLD.array[i].set(0, 0, 0, -2); G.uLX.array[i].set(-1, 0, 0, 0); continue; }
       if (l.x) G.uLX.array[i].set(l.x[0], l.x[1], l.x[2], 0); else G.uLX.array[i].set(-1, 0, 0, 0);
+      if (l.seg) G.uLS.array[i].set(l.seg[0], l.seg[1], l.seg[2], 1); else G.uLS.array[i].set(0, 0, 0, 0);
       G.uLP.array[i].set(l.p[0], l.p[1], l.p[2], l.r);
       G.uLC.array[i].set(l.c[0], l.c[1], l.c[2], l.range);
       if (l.dir) G.uLD.array[i].set(l.dir[0], l.dir[1], l.dir[2], l.dir[3]); else G.uLD.array[i].set(0, 0, -1, -2);
@@ -224,6 +314,57 @@ export class TheatreScene {
     G.uAmbient.value.set(lin[0] * 0.55 + 0.006, lin[1] * 0.55 + 0.008, lin[2] * 0.55 + 0.01);
     G.uDye.value.set(this.water.dye[0], this.water.dye[1], this.water.dye[2], pol);
   }
+}
+
+// Strip lamps paint as a row of separate bulbs. Bulbs that line up (each within GAP px of the
+// row, and within 6 px of its axis) are chained into one capsule light up to MAXLEN px long, so
+// the whole strip throws one continuous band of light and costs one light, not five.
+function chainLamps(segs, GAP = 76, MAXLEN = 170) {
+  segs.sort((a, b) => b.p - a.p);
+  const used = new Uint8Array(segs.length), out = [];
+  for (let i = 0; i < segs.length; i++) {
+    if (used[i]) continue;
+    used[i] = 1;
+    const A = segs[i], mem = [A];
+    let ax = 0, ay = 0;
+    const hl = Math.hypot(A.hx, A.hy);
+    if (hl > 6) { ax = A.hx / hl; ay = A.hy / hl; }
+    const span = (list) => {
+      let t0 = 1e9, t1 = -1e9;
+      for (const m of list) {
+        const t = (m.x - A.x) * ax + (m.y - A.y) * ay, h = Math.abs(m.hx * ax + m.hy * ay);
+        t0 = Math.min(t0, t - h); t1 = Math.max(t1, t + h);
+      }
+      return [t0, t1];
+    };
+    for (;;) {
+      let best = -1, bd = GAP;
+      for (let j = 0; j < segs.length; j++) {
+        if (used[j]) continue;
+        const B = segs[j];
+        let dn = 1e9;
+        for (const m of mem) dn = Math.min(dn, Math.hypot(B.x - m.x, B.y - m.y));
+        if (dn >= bd) continue;
+        if (ax || ay) {
+          const perp = Math.abs((B.x - A.x) * ay - (B.y - A.y) * ax);
+          if (perp > 6) continue;
+          const [t0, t1] = span([...mem, B]);
+          if (t1 - t0 > MAXLEN) continue;
+        }
+        best = j; bd = dn;
+      }
+      if (best < 0) break;
+      const B = segs[best];
+      if (!ax && !ay) { const l = Math.hypot(B.x - A.x, B.y - A.y) || 1; ax = (B.x - A.x) / l; ay = (B.y - A.y) / l; }
+      used[best] = 1; mem.push(B);
+    }
+    if (mem.length === 1) { out.push(A); continue; }
+    const [t0, t1] = span(mem), tm = (t0 + t1) / 2;
+    let p = 0; const col = [0, 0, 0];
+    for (const m of mem) { p += m.p; for (let c = 0; c < 3; c++) col[c] += m.col[c] * m.p; }
+    out.push({ k: A.k, x: A.x + ax * tm, y: A.y + ay * tm, hx: ax * (t1 - t0) / 2, hy: ay * (t1 - t0) / 2, p, col: col.map((c) => c / p) });
+  }
+  return out;
 }
 
 export { hex, srgb2lin };
