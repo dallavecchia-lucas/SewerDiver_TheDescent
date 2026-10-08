@@ -113,7 +113,6 @@ function beamCone(c,x,y,lx,ly,R,half,col,a){const ang=Math.atan2(ly,lx);
   c.save();c.beginPath();c.moveTo(x,y);c.arc(x,y,R,ang-half,ang+half);c.closePath();c.clip();
   const g=c.createRadialGradient(x,y,0,x,y,R);g.addColorStop(0,'rgba('+col+','+a+')');g.addColorStop(0.5,'rgba('+col+','+(a*0.5)+')');g.addColorStop(1,'rgba('+col+',0)');
   c.fillStyle=g;c.fillRect(x-R,y-R,R*2,R*2);c.restore();}
-function ri(a,b){return a+Math.random()*(b-a);}
 function hex2rgb(h){h=h.replace('#','');return h.length===3?[parseInt(h[0]+h[0],16),parseInt(h[1]+h[1],16),parseInt(h[2]+h[2],16)]:[parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)];}
 function shade(h,f){const c=hex2rgb(h);return `rgb(${clamp(c[0]*f|0,0,255)},${clamp(c[1]*f|0,0,255)},${clamp(c[2]*f|0,0,255)})`;}
 // HSL -> #rrggbb (used by the per-play procedural ore/item palette generator)
@@ -148,7 +147,7 @@ const ORE_ARCH = {               // default fallback shapes (overridden per play
 };
 // ----- per-play procedural-theme state (set by genTheme(), read across the renderer) -----
 let RUN_SEED = 1;     // mixed into the ore RNG so masses differ every play
-let THEME = [];       // THEME[tier] = {key,bg,tile,scenery,kelp,pal,oreShapes}
+let THEME = [];       // THEME[tier] = {key,bg,tile,scenery,kelp,pal,oreShapes,floatForms}
 let ICONSHAPE = {};   // id -> 'a'|'b'|'c' : which hand-drawn icon shape a mix/ref item uses this play
 // Shade level -> brightness multiplier applied to the resource colour.
 // 1 dark edge · 2 base · 3 lit edge · 4 specular corner · 5 grime speck.
@@ -216,6 +215,55 @@ function genSlab(r){
   return o;
 }
 
+// cubes: 2-3 axis-aligned blocks stacked in steps (a pyrite / salt habit): hard right angles, the
+// one mass with no diagonal edge at all. Each block keeps its own lit top and shaded right face.
+function genCubes(r){
+  const o=_occ(), boxes=[];
+  const s1=6+(r()*3|0), x1=1+(r()*2|0); boxes.push([x1,GH-s1,s1,s1]);
+  const s2=4+(r()*2|0), x2=Math.min(GW-s2,x1+s1-1); boxes.push([x2,GH-s2,s2,s2]);
+  if(r()<0.6){const s3=4+(r()*2|0); boxes.push([x1+1+((r()*Math.max(1,s1-s3))|0),Math.max(0,GH-s1-s3+1),s3,s3]);}
+  for(const [x0,y0,w,h] of boxes)for(let y=y0;y<y0+h;y++)for(let x=x0;x<x0+w;x++)_set(o,x,y);
+  o.boxes=boxes; return o;
+}
+// spire: ONE tall obelisk grown to the full grid height on a low rubble foot: the opposite of the
+// crystal cluster (one point, not a crown of shards). Shaded as two facets either side of a ridge.
+function genSpire(r){
+  const o=_occ(), cx=7.5+(r()*2-1), lean=r()*0.5-0.25, hb=3+r()*0.8;
+  for(let i=0;i<GH;i++){const hw=Math.max(0.5,hb*(1-(i/(GH-1))*0.92)), c=cx+lean*i;
+    for(let x=Math.round(c-hw);x<=Math.round(c+hw);x++) _set(o,x,GH-1-i);}
+  for(let x=Math.round(cx-5);x<=Math.round(cx+5);x++) if(r()<0.75) _set(o,x,GH-1);
+  o.ax=cx; o.lean=lean; return o;
+}
+// geode: a round shell cracked open on a bright crystal-lined hollow (dark rim, sparkling core),
+// so it reads as a ring even where it shares a colour with a solid round mass
+function genGeode(r){
+  const o=_occ(), cx=8+(r()*1.2-0.6), cy=7.4, rx=6+r()*0.8, ry=5.8+r()*0.6;
+  for(let y=0;y<GH;y++)for(let x=0;x<GW;x++){const dx=(x+0.5-cx)/rx, dy=(y+0.5-cy)/ry; if(dx*dx+dy*dy<=1) _set(o,x,y);}
+  o.cav=[cx-0.6+r()*0.6, cy-0.4, 2.9+r()*0.7]; return o;
+}
+// nodules: 4-6 separate pebbles with daylight between them: the only broken, scattered silhouette
+function genNodules(r){
+  const o=_occ(), pts=[], n=4+(r()*3|0);
+  for(let k=0,tries=0;k<n&&tries<300;tries++){
+    const rad=1.5+r()*1.1, x=2.5+r()*(GW-5), y=k<2?GH-rad:3+r()*(GH-5);
+    if(pts.every(p=>Math.hypot(p[0]-x,p[1]-y)>p[2]+rad+0.9)){pts.push([x,y,rad]);k++;}
+  }
+  for(const [x0,y0,rad] of pts)for(let y=0;y<GH;y++)for(let x=0;x<GW;x++) if((x+0.5-x0)**2+(y+0.5-y0)**2<=rad*rad) _set(o,x,y);
+  return o;
+}
+
+// vein: a thick zigzag seam climbing the face on the diagonal, with one side branch: the only
+// silhouette that is mostly empty space crossed by a line
+function genVein(r){
+  const o=_occ(), up=r()<0.5?1:-1, x0=up>0?2+r()*2:GW-3-r()*2;
+  let x=x0;
+  for(let y=GH-1;y>=1;y--){ if(((GH-1-y)%3)===2) x+=up*(r()<0.5?2:-0.5); x+=up*0.55;
+    const hw=y>GH-4?1.6:1.15; for(let xx=Math.round(x-hw);xx<=Math.round(x+hw);xx++) _set(o,xx,y);
+    if(y===(GH>>1)){ let bx=x; for(let k=1;k<5;k++){ bx-=up*0.9; _set(o,Math.round(bx),y-k); _set(o,Math.round(bx)+up,y-k); } } }
+  for(let xx=Math.round(x0-2);xx<=Math.round(x0+2);xx++) _set(o,xx,GH-1);
+  return o;
+}
+
 /* ---------- 4. SHADING + PER-ARCHETYPE DETAIL  (occupancy -> shade levels 1..5) ---------- */
 // Light is treated as coming from the top-left: a filled cell with an empty up/left neighbor is "lit"
 // (shade 3, or 4 at a convex corner with no up/left/up-left neighbor at all); one with an empty
@@ -245,6 +293,17 @@ function shadeMass(o,r,arch){
     for(let y=0;y<GH;y++){ let done=false; for(let x=0;x<GW;x++){ const i=y*GW+x; if(out[i]>=2){ out[i]=4; if(out[i+1]>=2)out[i+1]=3; if(out[(y+1)*GW+x]>=2)out[(y+1)*GW+x]=3; done=true; break; } } if(done)break; }
   } else if(arch==='slab'){
     for(let y=2;y<GH;y++){ let rowHas=false; for(let x=0;x<GW;x++) if(_get(o,x,y)) rowHas=true; if(rowHas&&(y%3===0)){ for(let x=0;x<GW;x++){ const i=y*GW+x; if(out[i]>=2)out[i]=1; } } }
+  } else if(arch==='cubes'){   // every block repaints its own faces, back to front
+    for(const [x0,y0,w,h] of o.boxes)for(let y=y0;y<y0+h;y++)for(let x=x0;x<x0+w;x++){
+      out[y*GW+x]=(y===y0&&x===x0)?4:(y===y0||x===x0)?3:(x===x0+w-1||y===y0+h-1)?1:2; }
+    for(const [x0,y0] of o.boxes) if(out[(y0+1)*GW+x0+1]===2) out[(y0+1)*GW+x0+1]=4;
+  } else if(arch==='spire'){   // lit left facet, ridge highlight, dark right facet
+    for(let y=0;y<GH;y++){ const c=o.ax+o.lean*(GH-1-y), rx=Math.round(c);
+      for(let x=0;x<GW;x++){ const i=y*GW+x; if(out[i]<2||out[i]===5)continue; out[i]=x===rx?4:x<rx?3:2; } }
+  } else if(arch==='geode'){   // the hollow: dark rim, then crystals sparkling 4/3
+    const [gx,gy,gr]=o.cav;
+    for(let y=0;y<GH;y++)for(let x=0;x<GW;x++){ const i=y*GW+x; if(!out[i])continue; const d=Math.hypot(x+0.5-gx,y+0.5-gy);
+      if(d<gr) out[i]=d>gr-1.1?1:(((x+y)&1)||r()<0.3)?4:3; }
   }
   return out;
 }
@@ -260,7 +319,9 @@ function genOreLevels(id,variant){
   const arch=oreShapeFor(id);
   const r=_rng((_seedStr(id)^Math.imul(variant+1,0x9E3779B1)^RUN_SEED)>>>0);
   let o;
-  switch(arch){ case 'crystal':o=genCrystal(r);break; case 'glob':o=genGlob(r);break; case 'slab':o=genSlab(r);break; default:o=genChunk(r); }
+  switch(arch){ case 'crystal':o=genCrystal(r);break; case 'glob':o=genGlob(r);break; case 'slab':o=genSlab(r);break;
+    case 'cubes':o=genCubes(r);break; case 'spire':o=genSpire(r);break; case 'geode':o=genGeode(r);break; case 'nodules':o=genNodules(r);break; case 'vein':o=genVein(r);break;
+    default:o=genChunk(r); }
   return shadeMass(o,r,arch);
 }
 let _oreLv={};
@@ -311,7 +372,29 @@ function plotShimmer(X,Y,face,perp,par,col){
   px(ctx,X+rx,Y+ry,1,1,col);
 }
 
+// A floating resource's look: its layer's planned form (riPlan) and its RES colour. Saves made
+// before the plan carried no floatForms and fall back to the environment's own FRGen form.
+function floatLook(id){
+  const T=THEME[idTier(id)-1], key=(T&&T.key&&FRGen.BY_KEY[T.key])?T.key:'cybersewer', s=idSlot(id);
+  return {key, variant:Math.max(0,'abc'.indexOf(s)), form:(T&&T.floatForms&&T.floatForms[s])||FRGen.BY_KEY[key].f, col:RES[id].col};
+}
+// ---------- RENDERER C: SVG icon of a floating resource, the same FRGen sprite it has in the water ----------
+const _floatSvg=new Map();
+function floatSVG(id,sz){
+  const lk=floatLook(id), ck=lk.form+'|'+lk.col+'|'+lk.variant;
+  let body=_floatSvg.get(ck);
+  if(!body){
+    const spec=FRGen.make(lk.key,lk.variant,FRGen._hash(lk.key+':'+lk.variant),lk);
+    let x0=99,y0=99,x1=0,y1=0,rects='';
+    for(const p of spec.px){x0=Math.min(x0,p[0]);y0=Math.min(y0,p[1]);x1=Math.max(x1,p[0]+p[2]);y1=Math.max(y1,p[1]+p[3]);
+      rects+='<rect x="'+p[0]+'" y="'+p[1]+'" width="'+p[2]+'" height="'+p[3]+'" fill="'+p[4]+'"/>';}
+    const side=Math.max(x1-x0,y1-y0)+2, vx=(x0+x1-side)/2, vy=(y0+y1-side)/2;   // square box around the sprite
+    body=[vx+' '+vy+' '+side+' '+side,rects];_floatSvg.set(ck,body);
+  }
+  return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="'+body[0]+'" shape-rendering="crispEdges">'+body[1]+'</svg>';
+}
 function iconSVG(id,sz){if(RES[id].kind==='raw')return oreGridSVG(id,sz);   // raw-ore icons come from the procedural ore engine
+  if(RES[id].kind==='mix')return floatSVG(id,sz);                             // floating-resource icons are their FRGen sprite
   const r=RES[id],c=r.col,d=shade(c,0.45),l=shade(c,1.6),m=shade(c,1.15),deep=shade(c,0.28),k=r.kind;
   const tier=idTier(id)-1, va=iconVar(id);
   let inner='';
@@ -319,10 +402,6 @@ function iconSVG(id,sz){if(RES[id].kind==='raw')return oreGridSVG(id,sz);   // r
     if(va==='a') inner='<polygon points="7,1 11,7 8.5,15 6,15 4,7" fill="'+c+'"/><polygon points="7,1 11,7 7,7.5" fill="'+l+'"/><polygon points="7,7.5 8.5,15 6,15" fill="'+d+'"/><polygon points="4,7 7,7.5 6,15" fill="'+m+'"/><polygon points="11,4 13.5,8 12,12 10.5,8" fill="'+m+'"/><polygon points="11,4 13.5,8 11,8.4" fill="'+l+'"/>';
     else if(va==='b') inner='<path d="M3 9 L5 4 L9 3 L13 6 L12 12 L6 13 Z" fill="'+c+'"/><path d="M3 9 L5 4 L9 3 L8 8 Z" fill="'+l+'"/><path d="M8 8 L13 6 L12 12 Z" fill="'+d+'"/><circle cx="6.5" cy="9" r="1.2" fill="'+l+'" opacity="0.6"/><path d="M8 8 L6 13 L12 12 Z" fill="'+deep+'" opacity="0.5"/>';
     else inner='<polygon points="8,0.5 11,5 10,15 6,15 5,5" fill="'+c+'"/><polygon points="8,0.5 11,5 8,5.5" fill="'+l+'"/><polygon points="5,5 8,5.5 8,15 6,15" fill="'+m+'"/><polygon points="8,5.5 11,5 10,15 8,15" fill="'+d+'"/><line x1="8" y1="2" x2="8" y2="14" stroke="'+l+'" stroke-width="0.5" opacity="0.5"/>';
-  } else if(k==='mix'){
-    if(va==='a') inner='<rect x="6.3" y="1" width="3.4" height="3" rx="0.5" fill="'+d+'"/><rect x="6.8" y="1.4" width="2.4" height="0.7" fill="'+l+'"/><path d="M5 4 H11 L13 11 a5 5 0 0 1 -10 0 Z" fill="'+c+'"/><path d="M3.4 9.5 a5 5 0 0 0 9.2 0 Z" fill="'+d+'" opacity="0.6"/><ellipse cx="6.5" cy="7.5" rx="1" ry="1.8" fill="'+l+'" opacity="0.55"/><circle cx="9" cy="11" r="0.8" fill="'+l+'" opacity="0.8"/><circle cx="7" cy="12" r="0.6" fill="'+l+'" opacity="0.6"/>';
-    else if(va==='b') inner='<rect x="4.5" y="2.5" width="7" height="11" rx="1.5" fill="'+c+'"/><rect x="4.5" y="2.5" width="2" height="11" rx="1" fill="'+l+'" opacity="0.5"/><rect x="6.5" y="1.2" width="3" height="1.8" rx="0.5" fill="'+d+'"/><rect x="5.5" y="5" width="5" height="1.3" fill="'+l+'" opacity="0.7"/><rect x="5.5" y="7.5" width="5" height="1.3" fill="'+d+'"/><rect x="5.5" y="10" width="5" height="1.3" fill="'+l+'" opacity="0.5"/>';
-    else inner='<circle cx="8" cy="8" r="5.5" fill="none" stroke="'+d+'" stroke-width="1.4"/><circle cx="8" cy="8" r="3.6" fill="'+c+'"/><circle cx="6.6" cy="6.6" r="1.3" fill="'+l+'" opacity="0.7"/><path d="M8 2.5 A5.5 5.5 0 0 1 13.5 8" stroke="'+l+'" stroke-width="0.8" fill="none" opacity="0.6"/><circle cx="13" cy="5.5" r="0.9" fill="'+m+'"/>';
   } else {
     if(va==='a') inner='<polygon points="8,1.2 14,4.6 14,11.4 8,14.8 2,11.4 2,4.6" fill="'+c+'"/><polygon points="8,1.2 14,4.6 8,8" fill="'+l+'"/><polygon points="8,8 14,11.4 8,14.8" fill="'+d+'"/><polygon points="8,1.2 2,4.6 8,8" fill="'+m+'"/><circle cx="8" cy="8" r="2.4" fill="'+deep+'"/><circle cx="8" cy="8" r="1.1" fill="'+l+'"/>';
     else if(va==='b'){let pts='';for(let i=0;i<10;i++){const a=-Math.PI/2+i*Math.PI/5,rr=i%2?2.6:6.2,x=8+Math.cos(a)*rr,y=8+Math.sin(a)*rr;pts+=x.toFixed(1)+','+y.toFixed(1)+' ';}
@@ -512,11 +591,13 @@ const ARCHETYPES={
  *           racks/tanks) so this file is drop-in TODAY with zero art work.
  *   tilex — preferred EXTENDED tile painter (doc §8.5); `tile` likewise
  *           always holds an existing painter (metal/bio/toxic/tech/concrete).
- *   float — floating-resource form for this archetype's 3 mixer pickups:
- *           canister | bulb | jelly | pod   (drawMixer branch, doc §8.3)
+ *   float — the archetype's SIGNATURE floating-resource form: the resource
+ *           plan (riPlanEnv) prefers it, but every layer's 3 floats get 3
+ *           different forms from all 14 FRGen forms (resource-identity.md)
  *   plat  — 3 platform-motif tags overlaid by drawTile (doc §8.2)
- *   shapes — 3 entries (was 2) from this build's 4 ore forms:
- *           chunk | crystal | glob | slab   (genOreLevels, line ~1369)
+ *   shapes — the archetype's SIGNATURE ore forms, preferred by the resource
+ *           plan; the full set is chunk | cubes | crystal | spire | glob |
+ *           geode | nodules | slab | vein   (genOreLevels, RI_ORE_FAM)
  *
  * INSTALL (1 line, after the ARCHETYPES literal closes at ~line 1601):
  *   Object.assign(ARCHETYPES, ARCHETYPES_EXT);
@@ -1285,6 +1366,121 @@ function suitNameFor(archLike,mod,city){
   return base+' MK-'+city+(mod?' - '+mod.suitTag:'');
 }
 
+/* ============================================================================
+ *  RESOURCE IDENTITY: the colour and shape of every layer's 3 minerals and
+ *  3 floating resources. The rules live in resource-identity.md.
+ *  ----------------------------------------------------------------------------
+ *  1. PALETTE. An environment's resource colours come from its own coat (after
+ *     the city variant): accent, acc2, moss, kelp, hi/pipe/base, rock, water and
+ *     the authored palHues, plus the hue halfway between any two coat colours
+ *     that sit far apart on the wheel. Each is lifted to a resource-readable
+ *     lightness in three tiers (bright, deep, pale) in OKLab, the perceptual
+ *     space, so "far apart" means far apart to the eye.
+ *  2. COLOUR. All 24 resources of an environment (4 layers x 3 minerals + 3
+ *     floats) are coloured together. Inside a layer the six are pushed as far
+ *     apart as the palette allows (minerals among themselves first, then floats,
+ *     then minerals against floats); across the layers the whole palette is
+ *     spread out instead of cycling the same three colours.
+ *  3. SHAPE. Where the palette runs out and two resources of a kind share a
+ *     colour, their shapes are forced into different silhouette families: a
+ *     same-coloured pair never shares a family. Inside a layer the three
+ *     shapes always differ.
+ *  Deterministic per (city, environment, RUN_SEED), so a save needs nothing extra.
+ * ========================================================================== */
+// ---- OKLab (Björn Ottosson, 2020)
+function riLin(v){v/=255;return v<=0.04045?v/12.92:Math.pow((v+0.055)/1.055,2.4);}
+function riLab(hex){const c=hex2rgb(hex),r=riLin(c[0]),g=riLin(c[1]),b=riLin(c[2]);
+  const l=Math.cbrt(0.4122214708*r+0.5363325363*g+0.0514459929*b),m=Math.cbrt(0.2119034982*r+0.6806995451*g+0.1073969566*b),
+        s=Math.cbrt(0.0883024619*r+0.2817188376*g+0.6299787005*b);
+  return [0.2104542553*l+0.7936177850*m-0.0040720468*s,1.9779984951*l-2.4285922050*m+0.4505937099*s,0.0259040371*l+0.7827717662*m-0.8086757660*s];}
+function riLinRgb(L,a,b){const l=(L+0.3963377774*a+0.2158037573*b)**3,m=(L-0.1055613458*a-0.0638541728*b)**3,s=(L-0.0894841775*a-1.2914855480*b)**3;
+  return [4.0767416621*l-3.3077115913*m+0.2309699292*s,-1.2684380046*l+2.6097574011*m-0.3413193965*s,-0.0041960863*l-0.7034186147*m+1.7076147010*s];}
+function riLchLab(L,C,h){const k=h*Math.PI/180,ok=c=>riLinRgb(L,c*Math.cos(k),c*Math.sin(k)).every(v=>v>=-1e-4&&v<=1.0001);
+  if(!ok(C)){let lo=0,hi=C;for(let i=0;i<18;i++){const m=(lo+hi)/2;if(ok(m))lo=m;else hi=m;}C=lo;}   // clip chroma into sRGB, keep hue + lightness
+  return [L,C*Math.cos(k),C*Math.sin(k)];}
+function riHex(lab){return '#'+riLinRgb(lab[0],lab[1],lab[2]).map(v=>{v=clamp(v,0,1);v=v<=0.0031308?12.92*v:1.055*Math.pow(v,1/2.4)-0.055;
+  return Math.round(clamp(v,0,1)*255).toString(16).padStart(2,'0');}).join('');}
+function riLch(hex){const p=riLab(hex);return [p[0],Math.hypot(p[1],p[2]),(Math.atan2(p[2],p[1])*180/Math.PI+360)%360];}
+// "is it another colour?" Lightness is weighted down, so a shade of one hue still counts as that hue.
+function riDist(p,q){return Math.hypot(0.35*(p[0]-q[0]),p[1]-q[1],p[2]-q[2]);}
+const RI_DISTINCT=0.09;   // about 40° of hue at resource chroma: closer than this = "the same colour"
+// shape vocabularies and their silhouette families (a same-coloured pair must differ in FAMILY)
+const RI_ORE_FAM={chunk:'mass',cubes:'cubic',crystal:'spike',spire:'spike',glob:'round',geode:'ring',nodules:'scatter',slab:'strata',vein:'seam'};
+const RI_FLOAT_FAM={canister:'tube',vial:'tube',cell:'tube',bulb:'orb',jelly:'orb',sac:'orb',bag:'orb',coil:'ring',
+  brick:'block',core:'block',barrel:'drum',pod:'twin',crystal:'shard',cloth:'sheet'};
+
+// 1. PALETTE -------------------------------------------------------------------------------
+// the coat's colours (exactly as applyCityVariant tints them), weighted by how much they define it
+function riSources(a,m){
+  const sh=(h,dh)=>cvShift(h,m.hue+(dh||0),m.sat,m.lit), A2='#'+a.pal.acc2.split(',').map(n=>(+n).toString(16).padStart(2,'0')).join('');
+  const s=[[sh(a.pal.accent),3],[sh(A2),2],[sh(a.pal.moss),2],[sh(a.kelp[0],m.kelp),1.5],[sh(a.kelp[1],m.kelp),2],
+    [sh(a.pal.pipeL),1],[sh(a.pal.hi),1],[sh(a.pal.base),1],[cvShift(a.rock,m.hue,Math.min(1,m.sat),m.lit),1],[sh(a.water[0]),1]];
+  for(const h of a.palHues)s.push([cvHsl2hex(h+m.hue,0.62*Math.min(1.15,m.sat),0.55),2.5]);
+  return s;
+}
+function riPalette(src){
+  const sw=[],anc=[];
+  const put=(L,C,h,w,tier)=>{const lab=riLchLab(L,C,h);
+    for(const o of sw)if(Math.hypot(o.lab[0]-lab[0],o.lab[1]-lab[1],o.lab[2]-lab[2])<0.045){o.w+=w;return;}   // near-twins pool their weight
+    sw.push({lab,hex:riHex(lab),w,tier});};
+  for(const [hex,w] of src){const [L,C,h]=riLch(hex),viv=C/Math.max(0.05,Math.min(L,1-L)*0.6);
+    if(viv<0.35)put(0.86,0.022,h,w,'neutral');                      // steel / greys: one tinted silver
+    else anc.push({h,C:0.09+0.07*Math.min(1,viv),w});}
+  const n=anc.length;                                                 // hue midpoints between far-apart coat colours
+  for(let i=0;i<n;i++)for(let j=i+1;j<n;j++){let d=anc[j].h-anc[i].h;if(d>180)d-=360;if(d<-180)d+=360;if(Math.abs(d)<60)continue;
+    for(const hm of (Math.abs(d)>150?[d/2,d/2+180]:[d/2]))anc.push({h:(anc[i].h+hm+360)%360,C:(anc[i].C+anc[j].C)/2,w:0.35*Math.min(anc[i].w,anc[j].w)});}
+  for(const c of anc){put(0.75,c.C,c.h,c.w,'bright');put(0.62,c.C*1.1,c.h,c.w*0.5,'deep');put(0.88,c.C*0.5,c.h,c.w*0.4,'pale');}
+  return sw;
+}
+
+// 2 + 3. PLAN one environment: colours, then shapes --------------------------------------
+// item index i = layer*6 + kind*3 + slot   (kind 0 = mineral, 1 = floating; slot = a|b|c)
+function riPlanEnv(archKey,m,seed,L){
+  const a=ARCHETYPES[archKey], sw=riPalette(riSources(a,m)), K=sw.length, r=cvRng(seed), N=L*6;
+  const lay=i=>(i/6)|0, kind=i=>((i%6)/3)|0, wMax=Math.max(...sw.map(s=>s.w));
+  const same=sw.map(p=>sw.map(q=>Math.max(0,1-riDist(p.lab,q.lab)/RI_DISTINCT)));   // 1 identical .. 0 another colour
+  const near=sw.map(p=>sw.map(q=>Math.max(0,1-riDist(p.lab,q.lab)/(RI_DISTINCT*1.8))));   // stricter: a layer's six want a wide margin
+  const alike=sw.map(p=>sw.map(q=>Math.max(0,1-riDist(p.lab,q.lab)/(RI_DISTINCT*1.5))));  // the shape rule errs wide: "close" already counts
+  // what a clash costs: same layer & kind >> same layer >> neighbouring layer of a kind >> the rest;
+  // reusing a swatch at all costs a little, which spreads the colours over the whole palette
+  const W=new Float32Array(N*N),U=new Float32Array(N*N);
+  for(let i=0;i<N;i++)for(let j=0;j<N;j++){if(i===j)continue;const dl=Math.abs(lay(i)-lay(j)),sk=kind(i)===kind(j);
+    W[i*N+j]=dl===0?(sk?60:14):(sk?(dl===1?8:6):1);U[i*N+j]=sk?4:1.5;}
+  const pref=sw.map(s=>1.5*(1-s.w/wMax)+r()*0.05);                   // characteristic coat colours first; jitter = per-play variety
+  const col=new Int16Array(N).fill(-1);
+  const cCost=(i,s)=>{let c=pref[s];for(let j=0;j<N;j++){const t=col[j];if(j===i||t<0)continue;
+    c+=W[i*N+j]*(lay(i)===lay(j)?near:same)[s][t]+(s===t?U[i*N+j]:0);}return c;};
+  const settle=(n,opts,cost,arr)=>{                                    // greedy, then local search
+    for(let i=0;i<n;i++){let b=0,bc=1e9;for(let s=0;s<opts;s++){const c=cost(i,s);if(c<bc-1e-9){bc=c;b=s;}}arr[i]=b;}
+    for(let it=0;it<n*120;it++){const i=(r()*n)|0,s=(r()*opts)|0;if(s!==arr[i]&&cost(i,s)<cost(i,arr[i]))arr[i]=s;}};
+  settle(N,K,cCost,col);
+  const shapes=k=>{
+    const opts=k===0?Object.keys(RI_ORE_FAM):FRGen.FORMS, fam=k===0?RI_ORE_FAM:RI_FLOAT_FAM;
+    const sig=k===0?a.shapes:[a.float||(FRGen.BY_KEY[archKey]||{}).f];   // the coat's signature shapes are preferred
+    const ids=[];for(let i=0;i<N;i++)if(kind(i)===k)ids.push(i);
+    const n=ids.length,sh=new Int16Array(n).fill(-1);
+    settle(n,opts.length,(x,o)=>{const i=ids[x],f=fam[opts[o]];let c=sig.includes(opts[o])?-1.5:r()*0.05;
+      for(let y=0;y<n;y++){const p=sh[y];if(y===x||p<0)continue;const j=ids[y],sl=lay(i)===lay(j),sc=alike[col[i]][col[j]],id=col[i]===col[j];
+        if(p===o)c+=(sl?50:2)+80*sc+(id?20:0);                        // the very same shape
+        else if(fam[opts[p]]===f)c+=(sl?12:0.5)+60*sc+(id?10:0);}      // same silhouette family
+      return c;},sh);
+    return [...sh].map(o=>opts[o]);};
+  const ore=shapes(0),flt=shapes(1);
+  const layers=[];
+  for(let l=0;l<L;l++)layers.push({
+    raw:[0,1,2].map(s=>({col:sw[col[l*6+s]].hex,shape:ore[l*3+s]})),
+    mix:[0,1,2].map(s=>({col:sw[col[l*6+3+s]].hex,form:flt[l*3+s]}))});
+  return {palette:sw,layers};
+}
+// refined goods wear a pale tint of the mineral they are pressed from
+function riRefined(hex){const [L,C,h]=riLch(hex);return riHex(riLchLab(0.87,C*0.5,h));}
+let RIPLAN=new Map();     // per-environment plan cache (cleared by genTheme)
+function riPlan(d){
+  const k=d.city+':'+CITY_ID+':'+d.env+':'+RUN_SEED;
+  if(!RIPLAN.has(k))RIPLAN.set(k,riPlanEnv(d.arch,d.mod,(cvHash('ri:'+d.arch+':'+d.mod.key+':'+d.env)^RUN_SEED)>>>0,layersPerEnv(d.city)));
+  return RIPLAN.get(k);
+}
+
 /* ---- IN-GAME APPLICATION ------------------------------------------------------
  * Call INSTEAD of the bare skinTier(n,pickArch()) inside growTier (line 1663).
  * Requires the game's globals; safe to ship in the same <script>. `A` is the
@@ -1299,9 +1495,12 @@ function applyCityVariant(n,d,A){
   T.pal=P; T.glowMul=m.glow; T.mod=m.key;
   T.plat=a.plat; T.float=a.float; T.bgx=a.bgx; T.tilex=a.tilex;   // graphics-basis fields (§8)
   T.kelp=[cvShift(a.kelp[0],m.hue+m.kelp,m.sat,m.lit),cvShift(a.kelp[1],m.hue+m.kelp,m.sat,m.lit)];
-  if(typeof RES!=='undefined'&&typeof setResCol==='function'){    // ores/mixers/refined inherit the coat too
-    const t=n+1;for(const s of ['a','b','c'])for(const kind of ['r','m','f']){
-      const id='t'+t+kind+s;if(RES[id])setResCol(id,cvShift(RES[id].col,m.hue*0.5,Math.min(1.15,m.sat),m.lit*0.5));}}
+  if(typeof RES!=='undefined'&&typeof setResCol==='function'){    // this layer's slice of the environment's resource plan
+    const t=n+1,LP=riPlan(d).layers[d.layerInEnv];T.floatForms={};
+    for(let j=0;j<3;j++){const s=SLOTS[j];
+      setResCol('t'+t+'r'+s,LP.raw[j].col);T.oreShapes[s]=LP.raw[j].shape;
+      setResCol('t'+t+'m'+s,LP.mix[j].col);T.floatForms[s]=LP.mix[j].form;
+      setResCol('t'+t+'f'+s,riRefined(LP.raw[j].col));}}
   TIERS[n].name=m.tag+' '+a.name;
   TIERS[n].water=a.water.map(w=>cvShift(w,m.hue,m.sat,m.lit));
   TIERS[n].rock=cvShift(a.rock,m.hue,Math.min(1,m.sat),m.lit);
@@ -1805,7 +2004,8 @@ function _shuffle(a){for(let i=a.length-1;i>0;i--){const j=(Math.random()*(i+1))
 function _pick3(pool){return _shuffle(pool.slice()).slice(0,3);}
 const SLOTS=['a','b','c'];
 let lastArchKey='';   // remembered so consecutive generated tiers don't repeat the same archetype
-// Skin one tier from an archetype: names, colours, ore shapes, THEME entry, water/rock.
+// Skin one tier from an archetype: names, THEME entry, water/rock. Colours and shapes of its
+// minerals and floats come from the environment's resource plan (riPlan, in applyCityVariant).
 function skinTier(i,archKey){
   const a=ARCHETYPES[archKey], t=i+1;
   THEME[i]={key:archKey,bg:a.bg,tile:a.tile,scenery:a.scenery,kelp:a.kelp,pal:a.pal,oreShapes:{}};
@@ -1813,19 +2013,15 @@ function skinTier(i,archKey){
   if(i>=4&&TIERS[i].gear) TIERS[i].gear.name=a.suit;   // base-tier suit names stay fixed
   const rawN=_pick3(a.raw), mixN=_pick3(a.mix), refN=_pick3(a.ref);
   for(let j=0;j<3;j++){
-    const s=SLOTS[j], hue=a.palHues[j];
-    const rid='t'+t+'r'+s, mid='t'+t+'m'+s, fid='t'+t+'f'+s;
-    RES[rid].name=rawN[j]; setResCol(rid,hsl2hex(hue+ri(-14,14), 0.5+Math.random()*0.18, 0.5+Math.random()*0.1));
-    THEME[i].oreShapes[s]=a.shapes[j%a.shapes.length];   // slot-fixed identity (§8.1, lever L7 to re-roll)
-    RES[mid].name=mixN[j]; setResCol(mid,hsl2hex(hue+18+ri(-12,12), 0.6+Math.random()*0.2, 0.58+Math.random()*0.1));
-    RES[fid].name=refN[j]; setResCol(fid,hsl2hex(hue+ri(-10,10), 0.26+Math.random()*0.14, 0.62+Math.random()*0.08));
-    ICONSHAPE[mid]=SLOTS[(Math.random()*3)|0]; ICONSHAPE[fid]=SLOTS[(Math.random()*3)|0];
+    const s=SLOTS[j];
+    RES['t'+t+'r'+s].name=rawN[j]; RES['t'+t+'m'+s].name=mixN[j]; RES['t'+t+'f'+s].name=refN[j];
+    ICONSHAPE['t'+t+'f'+s]=SLOTS[(Math.random()*3)|0];
   }
 }
 // City bootstrap: build the layer schedule for the current city and skin the first 4 layers from it.
 function genTheme(){
   RUN_SEED=((Date.now()>>>0)^((Math.random()*0xffffffff)>>>0))>>>0||1;
-  _oreLv={}; _oreCanv={}; ICONSHAPE={};       // drop caches keyed on last play's shapes/colours
+  _oreLv={}; _oreCanv={}; ICONSHAPE={}; RIPLAN=new Map(); _floatSvg.clear();   // drop caches keyed on last play's shapes/colours
   SCHED=cityScheduleFor(CITY,CITY_ID);
   THEME=[];
   for(let i=0;i<4;i++)applyCityVariant(i,SCHED[i],ARCHETYPES);   // skinTier runs inside
@@ -4101,25 +4297,26 @@ function drawOre(o){
 
 // ---- FRGen floating-resource sprites -------------------------------------
 // Each mixer pickup is rendered by the procedural generator (window.FRGen):
+//   look          <- floatLook(): the layer's planned form + RES colour (riPlan), so a
+//                    layer's 3 floats differ in colour AND silhouette, and the sprite
+//                    is exactly the colour shown in the pack and recipes.
 //   archetypeKey  <- THEME[tier].key   (the layer's environment, 1:1 with FRGen's 65 keys)
-//   variant 0..2  <- the resource slot (mixer ids end in a|b|c), so a layer's 3
-//                    mixer types get 3 distinct-but-related looks.
+//   variant 0..2  <- the resource slot (mixer ids end in a|b|c): small detail changes.
 //   seed          <- derived from the mixer's map cell, so it's stable, unique per
 //                    spot, deterministic, and needs nothing extra in the save blob.
-// Sprites are baked once to a small offscreen canvas (keyed by key|variant|seed and
+// Sprites are baked once to a small offscreen canvas (keyed by look|variant|seed and
 // shared across identical pickups), then drawn shrunk to fit the world's tile scale.
 const FR_R=2;                 // integer render scale of the offscreen bake (30x34 -> 60x68)
 const FR_DISP=0.6;            // on-screen px per grid cell -> sprite ≈ 18x20 (tile-ish)
 const _frCache=new Map();
 function mixerSprite(m){
-  const key=(THEME[m.tier]&&THEME[m.tier].key&&FRGen.BY_KEY[THEME[m.tier].key])?THEME[m.tier].key:'cybersewer';
-  const slot='abc'.indexOf(String(m.resId).slice(-1)), variant=slot<0?0:slot;
+  const lk=floatLook(m.resId), key=lk.key, variant=lk.variant;
   const seed=(FRGen._hash(key+':'+variant)^Math.imul(m.x|0,73856093)^Math.imul(m.y|0,19349663))>>>0;
-  const ck=key+'|'+variant+'|'+seed;
+  const ck=key+'|'+lk.form+'|'+lk.col+'|'+variant+'|'+seed;
   let e=_frCache.get(ck);
   if(!e){
     if(_frCache.size>512)_frCache.clear();   // bound memory on very deep runs; cheap to rebake
-    const spec=FRGen.make(key,variant,seed);
+    const spec=FRGen.make(key,variant,seed,lk);
     const cv=document.createElement('canvas');
     cv.width=spec.w*FR_R; cv.height=spec.h*FR_R;
     const c=cv.getContext('2d'); c.imageSmoothingEnabled=false;

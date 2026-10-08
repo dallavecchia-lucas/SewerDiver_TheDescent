@@ -104,6 +104,18 @@ function pal(hue,vi){
     mtl:'#8a96a2', mtlD:'#586570', mtlL:'#c0ccd6',
     glow:hsl(h,0.95,0.62).join(','), haz:'#f2c53d' };
 }
+// Palette from an explicit resource colour (the game's per-layer colour plan): the colour IS the
+// body, highlights mix toward white instead of multiplying, so a light colour keeps its hue.
+function palCol(hex){
+  hex=hex.replace('#','');
+  var base=[parseInt(hex.slice(0,2),16),parseInt(hex.slice(2,4),16),parseInt(hex.slice(4,6),16)];
+  function mixW(t){return 'rgb('+base.map(function(v){return Math.round(v+(255-v)*t);}).join(',')+')';}
+  return { rgb:base, out:'#0a0f14',
+    dk:sh(base,0.46), dk2:sh(base,0.70),
+    base:rs(base), lt:mixW(0.32), sp:mixW(0.68),
+    mtl:'#8a96a2', mtlD:'#586570', mtlL:'#c0ccd6',
+    glow:base.join(','), haz:'#f2c53d' };
+}
 
 /* ---- form builders ------------------------------------------------------ */
 function makeBuilder(px,P){
@@ -278,7 +290,7 @@ var FORMFN = {
     for(var iz=0;iz<4;iz++){B.add(x-2,y+2+iz*3,2,1,P.mtlD);B.add(x+w,y+2+iz*3,2,1,P.mtlD);}
     B.add(x-1,y-1,w+2,h+2,P.out);
     B.add(x,y,w,h,P.dk);
-    B.add(x+1,y+1,w-2,h-2,'#0e1620');
+    B.add(x+1,y+1,w-2,h-2,P.dk2);
     B.add(x+3,y+3,w-6,h-6,P.dk);B.add(x+4,y+4,w-8,h-8,P.base);
     B.add(x+4,y+4,1,h-8,P.lt);
     B.add(x+2,y+2,1,h-4,P.dk2);B.add(x+w-3,y+2,1,h-4,P.dk2);
@@ -291,18 +303,21 @@ var FORMFN = {
 /* ---- public API --------------------------------------------------------- */
 
 // Build the pixel spec for (archetypeKey, variant 0..2, seed).
-function make(key, variant, seed){
+// look (optional) = {form, col}: the layer's planned shape and '#rrggbb' colour for this
+// resource; without it the archetype's own form and hue are used.
+function make(key, variant, seed, look){
   var cfg = BY_KEY[key] || ARCH[0];
   var vi = ((variant|0)%3+3)%3;
   if(seed==null) seed = hash(cfg.k) ^ (0x9e3779b9*(vi+1));
   var r = rng(seed>>>0);
-  var P = pal(cfg.h, vi);
+  var form = (look && FORMFN[look.form]) ? look.form : cfg.f;
+  var P = (look && look.col) ? palCol(look.col) : pal(cfg.h, vi);
   var px = [];
   var B = makeBuilder(px, P);
-  (FORMFN[cfg.f] || FORMFN.canister)(B, P, r, vi);
+  (FORMFN[form] || FORMFN.canister)(B, P, r, vi);
   return { px:px, glow:P.glow, w:GRID_W, h:GRID_H,
            phase:r()*6.283, bob:1+r()*0.9,
-           name:cfg.n, id:cfg.id, env:cfg.env, form:cfg.f };
+           name:cfg.n, id:cfg.id, env:cfg.env, form:form };
 }
 
 // Blit a spec onto a 2D context. Integer scale. (ox,oy) = top-left of the grid.
