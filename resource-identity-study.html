@@ -1,0 +1,1720 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Resource Identity Study</title>
+<style>
+:root{--bg:#0b1016;--fg:#d8e2ea;--mute:#7f93a3;--line:#22303c;}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){--bg:#eef2f5;--fg:#16212b;--mute:#566877;--line:#c9d3db;}}
+:root[data-theme="light"]{--bg:#eef2f5;--fg:#16212b;--mute:#566877;--line:#c9d3db;}
+body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.4 system-ui,sans-serif;padding:16px;}
+header{max-width:1100px;margin:0 auto 18px}
+h1{font-size:20px;margin:0 0 6px}
+header p{margin:4px 0;color:var(--mute);max-width:820px}
+#sheet{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,520px),1fr));gap:14px;max-width:1700px;margin:0 auto}
+.env{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:color-mix(in srgb,var(--water) 70%,var(--bg));color:#e4edf3}
+.env h2{font-size:13px;margin:0 0 8px;letter-spacing:.04em}
+.env h2 small{font-weight:400;color:#9db3c2;margin-left:6px;letter-spacing:0}
+.pal{display:flex;flex-wrap:wrap;gap:3px;margin-bottom:8px}
+.pal i{width:18px;height:18px;border-radius:3px;position:relative}
+.pal i::after{content:attr(data-t);position:absolute;inset:auto 0 -1px auto;font:9px monospace;color:#0008;padding:0 2px}
+.row{display:flex;align-items:flex-start;gap:10px;margin-top:4px}
+.ln{width:22px;color:#9db3c2;font:600 11px monospace;padding-top:26px}
+.grp{display:flex;gap:6px;background:var(--water);padding:6px;border-radius:6px;flex:1;justify-content:space-around}
+.it{margin:0;text-align:center;font:10px monospace;color:#c9d6df}
+.it canvas{display:block;margin:0 auto;image-rendering:pixelated;height:64px;width:auto}
+.it b{display:inline-block;min-width:13px;background:#ffffff22;border-radius:3px}
+.it span{color:#8fa3b1}
+.it{position:relative}
+.it .ico{position:absolute;top:0;right:-4px;background:#0006;border-radius:4px;padding:1px;line-height:0}
+</style></head><body>
+<header><h1>Resource identity study</h1>
+<p>Every environment's resource palette (swatch letters: <b>b</b>right, <b>d</b>eep, <b>p</b>ale, <b>n</b>eutral) and its four layers: three minerals (left, as the in-world ore tile) and three floating resources (right, as the FRGen sprite), each on the environment's water. The small badge on a float is its pack icon.</p>
+<p>The letter before each name is its colour group within the environment, counted separately for minerals and floats. Items that share a letter look like the same colour, so their silhouettes must belong to different shape families.</p>
+<p>Drawn by the game's own code from <code>sewerdiverdescentcity12.html</code>. One fixed seed: each new dive re-rolls the jitter, but the rules stay the same.</p></header>
+<main id="sheet"></main>
+<script>
+/* =============================================================================
+ * SEWER DIVER — Procedural Floating-Resource Sprite Generator
+ * A sprite is fully described by (archetypeKey, variant 0..2, seed).
+ *   const spec = FRGen.make('radioactive', 0, someSeed);
+ *   FRGen.blit(ctx, spec, ox, oy, scale);
+ * Sprites are authored on a 30x34 pixel grid, silhouette centred on x=15.
+ * ========================================================================== */
+(function (root) {
+'use strict';
+
+/* ---- archetype table: 65 entries, one per city environment ------------- */
+var ARCH = [
+{k:'cybersewer',id:'FR-01',n:'Coolant Canister',env:'CITY SEWERS',f:'canister',h:0},
+{k:'swamp',id:'FR-02',n:'Bio-Slime Blob',env:'BIOCYBER SWAMP',f:'jelly',h:137.5},
+{k:'radioactive',id:'FR-03',n:'Isotope Barrel',env:'RADIOACTIVE WASTE',f:'barrel',h:275},
+{k:'datacentre',id:'FR-04',n:'Cache Core',env:'DEAD DATA CENTRE',f:'core',h:52.5},
+{k:'filtration',id:'FR-05',n:'Backwash Canister',env:'FILTRATION STATION',f:'canister',h:190},
+{k:'stormdrain',id:'FR-06',n:'Runoff Canister',env:'STORM DRAIN NETWORK',f:'canister',h:327.5},
+{k:'metro',id:'FR-07',n:'Third-Rail Cell',env:'FLOODED METRO LINE',f:'cell',h:105},
+{k:'foundry',id:'FR-08',n:'Quench Pod',env:'SUNKEN FOUNDRY RUN',f:'pod',h:242.6},
+{k:'cryostack',id:'FR-09',n:'Cryo Bulb',env:'CRYO STORAGE STACKS',f:'bulb',h:20.1},
+{k:'geothermal',id:'FR-10',n:'Sulfur Pod',env:'GEOTHERMAL EXCHANGE',f:'pod',h:157.6},
+{k:'medbay',id:'FR-11',n:'Plasma Vial',env:'DROWNED MED-BAY',f:'vial',h:295.1},
+{k:'brewery',id:'FR-12',n:'Wort Blob',env:'VAT BREWERY RUNOFF',f:'jelly',h:72.6},
+{k:'fueldepot',id:'FR-13',n:'Octane Barrel',env:'FUEL DEPOT INTERCEPTOR',f:'barrel',h:210.1},
+{k:'cryptomine',id:'FR-14',n:'Hash Core',env:'ABANDONED CRYPTO MINE',f:'core',h:347.6},
+{k:'neonrunoff',id:'FR-15',n:'Phosphor Bulb',env:'NEON DISTRICT RUNOFF',f:'bulb',h:125.1},
+{k:'arcology',id:'FR-16',n:'Greywater Canister',env:'ARCOLOGY GREYWATER CORE',f:'canister',h:262.6},
+{k:'chopshop',id:'FR-17',n:'Coolant Pod',env:'CHOP-SHOP UNDERDRAIN',f:'pod',h:40.1},
+{k:'vatfarm',id:'FR-18',n:'Protein Sac',env:'PROTEIN VAT FARM',f:'sac',h:177.6},
+{k:'dyeworks',id:'FR-19',n:'Dye Wrap',env:'TEXTILE DYE WORKS',f:'cloth',h:315.1},
+{k:'printworks',id:'FR-20',n:'Ink Canister',env:'OLD PRINT WORKS',f:'canister',h:92.7},
+{k:'ewaste',id:'FR-21',n:'E-Waste Brick',env:'E-WASTE CRUSH PIT',f:'brick',h:230.2},
+{k:'batteryfarm',id:'FR-22',n:'Leaky Cell',env:'LEAKING BATTERY FARM',f:'cell',h:7.7},
+{k:'desal',id:'FR-23',n:'Halite Shard',env:'DESALINATION GALLERIES',f:'crystal',h:145.2},
+{k:'algaefarm',id:'FR-24',n:'Algae Sac',env:'ALGAE BIOREACTOR FARM',f:'sac',h:282.7},
+{k:'fungal',id:'FR-25',n:'Spore Blob',env:'MYCO-CELLAR WARREN',f:'jelly',h:60.2},
+{k:'rendering',id:'FR-26',n:'Tallow Blob',env:'RENDERING PLANT OUTFALL',f:'jelly',h:197.7},
+{k:'chemlab',id:'FR-27',n:'Reagent Vial',env:'CLANDESTINE CHEM-LAB SUMP',f:'vial',h:335.2},
+{k:'pigment',id:'FR-28',n:'Pigment Blob',env:'PIGMENT REFINERY',f:'jelly',h:112.7},
+{k:'glassworks',id:'FR-29',n:'Cullet Shard',env:'DROWNED GLASSWORKS',f:'crystal',h:250.2},
+{k:'polymer',id:'FR-30',n:'Bioplastic Wrap',env:'POLYMER EXTRUSION HALLS',f:'cloth',h:27.7},
+{k:'cablevault',id:'FR-31',n:'Cable Coil',env:'CABLE TRUNK VAULTS',f:'coil',h:165.2},
+{k:'pneumatic',id:'FR-32',n:'Carrier Pod',env:'PNEUMATIC POST TUBES',f:'pod',h:302.7},
+{k:'catacomb',id:'FR-33',n:'Bone-Lime Brick',env:'OLD-CITY CATACOMB GRID',f:'brick',h:80.3},
+{k:'mallruin',id:'FR-34',n:'Fountain Canister',env:'FLOODED MEGAMALL SUBLEVEL',f:'canister',h:217.8},
+{k:'parkade',id:'FR-35',n:'Sump-Oil Barrel',env:'SUNKEN PARKADE HELIX',f:'barrel',h:355.3},
+{k:'substation',id:'FR-36',n:'Arc Cell',env:'DROWNED SUBSTATION',f:'cell',h:132.8},
+{k:'tramdepot',id:'FR-37',n:'Overhead Coil',env:'TRAM DEPOT UNDERCROFT',f:'coil',h:270.3},
+{k:'gasworks',id:'FR-38',n:'Coal-Tar Pod',env:'LEGACY GASWORKS',f:'pod',h:47.8},
+{k:'oiltrap',id:'FR-39',n:'Grease Blob',env:'OIL INTERCEPTOR MAZE',f:'jelly',h:185.3},
+{k:'overflow',id:'FR-40',n:'Refuse Sack',env:'COMBINED OVERFLOW CHAMBERS',f:'bag',h:322.8},
+{k:'greasetrap',id:'FR-41',n:'Fatberg Sac',env:'FATBERG WARREN',f:'sac',h:100.3},
+{k:'incinerator',id:'FR-42',n:'Ash Barrel',env:'INCINERATOR ASH SLUICE',f:'barrel',h:237.8},
+{k:'isotope',id:'FR-43',n:'Technetium Vial',env:'MED-ISOTOPE DISPOSAL',f:'vial',h:15.3},
+{k:'clonevats',id:'FR-44',n:'Amniotic Sac',env:'DECOMMISSIONED CLONE VATS',f:'sac',h:152.8},
+{k:'cryonics',id:'FR-45',n:'Vitrified Bulb',env:'FAILED CRYONICS BANK',f:'bulb',h:290.4},
+{k:'neurofarm',id:'FR-46',n:'Neuro-Gel Blob',env:'NEURAL LACE FARM',f:'jelly',h:67.9},
+{k:'holograve',id:'FR-47',n:'Emitter Bulb',env:'HOLO-BILLBOARD GRAVEYARD',f:'bulb',h:205.4},
+{k:'dronehive',id:'FR-48',n:'Rotor Core',env:'DERELICT DRONE HIVE',f:'core',h:342.9},
+{k:'roboline',id:'FR-49',n:'Servo Core',env:'ROBOTICS DISASSEMBLY LINE',f:'core',h:120.4},
+{k:'railgun',id:'FR-50',n:'Capacitor Cell',env:'RAIL-GUN TEST DRAIN',f:'cell',h:257.9},
+{k:'coolant',id:'FR-51',n:'Glycol Canister',env:'DISTRICT COOLANT EXCHANGE',f:'canister',h:35.4},
+{k:'maglev',id:'FR-52',n:'Halbach Coil',env:'MAG-LEV UNDERTRACK',f:'coil',h:172.9},
+{k:'fibervault',id:'FR-53',n:'Fiber Coil',env:'DARK FIBER VAULT',f:'coil',h:310.4},
+{k:'cistern',id:'FR-54',n:'Spring Shard',env:'ANCIENT CISTERN GRID',f:'crystal',h:87.9},
+{k:'brinemine',id:'FR-55',n:'Rock-Salt Shard',env:'BRINE MINE GALLERIES',f:'crystal',h:225.4},
+{k:'digester',id:'FR-56',n:'Biogas Sac',env:'METHANE DIGESTER FIELD',f:'sac',h:2.9},
+{k:'compost',id:'FR-57',n:'Compost Sack',env:'COMPOST SLURRY BAYS',f:'bag',h:140.4},
+{k:'mercury',id:'FR-58',n:'Quicksilver Vial',env:'MERCURY RECLAIM LINE',f:'vial',h:278},
+{k:'plating',id:'FR-59',n:'Bright-Dip Bulb',env:'ELECTROPLATING CANALS',f:'bulb',h:55.5},
+{k:'smelter',id:'FR-60',n:'Matte Pod',env:'SMELTER QUENCH PITS',f:'pod',h:193},
+{k:'turbine',id:'FR-61',n:'Governor Cell',env:'DEAD TURBINE HALL',f:'cell',h:330.5},
+{k:'pumpgallery',id:'FR-62',n:'Priming Canister',env:'GRAND PUMP GALLERY',f:'canister',h:108},
+{k:'aquarium',id:'FR-63',n:'Exhibit Bulb',env:'RUINED CITY AQUARIUM',f:'bulb',h:245.5},
+{k:'archive',id:'FR-64',n:'Vellum Brick',env:'SUNKEN PAPER ARCHIVE',f:'brick',h:23},
+{k:'morgue',id:'FR-65',n:'Formalin Vial',env:'CRYO-MORGUE ANNEX',f:'vial',h:160.5}
+];
+var BY_KEY = {}; for (var i=0;i<ARCH.length;i++) BY_KEY[ARCH[i].k]=ARCH[i];
+var FORMS = ['canister','barrel','bulb','jelly','pod','cell','coil','vial','crystal','brick','sac','cloth','bag','core'];
+
+var GRID_W = 30, GRID_H = 34;
+
+/* ---- colour helpers ----------------------------------------------------- */
+function hsl(h,s,l){
+  h=(((h%360)+360)%360)/360;
+  if(s===0){var v=Math.round(l*255);return[v,v,v];}
+  var q=l<0.5?l*(1+s):l+s-l*s, p=2*l-q;
+  function cv(t){t=(t+1)%1; if(t<1/6)return p+(q-p)*6*t; if(t<1/2)return q; if(t<2/3)return p+(q-p)*(2/3-t)*6; return p;}
+  return [cv(h+1/3),cv(h),cv(h-1/3)].map(function(v){return Math.round(v*255);});
+}
+function sh(rgb,m){return 'rgb('+rgb.map(function(v){return Math.max(0,Math.min(255,Math.round(v*m)));}).join(',')+')';}
+function rs(rgb){return 'rgb('+rgb.join(',')+')';}
+function rng(seed){var s=seed>>>0;return function(){s=(s+0x6D2B79F5)>>>0;var t=s;t=Math.imul(t^(t>>>15),t|1);t^=t+Math.imul(t^(t>>>7),t|61);return((t^(t>>>14))>>>0)/4294967296;};}
+function hash(str){var h=2166136261>>>0;for(var i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
+
+function pal(hue,vi){
+  var hj=[0,15,-13][vi], h=((hue+hj)%360+360)%360;
+  var base=hsl(h,0.62,0.51);
+  return { rgb:base, out:'#0a0f14',
+    dk:sh(base,0.46), dk2:sh(base,0.70),
+    base:rs(base), lt:sh(base,1.42), sp:sh(base,1.9),
+    mtl:'#8a96a2', mtlD:'#586570', mtlL:'#c0ccd6',
+    glow:hsl(h,0.95,0.62).join(','), haz:'#f2c53d' };
+}
+// Palette from an explicit resource colour (the game's per-layer colour plan): the colour IS the
+// body, highlights mix toward white instead of multiplying, so a light colour keeps its hue.
+function palCol(hex){
+  hex=hex.replace('#','');
+  var base=[parseInt(hex.slice(0,2),16),parseInt(hex.slice(2,4),16),parseInt(hex.slice(4,6),16)];
+  function mixW(t){return 'rgb('+base.map(function(v){return Math.round(v+(255-v)*t);}).join(',')+')';}
+  return { rgb:base, out:'#0a0f14',
+    dk:sh(base,0.46), dk2:sh(base,0.70),
+    base:rs(base), lt:mixW(0.32), sp:mixW(0.68),
+    mtl:'#8a96a2', mtlD:'#586570', mtlL:'#c0ccd6',
+    glow:base.join(','), haz:'#f2c53d' };
+}
+
+/* ---- form builders ------------------------------------------------------ */
+function makeBuilder(px,P){
+  function add(x,y,w,h,c){ if(w>0&&h>0&&c) px.push([x|0,y|0,w|0,h|0,c]); }
+  function round(x,y,w,h,c){ add(x+1,y,w-2,1,c); add(x,y+1,w,h-2,c); add(x+1,y+h-1,w-2,1,c); }
+  function vessel(x,y,w,h){
+    round(x-1,y-1,w+2,h+2,P.out);
+    round(x,y,w,h,P.dk);
+    round(x+1,y,w-2,h,P.base);
+    add(x+1,y+2,1,h-4,P.lt);
+    add(x+2,y+2,1,Math.max(3,(h/2)|0),P.sp);
+    add(x+1,y+h-4,w-2,1,P.dk2);
+  }
+  return { add:add, round:round, vessel:vessel };
+}
+
+var FORMFN = {
+  canister:function(B,P,rng,vi){
+    var w=vi===2?9:10, x=15-(w>>1), y=9, h=16;
+    B.add(13,6,4,2,P.mtlD);B.add(13,5,4,1,P.mtl);B.add(14,4,2,1,P.mtlL);
+    B.vessel(x,y,w,h);
+    B.add(x+1,y+5,w-2,1,P.dk2);
+    if(vi>=1){B.add(x+2,y+2,1,1,P.mtlL);B.add(x+w-3,y+2,1,1,P.mtlL);B.add(x+2,y+9,w-4,3,P.lt);B.add(x+3,y+10,w-6,1,P.dk);}
+    if(vi===2){B.add(x+w-2,y+h,1,3,P.base);B.add(x+w-2,y+h+4,1,1,P.base);B.add(x+2,y+12,1,1,P.dk2);}
+  },
+  barrel:function(B,P,rng,vi){
+    var w=12,x=15-(w>>1),y=8,h=18;
+    B.round(x-1,y-1,w+2,h+2,P.out);
+    B.round(x,y,w,h,P.dk);
+    B.round(x+1,y,w-2,h,P.base);
+    B.add(x+1,y+2,1,h-4,P.lt);
+    var rows=[y+3,y+8,y+13];for(var r=0;r<3;r++){B.add(x,rows[r],w,1,P.dk2);B.add(x+1,rows[r]+1,w-2,1,P.lt);}
+    B.add(x,y-1,w,2,P.mtlD);B.add(x+1,y-1,w-2,1,P.mtl);
+    var by=y+9;B.add(x+1,by,w-2,3,'#0c0c0e');
+    for(var iz=0;iz<w-2;iz+=2)B.add(x+1+iz,by,1,3,P.haz);
+    if(vi>=1){B.add(x+3,y+3,w-6,4,P.dk2);B.add(x+4,y+4,w-8,2,P.haz);}
+    if(vi===2){B.add(x+2,y+h,1,3,P.base);B.add(x+w-3,y+5,1,1,P.dk2);B.add(x+3,y+16,1,1,P.dk2);}
+  },
+  bulb:function(B,P,rng,vi){
+    var cx=15,y=8,rr=vi===2?3:4;
+    B.round(cx-rr-1,y-1,2*rr+2,2*rr+4,P.out);
+    B.round(cx-rr,y,2*rr,2*rr+2,P.dk);
+    B.round(cx-rr+1,y,2*rr-2,2*rr+2,P.base);
+    B.add(cx-rr+1,y+1,1,2*rr,P.lt);
+    B.add(cx-rr+2,y+1,2,2,P.sp);
+    B.add(cx-2,y+2*rr+1,4,2,P.mtlD);B.add(cx-1,y+2*rr+3,2,2,P.mtlD);B.add(cx-2,y+2*rr+1,4,1,P.mtl);
+    B.add(cx-1,y+rr,2,2,P.sp);
+    if(vi>=1){B.add(cx-rr+1,y+rr+1,2*rr-2,1,P.dk2);}
+    if(vi===2){B.add(cx+rr-1,y+2*rr+5,1,2,P.base);}
+  },
+  jelly:function(B,P,rng,vi){
+    var cx=15,y=9;
+    var rows=[[y,4],[y+1,6],[y+2,8],[y+3,8],[y+4,8],[y+5,7],[y+6,6],[y+7,5],[y+8,3]];
+    for(var a=0;a<rows.length;a++)B.add(cx-(rows[a][1]>>1)-1,rows[a][0],rows[a][1]+2,1,P.out);
+    for(var b=0;b<rows.length;b++)B.add(cx-(rows[b][1]>>1),rows[b][0],rows[b][1],1,P.dk);
+    for(var c=0;c<rows.length;c++)B.add(cx-(rows[c][1]>>1)+1,rows[c][0],Math.max(1,rows[c][1]-2),1,P.base);
+    B.add(cx-2,y+1,2,2,P.sp);B.add(cx-3,y+3,1,3,P.lt);
+    B.add(cx+1,y+4,1,1,P.sp);B.add(cx,y+6,1,1,P.lt);
+    B.add(cx,y+9,1,2,P.dk);B.add(cx,y+12,1,1,P.base);
+    if(vi===1){B.add(cx+2,y+5,1,1,P.sp);}
+    if(vi===2){B.add(cx-1,y+7,3,1,P.dk2);B.add(cx+2,y+9,1,2,P.base);}
+  },
+  pod:function(B,P,rng,vi){
+    var y=9,h=14,w=5,xl=15-w-1,xr=15+1,xs=[xl,xr];
+    for(var s=0;s<2;s++){var x=xs[s];
+      B.round(x-1,y-1,w+2,h+2,P.out);
+      B.round(x,y,w,h,P.dk);
+      B.round(x+1,y,w-2,h,P.base);
+      B.add(x+1,y+2,1,h-4,P.lt);
+      B.add(x+1,y-2,w-2,2,P.mtlD);
+    }
+    B.add(14,y-1,3,h+2,P.mtlD);B.add(14,y-1,1,h+2,P.mtl);
+    if(vi>=1){B.add(xl+1,y+3,w-2,1,P.dk2);B.add(xr+1,y+3,w-2,1,P.dk2);}
+    if(vi===2){B.add(xr+w-2,y+h,1,3,P.base);}
+  },
+  cell:function(B,P,rng,vi){
+    var w=10,x=15-(w>>1),y=8,h=18;
+    B.add(x+1,y-2,3,2,P.mtlD);B.add(x+w-4,y-2,3,2,P.mtlD);B.add(x+1,y-2,3,1,P.mtl);
+    B.round(x-1,y-1,w+2,h+2,P.out);
+    B.round(x,y,w,h,P.dk);
+    B.round(x+1,y,w-2,h,P.base);
+    B.add(x+1,y+2,1,h-4,P.lt);
+    B.add(x,y+6,w,5,P.dk2);B.add(x+1,y+7,w-2,1,P.base);
+    B.add(x+2,y+2,1,1,P.sp);B.add(x+w-5,y+2,3,1,P.sp);B.add(x+w-4,y+1,1,3,P.sp);
+    if(vi>=1){B.add(x+2,y+13,w-4,1,P.dk2);}
+    if(vi===2){B.add(x+2,y-2,1,1,P.dk2);B.add(x+1,y+h,2,3,P.base);}
+  },
+  coil:function(B,P,rng,vi){
+    var cx=15,cy=17,R=vi===2?6:7;
+    B.round(cx-R-1,cy-R-1,2*R+2,2*R+2,P.out);
+    B.round(cx-R,cy-R,2*R,2*R,P.dk);
+    B.round(cx-R+1,cy-R+1,2*R-2,2*R-2,P.base);
+    B.round(cx-R+2,cy-R+2,2*R-4,2*R-4,P.dk2);
+    B.round(cx-R+3,cy-R+3,2*R-6,2*R-6,P.base);
+    B.add(cx-1,cy-1,2,2,P.out);
+    B.add(cx-R+2,cy-R+2,2,1,P.sp);
+    if(vi>=1){B.add(cx+R-2,cy-1,3,1,P.lt);}
+    if(vi===2){B.add(cx-R,cy+R,1,3,P.base);}
+  },
+  vial:function(B,P,rng,vi){
+    var w=6,x=15-(w>>1),y=7,h=17;
+    B.add(x,y-2,w,2,P.mtlD);B.add(x,y-3,w,1,P.mtlL);
+    B.round(x-1,y-1,w+2,h+2,P.out);
+    B.round(x,y,w,h,'#0d1a1f');
+    var ly=y+6;B.round(x+1,ly,w-2,h-7,P.dk);B.round(x+1,ly,w-2,h-7,P.base);
+    B.add(x+1,ly,w-2,1,P.lt);
+    B.add(x+1,y+1,1,h-2,'rgba(255,255,255,0.22)');
+    if(vi>=1){B.add(x+2,ly+2,1,1,P.sp);B.add(x+3,ly+4,1,1,P.sp);}
+    if(vi===2){B.add(x+w-2,y+h,1,3,P.base);}
+  },
+  crystal:function(B,P,rng,vi){
+    var cx=15,y=8;
+    var rows=[[y,2],[y+1,4],[y+2,6],[y+3,8],[y+4,8],[y+5,6],[y+6,6],[y+7,4],[y+8,2]];
+    for(var a=0;a<rows.length;a++)B.add(cx-(rows[a][1]>>1)-1,rows[a][0],rows[a][1]+2,1,P.out);
+    for(var b=0;b<rows.length;b++)B.add(cx-(rows[b][1]>>1),rows[b][0],rows[b][1],1,P.dk);
+    for(var c=0;c<rows.length;c++){var half=Math.max(1,rows[c][1]>>1);B.add(cx-half,rows[c][0],half,1,P.base);}
+    B.add(cx-1,y+1,1,7,P.lt);
+    B.add(cx-2,y+2,1,3,P.sp);
+    if(vi!==2){B.add(cx+2,y+5,3,1,P.out);B.add(cx+3,y+3,2,1,P.dk);B.add(cx+3,y+4,2,3,P.base);B.add(cx+3,y+4,1,3,P.lt);}
+    if(vi===2){B.add(cx-5,y+6,3,1,P.out);B.add(cx-4,y+5,1,3,P.base);B.add(cx-4,y+5,1,1,P.lt);}
+  },
+  brick:function(B,P,rng,vi){
+    var w=13,x=15-(w>>1),y=10,h=13;
+    B.add(x-1,y-1,w+2,h+2,P.out);
+    B.add(x,y,w,h,P.dk);
+    B.add(x+1,y+1,w-2,h-2,P.base);
+    B.add(x+1,y+1,w-2,1,P.lt);B.add(x+1,y+1,1,h-2,P.lt);
+    B.add(x+1,y+h-2,w-2,1,P.dk2);
+    for(var iz=0;iz<6;iz++)B.add(x+2+((rng()*(w-4))|0),y+2+((rng()*(h-4))|0),1,1,rng()<0.5?P.dk2:P.sp);
+    B.add(x+(w>>1)-1,y-1,2,h+2,P.mtlD);B.add(x+(w>>1)-1,y-1,1,h+2,P.mtl);
+    if(vi>=1){B.add(x+2,y+2,w-4,1,P.dk2);}
+    if(vi===2){B.add(x,y+3,2,1,P.dk2);B.add(x+w-2,y+h-3,2,1,P.dk2);}
+  },
+  sac:function(B,P,rng,vi){
+    var cx=15,y=9;
+    var rows=[[y,3],[y+1,5],[y+2,7],[y+3,9],[y+4,10],[y+5,10],[y+6,10],[y+7,9],[y+8,7],[y+9,4]];
+    for(var a=0;a<rows.length;a++)B.add(cx-(rows[a][1]>>1)-1,rows[a][0],rows[a][1]+2,1,P.out);
+    for(var b=0;b<rows.length;b++)B.add(cx-(rows[b][1]>>1),rows[b][0],rows[b][1],1,P.dk);
+    for(var c=0;c<rows.length;c++)B.add(cx-(rows[c][1]>>1)+1,rows[c][0],Math.max(1,rows[c][1]-2),1,P.base);
+    B.add(cx-1,y-2,2,2,P.dk);B.add(cx-1,y-2,1,2,P.mtl);
+    B.add(cx-2,y+3,1,4,P.dk2);B.add(cx+2,y+2,1,5,P.dk2);
+    B.add(cx-2,y+2,2,2,P.sp);
+    if(vi>=1){B.add(cx,y+5,1,3,P.lt);}
+    if(vi===2){B.add(cx+2,y+9,1,2,P.base);B.add(cx-3,y+5,1,1,P.dk2);}
+  },
+  cloth:function(B,P,rng,vi){
+    var w=12,x=15-(w>>1),y=8;
+    B.add(x-1,y-1,w+2,1,P.out);
+    for(var r=0;r<13;r++){B.add(x-1,y+r,1,1,P.out);B.add(x+w,y+r,1,1,P.out);}
+    B.add(x,y,w,12,P.base);
+    B.add(x,y,w,2,P.dk);B.add(x+1,y,w-2,1,P.lt);
+    for(var iz=1;iz<4;iz++){var fx=x+((iz*w/4)|0);B.add(fx,y+2,1,9,P.dk2);B.add(fx+1,y+2,1,9,P.lt);}
+    for(var j=0;j<w;j++){var yy=y+12+((j%2)?1:0);B.add(x+j,y+12,1,1,P.out);B.add(x+j,yy,1,1,j%2?P.dk:P.base);}
+    B.add(x+1,y+3,2,3,P.sp);
+    if(vi===1){B.add(x+w-3,y+5,1,4,P.lt);}
+    if(vi===2){B.add(x+2,y+8,3,1,P.dk2);B.add(x+5,y+6,2,1,P.dk2);}
+  },
+  bag:function(B,P,rng,vi){
+    var cx=15,y=9;
+    B.add(cx-2,y-2,4,1,P.dk);B.add(cx-1,y-1,2,2,P.dk2);B.add(cx-3,y-2,1,1,P.base);B.add(cx+2,y-2,1,1,P.base);
+    var rows=[[y,4],[y+1,7],[y+2,9],[y+3,10],[y+4,11],[y+5,11],[y+6,11],[y+7,10],[y+8,9],[y+9,10],[y+10,8]];
+    for(var a=0;a<rows.length;a++)B.add(cx-(rows[a][1]>>1)-1,rows[a][0],rows[a][1]+2,1,P.out);
+    for(var b=0;b<rows.length;b++)B.add(cx-(rows[b][1]>>1),rows[b][0],rows[b][1],1,P.dk);
+    for(var c=0;c<rows.length;c++)B.add(cx-(rows[c][1]>>1)+1,rows[c][0],Math.max(1,rows[c][1]-2),1,P.base);
+    B.add(cx-3,y+3,1,3,P.dk2);B.add(cx+2,y+4,1,4,P.dk2);B.add(cx-1,y+8,1,2,P.dk2);
+    B.add(cx-2,y+2,2,2,P.sp);
+    if(vi>=1){B.add(cx+1,y+6,2,1,P.lt);}
+    if(vi===2){B.add(cx-1,y+11,2,2,P.base);B.add(cx+3,y+7,1,1,P.dk2);}
+  },
+  core:function(B,P,rng,vi){
+    var w=11,x=15-(w>>1),y=10,h=13;
+    for(var iz=0;iz<4;iz++){B.add(x-2,y+2+iz*3,2,1,P.mtlD);B.add(x+w,y+2+iz*3,2,1,P.mtlD);}
+    B.add(x-1,y-1,w+2,h+2,P.out);
+    B.add(x,y,w,h,P.dk);
+    B.add(x+1,y+1,w-2,h-2,P.dk2);
+    B.add(x+3,y+3,w-6,h-6,P.dk);B.add(x+4,y+4,w-8,h-8,P.base);
+    B.add(x+4,y+4,1,h-8,P.lt);
+    B.add(x+2,y+2,1,h-4,P.dk2);B.add(x+w-3,y+2,1,h-4,P.dk2);
+    B.add(x+2,y+2,1,1,P.sp);
+    if(vi>=1){B.add(x+w-4,y+3,1,1,P.sp);B.add(x+4,y+h-4,w-8,1,P.dk2);}
+    if(vi===2){B.add(x-2,y+2,1,1,P.dk2);B.add(x+1,y+h,2,2,P.base);}
+  }
+};
+
+/* ---- public API --------------------------------------------------------- */
+
+// Build the pixel spec for (archetypeKey, variant 0..2, seed).
+// look (optional) = {form, col}: the layer's planned shape and '#rrggbb' colour for this
+// resource; without it the archetype's own form and hue are used.
+function make(key, variant, seed, look){
+  var cfg = BY_KEY[key] || ARCH[0];
+  var vi = ((variant|0)%3+3)%3;
+  if(seed==null) seed = hash(cfg.k) ^ (0x9e3779b9*(vi+1));
+  var r = rng(seed>>>0);
+  var form = (look && FORMFN[look.form]) ? look.form : cfg.f;
+  var P = (look && look.col) ? palCol(look.col) : pal(cfg.h, vi);
+  var px = [];
+  var B = makeBuilder(px, P);
+  (FORMFN[form] || FORMFN.canister)(B, P, r, vi);
+  return { px:px, glow:P.glow, w:GRID_W, h:GRID_H,
+           phase:r()*6.283, bob:1+r()*0.9,
+           name:cfg.n, id:cfg.id, env:cfg.env, form:form };
+}
+
+// Blit a spec onto a 2D context. Integer scale. (ox,oy) = top-left of the grid.
+function blit(ctx, spec, ox, oy, scale){
+  scale = scale||1;
+  for(var i=0;i<spec.px.length;i++){
+    var p = spec.px[i];
+    ctx.fillStyle = p[4];
+    ctx.fillRect(ox + p[0]*scale, oy + p[1]*scale, p[2]*scale, p[3]*scale);
+  }
+}
+
+// Optional: paint the soft coloured glow behind the sprite (screen blend).
+function glow(ctx, spec, cx, cy, radius, alpha){
+  alpha = (alpha==null?0.6:alpha);
+  var g = ctx.createRadialGradient(cx,cy,0,cx,cy,radius);
+  g.addColorStop(0,   'rgba('+spec.glow+','+alpha+')');
+  g.addColorStop(0.46,'rgba('+spec.glow+','+(alpha*0.24)+')');
+  g.addColorStop(1,   'rgba('+spec.glow+',0)');
+  var prev = ctx.globalCompositeOperation;
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(cx,cy,radius,0,6.2832); ctx.fill();
+  ctx.globalCompositeOperation = prev;
+}
+
+// Vertical bob offset in device pixels for a floater at time t (seconds).
+function bobY(spec, t, scale){
+  scale = scale||1;
+  return Math.sin(t*2 + spec.phase) * spec.bob * scale * 1.3;
+}
+
+var API = { ARCH:ARCH, FORMS:FORMS, BY_KEY:BY_KEY, GRID_W:GRID_W, GRID_H:GRID_H,
+            make:make, blit:blit, glow:glow, bobY:bobY,
+            _hsl:hsl, _pal:pal, _rng:rng, _hash:hash };
+
+if (typeof module!=='undefined' && module.exports) module.exports = API;
+root.FRGen = API;
+
+})(typeof window!=='undefined' ? window : this);
+</script>
+<script>
+(function(){
+"use strict";
+// ============ UTIL ============
+function px(c,x,y,w,h,col){c.fillStyle=col;c.fillRect(x|0,y|0,w|0,h|0);}
+function hash(x,y){let n=(x*374761393+y*668265263)>>>0;n=((n^(n>>13))*1274126177)>>>0;return ((n^(n>>16))>>>0)/4294967296;}
+function clamp(v,a,b){return v<a?a:v>b?b:v;}
+function radial(c,x,y,r,c0,c1){if(r<=0)return;const g=c.createRadialGradient(x,y,0,x,y,r);g.addColorStop(0,c0);g.addColorStop(1,c1);c.fillStyle=g;c.fillRect(x-r,y-r,r*2,r*2);}
+// destination-out cone: carves a soft forward wedge out of the murk (the lantern beam)
+function cutCone(c,x,y,lx,ly,R,half){const ang=Math.atan2(ly,lx);
+  c.save();c.beginPath();c.moveTo(x,y);c.arc(x,y,R,ang-half,ang+half);c.closePath();c.clip();
+  const g=c.createRadialGradient(x,y,0,x,y,R);g.addColorStop(0,'rgba(0,0,0,1)');g.addColorStop(0.62,'rgba(0,0,0,0.9)');g.addColorStop(1,'rgba(0,0,0,0)');
+  c.fillStyle=g;c.fillRect(x-R,y-R,R*2,R*2);c.restore();}
+// additive light shaft for the lantern look
+function beamCone(c,x,y,lx,ly,R,half,col,a){const ang=Math.atan2(ly,lx);
+  c.save();c.beginPath();c.moveTo(x,y);c.arc(x,y,R,ang-half,ang+half);c.closePath();c.clip();
+  const g=c.createRadialGradient(x,y,0,x,y,R);g.addColorStop(0,'rgba('+col+','+a+')');g.addColorStop(0.5,'rgba('+col+','+(a*0.5)+')');g.addColorStop(1,'rgba('+col+',0)');
+  c.fillStyle=g;c.fillRect(x-R,y-R,R*2,R*2);c.restore();}
+function hex2rgb(h){h=h.replace('#','');return h.length===3?[parseInt(h[0]+h[0],16),parseInt(h[1]+h[1],16),parseInt(h[2]+h[2],16)]:[parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)];}
+function shade(h,f){const c=hex2rgb(h);return `rgb(${clamp(c[0]*f|0,0,255)},${clamp(c[1]*f|0,0,255)},${clamp(c[2]*f|0,0,255)})`;}
+// HSL -> #rrggbb (used by the per-play procedural ore/item palette generator)
+function hsl2hex(h,s,l){h=((h%360)+360)%360;s=clamp(s,0,1);l=clamp(l,0,1);
+  const c=(1-Math.abs(2*l-1))*s,x=c*(1-Math.abs((h/60)%2-1)),m=l-c/2;let r,g,b;
+  if(h<60){r=c;g=x;b=0;}else if(h<120){r=x;g=c;b=0;}else if(h<180){r=0;g=c;b=x;}
+  else if(h<240){r=0;g=x;b=c;}else if(h<300){r=x;g=0;b=c;}else{r=c;g=0;b=x;}
+  const to=v=>{const n=clamp(Math.round((v+m)*255),0,255).toString(16);return n.length<2?'0'+n:n;};
+  return '#'+to(r)+to(g)+to(b);}
+/*! ============================================================================
+ *  SEWER DIVER — PROCEDURAL ORE ENGINE  ·  v2  (portable, commented)
+ *  ----------------------------------------------------------------------------
+ *  Generates every "raw" ore from a per-id seed into a SOLID chunky pixel mass
+ *  (no thin sticks). One generator feeds BOTH the menu/inventory icons (SVG)
+ *  and the in-world ore tiles (pre-rendered to a 16x16 offscreen canvas, then
+ *  blitted with one drawImage per frame). Each ore *instance* in the world
+ *  picks one of ORE_VARIANTS shapes by its position hash.
+ *  HOST DEPS (already in scope): ctx, px, shade, clamp, hex2rgb, RES{col,kind},
+ *  TS, RCX/RCY/VW/VH, state.tick, gl, nearOre, ABORT_FUSE.
+ *  TUNING LEVERS: ORE_VARIANTS, ORE_ARCH, GW/GH, SHMUL, the genXxx params, and
+ *  the plotShimmer perp/par positions in drawOre's overlays.
+ * ============================================================================ */
+
+/* ---------- 0. CONFIG / TUNING LEVERS ---------- */
+const GW = 16, GH = 14;          // ore-mass grid: 16 wide, 14 tall (fits a 16px tile with a rock base)
+const ORE_VARIANTS = 1;          // one sprite per ore (no per-instance shape variation)
+const ORE_ARCH = {               // default fallback shapes (overridden per play by the theme system)
+  t1ra:'chunk',  t1rb:'crystal', t1rc:'glob',
+  t2ra:'chunk',  t2rb:'crystal', t2rc:'glob',
+  t3ra:'chunk',  t3rb:'crystal', t3rc:'slab',
+  t4ra:'chunk',  t4rb:'crystal', t4rc:'slab'
+};
+// ----- per-play procedural-theme state (set by genTheme(), read across the renderer) -----
+let RUN_SEED = 1;     // mixed into the ore RNG so masses differ every play
+let THEME = [];       // THEME[tier] = {key,bg,tile,scenery,kelp,pal,oreShapes,floatForms}
+let ICONSHAPE = {};   // id -> 'a'|'b'|'c' : which hand-drawn icon shape a mix/ref item uses this play
+// Shade level -> brightness multiplier applied to the resource colour.
+// 1 dark edge · 2 base · 3 lit edge · 4 specular corner · 5 grime speck.
+const SHMUL = { 1:0.42, 2:1.0, 3:1.28, 4:1.75, 5:0.26 };
+
+/* ---------- 1. DETERMINISTIC RNG (so a given id always yields the same ore) ---------- */
+function _seedStr(s){ let h=2166136261>>>0; for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619); } return h>>>0; }
+function _rng(seed){ let s=(seed>>>0)||1; return function(){ s=(Math.imul(s,1664525)+1013904223)>>>0; return s/4294967296; }; }
+
+/* ---------- 2. OCCUPANCY GRID HELPERS ---------- */
+function _occ(){ return new Uint8Array(GW*GH); }
+function _set(o,x,y){ x|=0;y|=0; if(x>=0&&x<GW&&y>=0&&y<GH) o[y*GW+x]=1; }
+function _get(o,x,y){ return (x>=0&&x<GW&&y>=0&&y<GH)?o[y*GW+x]:0; }
+function pointInPoly(px,py,pts){ let inside=false; for(let i=0,j=pts.length-1;i<pts.length;j=i++){ const xi=pts[i][0],yi=pts[i][1],xj=pts[j][0],yj=pts[j][1]; if(((yi>py)!=(yj>py))&&(px<(xj-xi)*(py-yi)/(yj-yi)+xi))inside=!inside; } return inside; }
+
+/* ---------- 3. ARCHETYPE MASS GENERATORS  (each returns an occupancy grid) ---------- */
+// chunk: random convex-ish polygon (7-9 verts, jittered angle/radius) rasterized into the grid,
+// then flood-filled straight down from each column's topmost hit so the mass reads as solid rock, not a blob outline
+function genChunk(r){
+  const o=_occ(), cx=8, cyc=8, verts=7+(r()*3|0), pts=[];
+  for(let i=0;i<verts;i++){ const a=(i/verts)*Math.PI*2+(r()*0.5-0.25), rad=3.8+r()*2.6; pts.push([cx+Math.cos(a)*rad, cyc+Math.sin(a)*rad*0.96]); }
+  for(let y=0;y<GH;y++)for(let x=0;x<GW;x++) if(pointInPoly(x+0.5,y+0.5,pts)) _set(o,x,y);
+  let maxy=0; for(let i=0;i<o.length;i++) if(o[i]) maxy=Math.max(maxy,(i/GW)|0);
+  for(let x=0;x<GW;x++){ let top=-1; for(let y=0;y<GH;y++) if(_get(o,x,y)){ top=y; break; } if(top>=0) for(let y=top;y<=maxy;y++) _set(o,x,y); }
+  return o;
+}
+// crystal: a squat rock base plus 3-4 tapered vertical "shards" (linear width falloff toward the tip,
+// each with its own random lean/height) planted at jittered x-offsets along the base
+function genCrystal(r){
+  const o=_occ(), bw=5+(r()*3|0);
+  for(let y=GH-3;y<GH;y++)for(let x=8-(bw>>1);x<=8+(bw>>1);x++) _set(o,x,y);
+  const sh=3+(r()*2|0);
+  for(let s=0;s<sh;s++){
+    const bx=8+(r()*7-3.5), lean=(r()*1.0-0.5), hgt=6+r()*7;
+    for(let i=0;i<hgt;i++){
+      const t=i/hgt, cx=bx+lean*i, hw=0.6+1.7*(1-t);
+      const x0=Math.round(cx-hw), x1=Math.round(cx+hw), yy=(GH-2)-i;
+      for(let x=x0;x<=x1;x++) _set(o,x,yy);
+    }
+  }
+  return o;
+}
+// glob: one filled ellipse (soft-body mass) with 1-2 downward "drip" tails of shrinking radius
+// hanging off its lower edge, evoking a viscous/organic deposit rather than hard rock
+function genGlob(r){
+  const o=_occ(), cx=8+(r()*2-1), cy=7+(r()*1.4), rx=4.8+r()*1.4, ry=4.4+r()*1.2;
+  for(let y=0;y<GH;y++)for(let x=0;x<GW;x++){ const dx=(x-cx)/rx, dy=(y-cy)/ry; if(dx*dx+dy*dy<=1) _set(o,x,y); }
+  const drips=1+(r()*2|0);
+  for(let d=0;d<drips;d++){
+    const dx0=cx+(r()*6-3), dyp=cy+ry-0.5, dr=1.6+r()*1.4;
+    for(let i=0;i<4;i++){ const yy=Math.round(dyp+i), rr=Math.max(1,dr-i*0.5); for(let x=Math.round(dx0-rr);x<=Math.round(dx0+rr);x++) _set(o,x,yy); }
+  }
+  return o;
+}
+// slab: stacked horizontal strata built bottom-up — each layer gets a random thickness/width/x-offset,
+// giving a sedimentary/layered-rock silhouette instead of a single mass
+function genSlab(r){
+  const o=_occ(); let y=GH-1, layers=3+(r()*2|0);
+  while(y>1 && layers-->0){
+    const th=2+(r()*2|0), w=8+(r()*5|0), off=(r()*5-2.5)|0;
+    let x0=clamp(8-(w>>1)+off,0,GW-1), x1=clamp(x0+w,1,GW);
+    for(let yy=y-th+1;yy<=y;yy++)for(let x=x0;x<x1;x++) _set(o,x,yy);
+    y-=th;
+  }
+  return o;
+}
+
+// cubes: 2-3 axis-aligned blocks stacked in steps (a pyrite / salt habit): hard right angles, the
+// one mass with no diagonal edge at all. Each block keeps its own lit top and shaded right face.
+function genCubes(r){
+  const o=_occ(), boxes=[];
+  const s1=6+(r()*3|0), x1=1+(r()*2|0); boxes.push([x1,GH-s1,s1,s1]);
+  const s2=4+(r()*2|0), x2=Math.min(GW-s2,x1+s1-1); boxes.push([x2,GH-s2,s2,s2]);
+  if(r()<0.6){const s3=4+(r()*2|0); boxes.push([x1+1+((r()*Math.max(1,s1-s3))|0),Math.max(0,GH-s1-s3+1),s3,s3]);}
+  for(const [x0,y0,w,h] of boxes)for(let y=y0;y<y0+h;y++)for(let x=x0;x<x0+w;x++)_set(o,x,y);
+  o.boxes=boxes; return o;
+}
+// spire: ONE tall obelisk grown to the full grid height on a low rubble foot: the opposite of the
+// crystal cluster (one point, not a crown of shards). Shaded as two facets either side of a ridge.
+function genSpire(r){
+  const o=_occ(), cx=7.5+(r()*2-1), lean=r()*0.5-0.25, hb=3+r()*0.8;
+  for(let i=0;i<GH;i++){const hw=Math.max(0.5,hb*(1-(i/(GH-1))*0.92)), c=cx+lean*i;
+    for(let x=Math.round(c-hw);x<=Math.round(c+hw);x++) _set(o,x,GH-1-i);}
+  for(let x=Math.round(cx-5);x<=Math.round(cx+5);x++) if(r()<0.75) _set(o,x,GH-1);
+  o.ax=cx; o.lean=lean; return o;
+}
+// geode: a round shell cracked open on a bright crystal-lined hollow (dark rim, sparkling core),
+// so it reads as a ring even where it shares a colour with a solid round mass
+function genGeode(r){
+  const o=_occ(), cx=8+(r()*1.2-0.6), cy=7.4, rx=6+r()*0.8, ry=5.8+r()*0.6;
+  for(let y=0;y<GH;y++)for(let x=0;x<GW;x++){const dx=(x+0.5-cx)/rx, dy=(y+0.5-cy)/ry; if(dx*dx+dy*dy<=1) _set(o,x,y);}
+  o.cav=[cx-0.6+r()*0.6, cy-0.4, 2.9+r()*0.7]; return o;
+}
+// nodules: 4-6 separate pebbles with daylight between them: the only broken, scattered silhouette
+function genNodules(r){
+  const o=_occ(), pts=[], n=4+(r()*3|0);
+  for(let k=0,tries=0;k<n&&tries<300;tries++){
+    const rad=1.5+r()*1.1, x=2.5+r()*(GW-5), y=k<2?GH-rad:3+r()*(GH-5);
+    if(pts.every(p=>Math.hypot(p[0]-x,p[1]-y)>p[2]+rad+0.9)){pts.push([x,y,rad]);k++;}
+  }
+  for(const [x0,y0,rad] of pts)for(let y=0;y<GH;y++)for(let x=0;x<GW;x++) if((x+0.5-x0)**2+(y+0.5-y0)**2<=rad*rad) _set(o,x,y);
+  return o;
+}
+
+// vein: a thick zigzag seam climbing the face on the diagonal, with one side branch: the only
+// silhouette that is mostly empty space crossed by a line
+function genVein(r){
+  const o=_occ(), up=r()<0.5?1:-1, x0=up>0?2+r()*2:GW-3-r()*2;
+  let x=x0;
+  for(let y=GH-1;y>=1;y--){ if(((GH-1-y)%3)===2) x+=up*(r()<0.5?2:-0.5); x+=up*0.55;
+    const hw=y>GH-4?1.6:1.15; for(let xx=Math.round(x-hw);xx<=Math.round(x+hw);xx++) _set(o,xx,y);
+    if(y===(GH>>1)){ let bx=x; for(let k=1;k<5;k++){ bx-=up*0.9; _set(o,Math.round(bx),y-k); _set(o,Math.round(bx)+up,y-k); } } }
+  for(let xx=Math.round(x0-2);xx<=Math.round(x0+2);xx++) _set(o,xx,GH-1);
+  return o;
+}
+
+/* ---------- 4. SHADING + PER-ARCHETYPE DETAIL  (occupancy -> shade levels 1..5) ---------- */
+// Light is treated as coming from the top-left: a filled cell with an empty up/left neighbor is "lit"
+// (shade 3, or 4 at a convex corner with no up/left/up-left neighbor at all); one with an empty
+// down/right neighbor is "shaded" (1); everything else is flat mid-tone (2). A few random interior
+// cells are then promoted to 5 (grime specks) for texture, plus an archetype-specific tweak pass below.
+function shadeMass(o,r,arch){
+  const out=new Uint8Array(GW*GH);
+  for(let y=0;y<GH;y++)for(let x=0;x<GW;x++){
+    if(!_get(o,x,y))continue;
+    const up=_get(o,x,y-1),lf=_get(o,x-1,y),dn=_get(o,x,y+1),rt=_get(o,x+1,y),ul=_get(o,x-1,y-1);
+    const litN=(up?0:1)+(lf?0:1), shdN=(dn?0:1)+(rt?0:1);
+    let s;
+    if(litN>=1&&shdN===0) s=(!up&&!lf&&!ul)?4:3;
+    else if(shdN>=1&&litN===0) s=1;
+    else s=2;
+    out[y*GW+x]=s;
+  }
+  const inner=[]; for(let i=0;i<out.length;i++) if(out[i]===2) inner.push(i);
+  const g=1+(r()*2|0);
+  for(let k=0;k<g&&inner.length;k++){ const j=(r()*inner.length)|0; out[inner[j]]=5; inner.splice(j,1); }
+  // archetype-specific extra detail: chunk gets a stray dark facet, glob gets a single bright highlight
+  // "seam" following its first solid row, slab gets darkened bedding lines every 3rd occupied row
+  if(arch==='chunk'){
+    const cand=[]; for(let y=4;y<GH-2;y++)for(let x=3;x<GW-3;x++){ const i=y*GW+x; if(out[i]>=2&&_get(o,x+1,y)&&_get(o,x,y+1)&&_get(o,x-1,y)) cand.push([x,y]); }
+    if(cand.length){ const c=cand[(r()*cand.length)|0]; out[c[1]*GW+c[0]]=1; if(out[(c[1]-1)*GW+c[0]-1]>0)out[(c[1]-1)*GW+c[0]-1]=4; if(out[c[1]*GW+c[0]+1]>0)out[c[1]*GW+c[0]+1]=3; }
+  } else if(arch==='glob'){
+    for(let y=0;y<GH;y++){ let done=false; for(let x=0;x<GW;x++){ const i=y*GW+x; if(out[i]>=2){ out[i]=4; if(out[i+1]>=2)out[i+1]=3; if(out[(y+1)*GW+x]>=2)out[(y+1)*GW+x]=3; done=true; break; } } if(done)break; }
+  } else if(arch==='slab'){
+    for(let y=2;y<GH;y++){ let rowHas=false; for(let x=0;x<GW;x++) if(_get(o,x,y)) rowHas=true; if(rowHas&&(y%3===0)){ for(let x=0;x<GW;x++){ const i=y*GW+x; if(out[i]>=2)out[i]=1; } } }
+  } else if(arch==='cubes'){   // every block repaints its own faces, back to front
+    for(const [x0,y0,w,h] of o.boxes)for(let y=y0;y<y0+h;y++)for(let x=x0;x<x0+w;x++){
+      out[y*GW+x]=(y===y0&&x===x0)?4:(y===y0||x===x0)?3:(x===x0+w-1||y===y0+h-1)?1:2; }
+    for(const [x0,y0] of o.boxes) if(out[(y0+1)*GW+x0+1]===2) out[(y0+1)*GW+x0+1]=4;
+  } else if(arch==='spire'){   // lit left facet, ridge highlight, dark right facet
+    for(let y=0;y<GH;y++){ const c=o.ax+o.lean*(GH-1-y), rx=Math.round(c);
+      for(let x=0;x<GW;x++){ const i=y*GW+x; if(out[i]<2||out[i]===5)continue; out[i]=x===rx?4:x<rx?3:2; } }
+  } else if(arch==='geode'){   // the hollow: dark rim, then crystals sparkling 4/3
+    const [gx,gy,gr]=o.cav;
+    for(let y=0;y<GH;y++)for(let x=0;x<GW;x++){ const i=y*GW+x; if(!out[i])continue; const d=Math.hypot(x+0.5-gx,y+0.5-gy);
+      if(d<gr) out[i]=d>gr-1.1?1:(((x+y)&1)||r()<0.3)?4:3; }
+  }
+  return out;
+}
+
+/* ---------- 5. PUBLIC: shade-level grid for an (id, variant), memoized ---------- */
+// resource ids are t{N}{kind}{slot} with N possibly multi-digit (deep tiers) → parse robustly
+function idTier(id){ return parseInt(id.slice(1,-2))||1; }   // 1-based tier number
+function idSlot(id){ return id[id.length-1]; }               // a | b | c
+// shape archetype for an ore id — per-play theme override, falling back to the static defaults
+function oreShapeFor(id){ const tier=idTier(id)-1, s=idSlot(id);
+  return (THEME[tier]&&THEME[tier].oreShapes&&THEME[tier].oreShapes[s])||ORE_ARCH[id]||'chunk'; }
+function genOreLevels(id,variant){
+  const arch=oreShapeFor(id);
+  const r=_rng((_seedStr(id)^Math.imul(variant+1,0x9E3779B1)^RUN_SEED)>>>0);
+  let o;
+  switch(arch){ case 'crystal':o=genCrystal(r);break; case 'glob':o=genGlob(r);break; case 'slab':o=genSlab(r);break;
+    case 'cubes':o=genCubes(r);break; case 'spire':o=genSpire(r);break; case 'geode':o=genGeode(r);break; case 'nodules':o=genNodules(r);break; case 'vein':o=genVein(r);break;
+    default:o=genChunk(r); }
+  return shadeMass(o,r,arch);
+}
+let _oreLv={};
+function oreLevels(id,variant){ const k=id+'|'+variant; return _oreLv[k]||(_oreLv[k]=genOreLevels(id,variant)); }
+// drop cache entries (keyed "id|...") for ids whose tier is far from the diver — safe because both
+// caches are pure functions of (id, variant[, face]) and rebuild identically from RUN_SEED on revisit
+function evictFarCache(cache,pti){for(const k in cache){const t=idTier(k.slice(0,k.indexOf('|')))-1;if(t<pti-2||t>pti+2)delete cache[k];}}
+
+/* ---------- 6. RENDERER A — SVG icon (menus / inventory / shop / reward popup) ---------- */
+// The icon IS the in-world ore tile: the exact canvas drawOre blits (mass + baked rock base), read
+// back pixel by pixel into an SVG, so an icon can never drift from the sprite you mine.
+const _oreSvg=new Map();
+function oreGridSVG(id,sz){
+  const ck=id+'|'+RES[id].col+'|'+oreShapeFor(id)+'|'+RUN_SEED;
+  let rects=_oreSvg.get(ck);
+  if(rects==null){rects=canvasRects(getOreCanvas(id,0,'up'));_oreSvg.set(ck,rects);}
+  return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16" shape-rendering="crispEdges">'+rects+'</svg>';
+}
+// opaque pixels of a small canvas as SVG rects, runs of one colour merged along each row
+function canvasRects(cv){
+  const w=cv.width,h=cv.height,d=cv.getContext('2d').getImageData(0,0,w,h).data;let out='';
+  for(let y=0;y<h;y++)for(let x=0;x<w;){const i=(y*w+x)*4;if(d[i+3]<8){x++;continue;}
+    const col='rgb('+d[i]+','+d[i+1]+','+d[i+2]+')';let n=1;
+    while(x+n<w){const j=(y*w+x+n)*4;if(d[j+3]<8||d[j]!==d[i]||d[j+1]!==d[i+1]||d[j+2]!==d[i+2])break;n++;}
+    out+='<rect x="'+x+'" y="'+y+'" width="'+n+'" height="1" fill="'+col+'"/>';x+=n;}
+  return out;
+}
+
+/* ---------- 7. RENDERER B — in-world ore (face-aware, baked rock base, cached) ---------- */
+// shared face-aware (perp,par) -> tile-local (rx,ry) transform — used by both the offscreen ore-canvas
+// baker (plotPxC) and the live shimmer overlay (plotShimmer), which previously duplicated this branch
+function faceXY(face,perp,par){
+  if(face==='up')return [8+par,15-perp];
+  if(face==='down')return [8+par,perp];
+  if(face==='left')return [15-perp,8+par];
+  return [perp,8+par];
+}
+function plotPxC(cc,face,perp,par,col){
+  const [rx,ry]=faceXY(face,perp,par);
+  if(rx<0||rx>15||ry<0||ry>15)return;
+  cc.fillStyle=col; cc.fillRect(rx,ry,1,1);
+}
+function buildOreCanvas(id,variant,face){
+  const c=RES[id].col, lv=oreLevels(id,variant), cv=document.createElement('canvas');
+  cv.width=16; cv.height=16; const cc=cv.getContext('2d'); cc.imageSmoothingEnabled=false;
+  for(let perp=0;perp<3;perp++)for(let par=-8;par<8;par++) plotPxC(cc,face,perp,par,perp===0?'#37464f':'#28333d');
+  for(let perp=1;perp<3;perp++){ plotPxC(cc,face,perp,-7,'#313f49'); plotPxC(cc,face,perp,-6,'#313f49'); plotPxC(cc,face,perp,5,'#313f49'); plotPxC(cc,face,perp,6,'#313f49'); }
+  for(let gy=0;gy<GH;gy++)for(let gx=0;gx<GW;gx++){ const s=lv[gy*GW+gx]; if(!s)continue; plotPxC(cc,face,15-gy,gx-8,shade(c,SHMUL[s])); }
+  return cv;
+}
+let _oreCanv={};
+function getOreCanvas(id,variant,face){ const k=id+'|'+variant+'|'+face; return _oreCanv[k]||(_oreCanv[k]=buildOreCanvas(id,variant,face)); }
+// which hand-drawn icon shape (a/b/c) a mix/ref item uses this play
+function iconVar(id){ return ICONSHAPE[id]||id[id.length-1]; }
+function plotShimmer(X,Y,face,perp,par,col){
+  const [rx,ry]=faceXY(face,perp,par);
+  px(ctx,X+rx,Y+ry,1,1,col);
+}
+
+// A floating resource's look: its layer's planned form (riPlan) and its RES colour. Saves made
+// before the plan carried no floatForms and fall back to the environment's own FRGen form.
+function floatLook(id){
+  const T=THEME[idTier(id)-1], key=(T&&T.key&&FRGen.BY_KEY[T.key])?T.key:'cybersewer', s=idSlot(id);
+  return {key, variant:Math.max(0,'abc'.indexOf(s)), form:(T&&T.floatForms&&T.floatForms[s])||FRGen.BY_KEY[key].f, col:RES[id].col};
+}
+// ---------- RENDERER C: SVG icon of a floating resource: the FRGen sprite it has in the water, same form,
+// colour and pixels (only the per-spot seed's speckle differs) ----------
+const _floatSvg=new Map();
+function floatSVG(id,sz){
+  const lk=floatLook(id), ck=lk.form+'|'+lk.col+'|'+lk.variant;
+  let body=_floatSvg.get(ck);
+  if(!body){
+    const spec=FRGen.make(lk.key,lk.variant,FRGen._hash(lk.key+':'+lk.variant),lk);
+    let x0=99,y0=99,x1=0,y1=0,rects='';
+    for(const p of spec.px){x0=Math.min(x0,p[0]);y0=Math.min(y0,p[1]);x1=Math.max(x1,p[0]+p[2]);y1=Math.max(y1,p[1]+p[3]);
+      rects+='<rect x="'+p[0]+'" y="'+p[1]+'" width="'+p[2]+'" height="'+p[3]+'" fill="'+p[4]+'"/>';}
+    const side=Math.max(x1-x0,y1-y0)+2, vx=(x0+x1-side)/2, vy=(y0+y1-side)/2;   // square box around the sprite
+    body=[vx+' '+vy+' '+side+' '+side,rects];_floatSvg.set(ck,body);
+  }
+  return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="'+body[0]+'" shape-rendering="crispEdges">'+body[1]+'</svg>';
+}
+
+const ARCHETYPES={
+  cybersewer:{
+    name:'CITY SEWERS', suit:'CHROME DIVE-RIG', bg:'ducts', tile:'metal',
+    water:['#11313f','#0c2531','#071b25'], rock:'#3a4452',
+    scenery:['pipe','neon','girder','pipe'], kelp:['#2e7d4f','#5fe39a'],
+    shapes:['chunk','crystal'], palHues:[320,190,32],
+    pal:{base:'#0f2129',seam:'#0a1820',hi:'#163240',rivet:'#21424e',pipe:'#27434e',pipeL:'#3a5e6a',moss:'#2c5e3c',accent:'#2fd0e0',acc2:'66,220,235'},
+    raw:['Scrap Iron','Neon Glass','Rubber Cord','Chrome Stud','Circuit Slag','Wire Bundle','Alloy Chip','Ferro Crystal'],
+    mix:['Solvent','Flux','Synth Oil','Acid Wash','Glow Ink','Degreaser','Brine'],
+    ref:['Sealed Plate','Lens Array','Flex Seal','Servo Mount','Patch Panel','Drone Core','Spark Cell']},
+  swamp:{
+    name:'BIOCYBER SWAMP', suit:'BIO-MEMBRANE SUIT', bg:'core', tile:'bio',
+    water:['#13301c','#0d2414','#07180d'], rock:'#37443a',
+    scenery:['vat','tower','vat','rustpipe'], kelp:['#4f8a2e','#9cf04f'],
+    shapes:['glob','crystal'], palHues:[140,95,278],
+    pal:{base:'#112318',seam:'#0a1810',hi:'#1c3a26',rivet:'#26492f',pipe:'#2c4a36',pipeL:'#3f6a4a',moss:'#3a7d2e',accent:'#5fe07a',acc2:'90,230,110'},
+    raw:['Bio-Resin','Spore Cluster','Nerve Coral','Chitin Plate','Myco Crystal','Synap Bulb','Vine Sinew','Gene Pod'],
+    mix:['Enzyme','Bioslime','Plasma Sap','Neural Fluid','Mutagen','Culture Broth','Spore Wash'],
+    ref:['Tissue Mesh','Synth Organ','Bio-Circuit','Graft Plate','Membrane Cell','Splice Core','Nerve Weave']},
+  radioactive:{
+    name:'RADIOACTIVE WASTE', suit:'LEAD-LINED RIG', bg:'reactor', tile:'toxic',
+    water:['#1d3310','#142609','#0b1705'], rock:'#3c4030',
+    scenery:['rustpipe','valve','vat','tower'], kelp:['#7a8a1e','#d6ff4f'],
+    shapes:['glob','chunk'], palHues:[88,66,46],
+    pal:{base:'#1c2410',seam:'#121908',hi:'#2c3a16',rivet:'#3a4a1e',pipe:'#3e4a22',pipeL:'#5e6a32',moss:'#6a7a1e',accent:'#c6ff3c',acc2:'180,255,60'},
+    raw:['Uranium Slug','Cesium Rod','Cobalt Pellet','Plutonium Bead','Strontium Ore','Tritium Shard','Radium Clump','Thorium Lump'],
+    mix:['Heavy Water','Coolant Sludge','Isotope Gel','Boron Wash','Neutron Brine','Decay Acid','Tritium Vapor'],
+    ref:['Fuel Cell','Lead Shielding','Reactor Plate','Control Rod','Containment Pane','Hot Cell Core','Damper Mesh']},
+  datacentre:{
+    name:'DEAD DATA CENTRE', suit:'SERVER-SHELL MECH', bg:'racks', tile:'tech',
+    water:['#10203a','#0b1730','#070f20'], rock:'#2c3340',
+    scenery:['circuit','server','gear','circuit'], kelp:['#3a4a8a','#7f9cff'],
+    shapes:['crystal','slab'], palHues:[205,190,45],
+    pal:{base:'#101626',seam:'#0a0e1a',hi:'#1a2238',rivet:'#283450',pipe:'#27374c',pipeL:'#3a4f6a',moss:'#3a3a6a',accent:'#46d0ff',acc2:'90,180,255'},
+    raw:['Server Shard','Silicon Wafer','Fiber Coil','Memristor Ore','Sapphire Die','Capacitor Bud','Gold Contact','Quartz Die'],
+    mix:['Coolant','Solder Flux','Thermal Paste','Dielectric Gel','Ionized Mist','Etchant','Cryo Fluid'],
+    ref:['Logic Board','Heat Sink','Optic Bus','Cache Cell','Bus Array','Shielded Core','Riser Card']},
+  filtration:{
+    name:'FILTRATION STATION', suit:'OSMOSIS HARDSUIT', bg:'tanks', tile:'concrete',
+    water:['#123036','#0c2329','#07181d'], rock:'#3a4750',
+    scenery:['rustpipe','valve','tower','pipe'], kelp:['#2b6d6a','#52e0d2'],
+    shapes:['slab','chunk'], palHues:[184,200,34],
+    pal:{base:'#13262b',seam:'#0c191d',hi:'#1d3a40',rivet:'#2a4a50',pipe:'#2c4a50',pipeL:'#436a70',moss:'#2c6e6a',accent:'#46e0d0',acc2:'70,224,208'},
+    raw:['Lime Scale','Carbon Pellet','Sand Crystal','Brine Salt','Rust Flake','Ceramic Bead','Resin Bead','Sediment Lump'],
+    mix:['Chlorine','Floc Gel','Brine','Reagent','Slurry','Ozone Wash','Backwash'],
+    ref:['Filter Membrane','Settling Plate','Sluice Valve','Intake Lens','Osmosis Cell','Clarifier Core','Weir Plate']}
+};
+/* ============================================================================
+ * ARCHETYPES_EXT — 60 additional cyberpunk city-sewer archetypes for
+ * SEWER DIVER: THE DESCENT  (sewerdiverdescent-pause1.html)
+ *
+ * Schema is a strict superset of the game's ARCHETYPES entries (line 1555):
+ *   name, suit, bg, tile, water[3], rock, scenery[4], kelp[2],
+ *   shapes[], palHues[3], pal{base,seam,hi,rivet,pipe,pipeL,moss,accent,acc2},
+ *   raw[8], mix[7], ref[7]
+ * plus NEW fields (ignored by existing code, consumed by the city engine):
+ *   bgx   — preferred EXTENDED background renderer (see plan doc §8.4);
+ *           `bg` always holds a valid existing renderer (ducts/core/reactor/
+ *           racks/tanks) so this file is drop-in TODAY with zero art work.
+ *   tilex — preferred EXTENDED tile painter (doc §8.5); `tile` likewise
+ *           always holds an existing painter (metal/bio/toxic/tech/concrete).
+ *   float — the archetype's SIGNATURE floating-resource form: the resource
+ *           plan (riPlanEnv) prefers it, but every layer's 3 floats get 3
+ *           different forms from all 14 FRGen forms (resource-identity.md)
+ *   plat  — 3 platform-motif tags overlaid by drawTile (doc §8.2)
+ *   shapes — the archetype's SIGNATURE ore forms, preferred by the resource
+ *           plan; the full set is chunk | cubes | crystal | spire | glob |
+ *           geode | nodules | slab | vein   (genOreLevels, RI_ORE_FAM)
+ *
+ * INSTALL (1 line, after the ARCHETYPES literal closes at ~line 1601):
+ *   Object.assign(ARCHETYPES, ARCHETYPES_EXT);
+ * ========================================================================== */
+const ARCHETYPES_EXT={
+  stormdrain:{
+    name:'STORM DRAIN NETWORK', suit:'TEMPEST SHELL', bg:'tanks', tile:'concrete', bgx:'channels', tilex:'brick',
+    water:['#14303c','#0d2430','#081a24'], rock:'#41505c',
+    scenery:['rustpipe','valve','pipe','girder'], kelp:['#3a6d5a','#6fe0b0'],
+    shapes:['chunk','slab','crystal'], float:'canister', plat:['drip','stain','grate'], palHues:[204,158,36],
+    pal:{base:'#122630',seam:'#0b1a22',hi:'#1c3a48',rivet:'#2a4a58',pipe:'#2c4854',pipeL:'#44687a',moss:'#2e6a52',accent:'#4fc8e8',acc2:'79,200,232'},
+    raw:['Gutter Iron','Storm Glass','Grit Nugget','Curb Alloy','Runoff Quartz','Manhole Shard','Gravel Core','Flow Crystal'],
+    mix:['Rainwash','Silt Slurry','Road Salt','Petrol Sheen','Foam Runoff','Grit Suspension','Overflow Brine'],
+    ref:['Culvert Ring','Grate Panel','Baffle Plate','Surge Gate','Weep Valve','Catch Basin Core','Splash Guard']},
+  metro:{
+    name:'FLOODED METRO LINE', suit:'TRANSIT EXO-FRAME', bg:'racks', tile:'metal', bgx:'platform', tilex:'ceramic',
+    water:['#182636','#111c2a','#0a121d'], rock:'#3a4250',
+    scenery:['girder','neon','pipe','server'], kelp:['#3a5a7a','#7fb6ff'],
+    shapes:['slab','chunk','crystal'], float:'canister', plat:['sign','tread','rivet'], palHues:[214,42,352],
+    pal:{base:'#141c2a',seam:'#0c121c',hi:'#20304a',rivet:'#2c3c56',pipe:'#2a3a50',pipeL:'#42587a',moss:'#3a4a6a',accent:'#5a9aff',acc2:'90,154,255'},
+    raw:['Rail Steel','Ticket Alloy','Third-Rail Ore','Turnstile Gear','Ballast Stone','Signal Lens','Brake Filing','Platform Tile'],
+    mix:['Brake Fluid','Track Grease','Ozone Wash','Diesel Bloom','Sand Dispense','Coupler Oil','Tunnel Damp'],
+    ref:['Bogie Frame','Signal Block','Door Actuator','Pantograph Arm','Route Board','Traction Core','Coupler Head']},
+  foundry:{
+    name:'SUNKEN FOUNDRY RUN', suit:'SLAG-PROOF FURNACE RIG', bg:'reactor', tile:'metal', bgx:'furnace', tilex:'slag',
+    water:['#301c10','#241408','#170c04'], rock:'#4a3c30',
+    scenery:['rustpipe','gear','tower','valve'], kelp:['#7a4a1e','#ffb04f'],
+    shapes:['chunk','glob','slab'], float:'pod', plat:['weld','crack','chevron'], palHues:[24,44,4],
+    pal:{base:'#241610',seam:'#170d08',hi:'#3a2418',rivet:'#4a3020',pipe:'#463022',pipeL:'#6a4a34',moss:'#5e3a1a',accent:'#ff8a3c',acc2:'255,138,60'},
+    raw:['Pig Iron','Slag Glass','Crucible Chip','Mold Sand Ore','Tap Nugget','Anvil Scrap','Cinder Chunk','Billet Stub'],
+    mix:['Quench Oil','Flux Melt','Casting Slip','Slag Wash','Furnace Tar','Tempering Brine','Ash Slurry'],
+    ref:['Cast Plate','Tuyere Nozzle','Ladle Shell','Ingot Rack','Firebrick Core','Tap Valve','Anvil Cap']},
+  cryostack:{
+    name:'CRYO STORAGE STACKS', suit:'THERMAL LINER SUIT', bg:'tanks', tile:'tech', bgx:'coldstore', tilex:'frost',
+    water:['#16303e','#0e2532','#081b26'], rock:'#3c4a56',
+    scenery:['pipe','server','valve','tower'], kelp:['#3a7a8a','#9fe8ff'],
+    shapes:['crystal','slab','chunk'], float:'bulb', plat:['frost','vent','led'], palHues:[192,220,300],
+    pal:{base:'#10222c',seam:'#0a1721',hi:'#1a3644',rivet:'#274a5a',pipe:'#284856',pipeL:'#3f6a7c',moss:'#2c5a6a',accent:'#7fe6ff',acc2:'127,230,255'},
+    raw:['Frost Alloy','Cryo Crystal','Rime Chunk','Glacier Glass','Cold-Weld Stub','Hoar Nugget','Dewar Shard','Icebound Ore'],
+    mix:['Liquid Nitro','Glycol Chill','Frost Retardant','Defrost Acid','Vapor Trap','Sub-Zero Gel','Brine Chiller'],
+    ref:['Dewar Shell','Insulation Panel','Chill Coil','Freezer Seal','Thermal Gasket','Cryo Valve','Cold Plate']},
+  geothermal:{
+    name:'GEOTHERMAL EXCHANGE', suit:'HEAT-SINK CARAPACE', bg:'reactor', tile:'toxic', bgx:'furnace', tilex:'slag',
+    water:['#2e1c14','#22140c','#150c06'], rock:'#4a3a2e',
+    scenery:['valve','rustpipe','tower','pipe'], kelp:['#8a4a2e','#ff9a5f'],
+    shapes:['glob','chunk','crystal'], float:'pod', plat:['crack','drip','weld'], palHues:[16,36,350],
+    pal:{base:'#221410',seam:'#160c08',hi:'#362016',rivet:'#462c1e',pipe:'#422c20',pipeL:'#644434',moss:'#5e2e1a',accent:'#ff6a3c',acc2:'255,106,60'},
+    raw:['Basalt Chunk','Sulfur Bloom','Vent Crystal','Magma Glass','Scald Nugget','Pumice Core','Brimstone Clod','Thermo Shard'],
+    mix:['Scalding Brine','Sulfur Slick','Steam Bleed','Mineral Boil','Vent Condensate','Mud Boil','Flash Steam'],
+    ref:['Heat Exchanger','Vent Cap','Bore Casing','Steam Trap','Manifold Plate','Scald Shield','Thermo Cell']},
+  medbay:{
+    name:'DROWNED MED-BAY', suit:'STERILE ISOPOD SUIT', bg:'tanks', tile:'concrete', bgx:'coldstore', tilex:'ceramic',
+    water:['#183436','#112628','#0a1a1c'], rock:'#3e4a4e',
+    scenery:['vat','server','pipe','valve'], kelp:['#3a8a6a','#8fffd0'],
+    shapes:['crystal','glob','slab'], float:'bulb', plat:['stain','led','scale'], palHues:[168,196,340],
+    pal:{base:'#122624',seam:'#0b1a19',hi:'#1c3a38',rivet:'#2a4a46',pipe:'#2a4844',pipeL:'#427068',moss:'#2c6a52',accent:'#4fe8c0',acc2:'79,232,192'},
+    raw:['Surgical Steel','Vial Glass','Titanium Pin','Ampoule Bead','Scalpel Shard','Ceramic Crown','Suture Wire','Iso Crystal'],
+    mix:['Saline','Anesthetic','Antiseptic Wash','Plasma Bag','Contrast Dye','Coolant Drip','Sterilant'],
+    ref:['Autoclave Core','Monitor Bezel','Drip Manifold','Splint Frame','Lens Scope','Vitals Board','Iso Chamber Seal']},
+  brewery:{
+    name:'VAT BREWERY RUNOFF', suit:'FERMENT-SEAL SUIT', bg:'core', tile:'bio', bgx:'canopy', tilex:'brick',
+    water:['#2a2410','#1e1a0a','#121005'], rock:'#46402c',
+    scenery:['vat','rustpipe','valve','tower'], kelp:['#6a6a1e','#e8d04f'],
+    shapes:['glob','chunk','slab'], float:'jelly', plat:['foam','drip','stain'], palHues:[46,84,20],
+    pal:{base:'#221c0e',seam:'#161208',hi:'#362e16',rivet:'#463c1e',pipe:'#423a20',pipeL:'#645832',moss:'#5e5a1e',accent:'#ffd23c',acc2:'255,210,60'},
+    raw:['Copper Kettle','Malt Cake','Barm Crystal','Hop Resin','Keg Steel','Tartrate Crust','Grain Husk Ore','Amber Glass'],
+    mix:['Wort','Yeast Slurry','Krausen Foam','Caustic Rinse','Trub Sludge','Priming Syrup','Sour Mash'],
+    ref:['Bung Valve','Coil Chiller','Rack Arm','Mash Paddle Core','Keg Coupler','Fermenter Lid','Tap Manifold']},
+  fueldepot:{
+    name:'FUEL DEPOT INTERCEPTOR', suit:'ANTI-STATIC TANKER RIG', bg:'tanks', tile:'metal', bgx:'gallery', tilex:'grate',
+    water:['#28221a','#1c1810','#100e08'], rock:'#443e32',
+    scenery:['pipe','valve','tower','rustpipe'], kelp:['#6a5a2e','#e0c05f'],
+    shapes:['slab','chunk','glob'], float:'canister', plat:['chevron','stain','bolt'], palHues:[38,60,200],
+    pal:{base:'#1e1a12',seam:'#13100a',hi:'#302a1c',rivet:'#403826',pipe:'#3c3624',pipeL:'#5c5238',moss:'#54481e',accent:'#ffbf3c',acc2:'255,191,60'},
+    raw:['Drum Steel','Octane Crystal','Gasket Rubber','Paraffin Lump','Nozzle Brass','Sump Iron','Sludge Coke','Vapor Bead'],
+    mix:['Kerosene Cut','Diesel Bleed','Anti-Knock Dose','Static Wash','Sump Slurry','Vapor Recovery','Tank Bottoms'],
+    ref:['Bund Wall Plate','Flame Arrestor','Fill Coupler','Gauge Float','Vapor Seal','Pump Skid Core','Earth Strap']},
+  cryptomine:{
+    name:'ABANDONED CRYPTO MINE', suit:'HASH-HEAT EXO', bg:'racks', tile:'tech', bgx:'gallery', tilex:'grate',
+    water:['#141e34','#0e1628','#080e1a'], rock:'#323a4a',
+    scenery:['server','circuit','gear','neon'], kelp:['#4a3a8a','#9f7fff'],
+    shapes:['slab','crystal','chunk'], float:'canister', plat:['led','cable','vent'], palHues:[262,196,44],
+    pal:{base:'#141428',seam:'#0d0d1c',hi:'#20203e',rivet:'#2c2c54',pipe:'#2a2c4c',pipeL:'#42447a',moss:'#3a3a7a',accent:'#8f6aff',acc2:'143,106,255'},
+    raw:['ASIC Husk','GPU Shroud','Heatpipe Stub','Solder Bead','Rig Frame Ore','Fan Bearing','Hash Crystal','PSU Coil'],
+    mix:['Immersion Oil','Thermal Grease','Flux Residue','Dust Bloom','Capacitor Gel','Undervolt Serum','Coil Whine Damp'],
+    ref:['Hash Board','Riser Spine','Fan Wall Panel','Immersion Tank Core','Nonce Cell','Rack Rail','Firmware Vault']},
+  neonrunoff:{
+    name:'NEON DISTRICT RUNOFF', suit:'GLOWPROOF SLICKER', bg:'ducts', tile:'metal', bgx:'channels', tilex:'ceramic',
+    water:['#241430','#1a0e24','#0e0816'], rock:'#3e3448',
+    scenery:['neon','pipe','circuit','girder'], kelp:['#7a2e6a','#ff5fd0'],
+    shapes:['crystal','glob','chunk'], float:'bulb', plat:['led','sign','trace'], palHues:[312,186,52],
+    pal:{base:'#1c1226',seam:'#120b1a',hi:'#2e1e3e',rivet:'#3e2a52',pipe:'#3a284a',pipeL:'#5c4276',moss:'#4a2e5e',accent:'#ff4fd8',acc2:'255,79,216'},
+    raw:['Neon Tube Shard','Argon Bead','Sign Frame Alloy','Phosphor Chip','Ballast Core','Diode Cluster','Chrome Trim','Glow Crystal'],
+    mix:['Noble Gas Bleed','Phosphor Slurry','Sign Wash','Electro Ink','Solvent Glow','Pigment Bloom','Tube Vacuum Draw'],
+    ref:['Sign Ballast','Tube Bender Jig','Letter Channel','Flasher Relay','Dimmer Core','Facade Clip','Halo Mount']},
+  arcology:{
+    name:'ARCOLOGY GREYWATER CORE', suit:'ARCO-CIRCULATOR SUIT', bg:'tanks', tile:'concrete', bgx:'gallery', tilex:'ceramic',
+    water:['#16323a','#0f252c','#091a1f'], rock:'#3c4a52',
+    scenery:['tower','pipe','valve','server'], kelp:['#3a7a5a','#7fe8b0'],
+    shapes:['slab','crystal','glob'], float:'canister', plat:['scale','vent','stain'], palHues:[176,208,64],
+    pal:{base:'#12262a',seam:'#0b1a1e',hi:'#1c3a42',rivet:'#2a4a54',pipe:'#2a4850',pipeL:'#427078',moss:'#2e6a56',accent:'#4fe0c8',acc2:'79,224,200'},
+    raw:['Habitat Alloy','Greywater Pearl','Filter Frit','Balcony Steel','Atrium Glass','Solar Film Chip','Duct Segment','Scale Crystal'],
+    mix:['Grey Reclaim','Soap Bloom','Nutrient Loop','Ph Balancer','Lint Slurry','Rain Capture','Detergent Cut'],
+    ref:['Recirc Pump Core','Grey Manifold','Terrace Drain','Atrium Louver','Loop Filter','Habitat Seal','Cistern Cap']},
+  chopshop:{
+    name:'CHOP-SHOP UNDERDRAIN', suit:'SCRAPPER FRAME', bg:'ducts', tile:'metal', bgx:'furnace', tilex:'grate',
+    water:['#241e1a','#1a1512','#0f0c0a'], rock:'#443c36',
+    scenery:['gear','girder','rustpipe','neon'], kelp:['#6a4a2e','#e09f5f'],
+    shapes:['chunk','slab','glob'], float:'pod', plat:['weld','bolt','crack'], palHues:[28,208,352],
+    pal:{base:'#1e1812',seam:'#130f0b',hi:'#30261c',rivet:'#403426',pipe:'#3c3224',pipeL:'#5c4e3a',moss:'#54401e',accent:'#ff9a3c',acc2:'255,154,60'},
+    raw:['Chassis Steel','VIN Plate','Axle Stub','Chrome Bumper','Catalytic Bead','Window Cube','Piston Slug','Harness Copper'],
+    mix:['Motor Oil','Brake Bleed','Degreaser Bath','Paint Stripper','Coolant Drain','Grinder Sparkdust','Filler Resin'],
+    ref:['Panel Skin','Bearing Race','Torque Plate','Camshaft Core','Salvage Clamp','Airbag Cell','Immobilizer Chip']},
+  vatfarm:{
+    name:'PROTEIN VAT FARM', suit:'NUTRIENT-PROOF SKIN', bg:'core', tile:'bio', bgx:'canopy', tilex:'ceramic',
+    water:['#26240e','#1b1a08','#0f0e04'], rock:'#44422c',
+    scenery:['vat','tower','pipe','valve'], kelp:['#7a7a1e','#e8e84f'],
+    shapes:['glob','slab','crystal'], float:'jelly', plat:['foam','scale','drip'], palHues:[64,110,24],
+    pal:{base:'#1e1e0e',seam:'#131306',hi:'#303016',rivet:'#40401e',pipe:'#3c3c20',pipeL:'#5c5c32',moss:'#5e6a1e',accent:'#d8e83c',acc2:'216,232,60'},
+    raw:['Textured Cake','Culture Crystal','Mycel Brick','Casein Curd','Agar Slab Ore','Growth Frame','Protein Pearl','Broth Salt'],
+    mix:['Nutrient Broth','Growth Serum','Enzyme Rinse','Amino Slick','Sterile Feed','Harvest Slurry','Peptide Wash'],
+    ref:['Bioreactor Ring','Harvest Screw','Sparger Head','Culture Rack','Sieve Basket','Feed Manifold','Yield Cell']},
+  dyeworks:{
+    name:'TEXTILE DYE WORKS', suit:'PIGMENT-SEAL SUIT', bg:'tanks', tile:'concrete', bgx:'channels', tilex:'brick',
+    water:['#2a1430','#1e0e24','#120816'], rock:'#463a4a',
+    scenery:['vat','rustpipe','valve','pipe'], kelp:['#7a2e5a','#ff6fb0'],
+    shapes:['glob','crystal','slab'], float:'jelly', plat:['stain','drip','foam'], palHues:[292,214,42],
+    pal:{base:'#221226',seam:'#160b1a',hi:'#361e3e',rivet:'#462a52',pipe:'#42284a',pipeL:'#644276',moss:'#5e2e56',accent:'#e05fff',acc2:'224,95,255'},
+    raw:['Mordant Salt','Indigo Cake','Loom Steel','Bobbin Brass','Aniline Crystal','Fiber Bale Ore','Shuttle Wood','Pigment Clod'],
+    mix:['Dye Liquor','Fixative Bath','Bleach Cut','Mordant Wash','Rinse Effluent','Sizing Paste','Vat Reduction'],
+    ref:['Roller Mangle','Print Screen','Tenter Clip','Dye Beck Core','Padder Roll','Steam Ager Cell','Winch Reel']},
+  printworks:{
+    name:'OLD PRINT WORKS', suit:'INKPROOF PLATE RIG', bg:'racks', tile:'metal', bgx:'vaults', tilex:'brick',
+    water:['#1c2228','#14181e','#0c0f13'], rock:'#3a4048',
+    scenery:['gear','girder','pipe','circuit'], kelp:['#4a5a6a','#9fc2d8'],
+    shapes:['slab','chunk','crystal'], float:'canister', plat:['sign','rivet','stain'], palHues:[210,32,0],
+    pal:{base:'#181c22',seam:'#0f1216',hi:'#262e38',rivet:'#343e4a',pipe:'#323a46',pipeL:'#4e5a6a',moss:'#3e4a56',accent:'#8fb6d8',acc2:'143,182,216'},
+    raw:['Type Metal','Litho Stone','Roller Rubber','Galley Brass','Slug Lead','Platen Iron','Font Sort','Halftone Screen'],
+    mix:['Press Ink','Blanket Wash','Fountain Etch','Dampener Mix','Solvent Rag Bleed','Varnish Cut','Drier Paste'],
+    ref:['Chase Frame','Impression Cylinder','Quoin Key','Folder Blade','Register Pin','Web Tensioner','Plate Clamp']},
+  ewaste:{
+    name:'E-WASTE CRUSH PIT', suit:'SHRED-GUARD EXO', bg:'racks', tile:'tech', bgx:'furnace', tilex:'slag',
+    water:['#1e2418','#161b10','#0d1008'], rock:'#3c4234',
+    scenery:['circuit','gear','server','rustpipe'], kelp:['#5a7a2e','#bfe85f'],
+    shapes:['chunk','crystal','slab'], float:'canister', plat:['cable','crack','led'], palHues:[92,152,32],
+    pal:{base:'#181e12',seam:'#0f130a',hi:'#28301c',rivet:'#364026',pipe:'#343c24',pipeL:'#525e3a',moss:'#4a6a2e',accent:'#9fe83c',acc2:'159,232,60'},
+    raw:['Board Confetti','Tantalum Bead','Gold Finger','Ferrite Slug','Shred Alloy','Palladium Fleck','Copper Braid','Rare-Earth Grit'],
+    mix:['Leach Acid','Solder Reflow','Flux Sludge','Cyanide Rinse','Magnet Slurry','Pyro Off-Gas','Etch Bath'],
+    ref:['Recovery Cell','Magnet Drum','Eddy Splitter','Ingot Mold','Trommel Screen','Optical Sorter Eye','Bale Strap Core']},
+  batteryfarm:{
+    name:'LEAKING BATTERY FARM', suit:'ACID-CELL HARDSUIT', bg:'racks', tile:'toxic', bgx:'coldstore', tilex:'grate',
+    water:['#242610','#1a1c0a','#0f1005'], rock:'#42442e',
+    scenery:['server','valve','circuit','vat'], kelp:['#7a7a2e','#e8e05f'],
+    shapes:['slab','glob','chunk'], float:'bulb', plat:['led','stain','vent'], palHues:[58,142,192],
+    pal:{base:'#1e2010',seam:'#131408',hi:'#303418',rivet:'#404420',pipe:'#3c4022',pipeL:'#5c6236',moss:'#5e661e',accent:'#e8e03c',acc2:'232,224,60'},
+    raw:['Lithium Foil','Lead Plate','Nickel Button','Cadmium Stick','Cell Casing','Terminal Stud','Cobalt Cathode','Zinc Pellet'],
+    mix:['Electrolyte','Acid Weep','Thermal Runaway Foam','Separator Gel','Vent Gas Trap','Neutralizer Bath','Dendrite Slurry'],
+    ref:['Bus Bar','Cell Cradle','BMS Board','Contactor Block','Fuse Link','Cooling Plate','Charge Bollard Core']},
+  desal:{
+    name:'DESALINATION GALLERIES', suit:'BRINE-LOCK SUIT', bg:'tanks', tile:'concrete', bgx:'gallery', tilex:'frost',
+    water:['#123438','#0c282c','#081c1f'], rock:'#3c4c50',
+    scenery:['pipe','valve','tower','rustpipe'], kelp:['#2e7a7a','#6fe8e0'],
+    shapes:['crystal','slab','chunk'], float:'canister', plat:['scale','frost','drip'], palHues:[188,172,40],
+    pal:{base:'#10282b',seam:'#0a1c1f',hi:'#1a3e42',rivet:'#274e54',pipe:'#284c50',pipeL:'#3f7278',moss:'#2c6e66',accent:'#4fe8e0',acc2:'79,232,224'},
+    raw:['Halite Crystal','Membrane Frame','Titanium Anode','Scale Crust','Brine Pearl','Gypsum Clod','Magnesium Nub','Intake Screen'],
+    mix:['Reject Brine','Anti-Scalant','Permeate','Flush Cycle','Chlorine Dose','Pre-Filter Sludge','Osmotic Draw'],
+    ref:['RO Cartridge','Pressure Vessel','Energy Recovery Rotor','Intake Louver','Brine Diffuser','Membrane Housing','Permeate Header']},
+  algaefarm:{
+    name:'ALGAE BIOREACTOR FARM', suit:'PHOTOSYNTH SLICK', bg:'core', tile:'bio', bgx:'canopy', tilex:'ceramic',
+    water:['#0e2e18','#092210','#051608'], rock:'#324236',
+    scenery:['vat','tower','pipe','circuit'], kelp:['#2e8a3e','#6fff8f'],
+    shapes:['glob','crystal','slab'], float:'jelly', plat:['foam','moss','scale'], palHues:[132,88,182],
+    pal:{base:'#0e2214',seam:'#08170d',hi:'#183822',rivet:'#22482c',pipe:'#264832',pipeL:'#3a6c48',moss:'#2e7a3e',accent:'#4fff8f',acc2:'79,255,143'},
+    raw:['Chlorella Cake','Diatom Frit','Spirulina Mat','Biofilm Sheet','Cellulose Wad','Carotene Bead','Lipid Pearl','Silica Shell'],
+    mix:['Culture Medium','CO2 Sparge','Harvest Foam','Lipid Extract','Chlorophyll Draw','Dewater Slurry','Nutrient Dose'],
+    ref:['Raceway Paddle','Photobio Tube','Harvest Sieve','LED Grow Bar','Centrifuge Bowl','Sparge Ring','Biofilm Scraper']},
+  fungal:{
+    name:'MYCO-CELLAR WARREN', suit:'SPORE-FILTER SUIT', bg:'core', tile:'bio', bgx:'vaults', tilex:'brick',
+    water:['#1e2412','#15190c','#0c0f06'], rock:'#3c4232',
+    scenery:['vat','rustpipe','tower','girder'], kelp:['#5a6a2e','#c2d85f'],
+    shapes:['glob','chunk','crystal'], float:'jelly', plat:['moss','crack','drip'], palHues:[74,32,282],
+    pal:{base:'#1a1e10',seam:'#101308',hi:'#2a3018',rivet:'#384020',pipe:'#363c22',pipeL:'#545e36',moss:'#5e6e2e',accent:'#c2e83c',acc2:'194,232,60'},
+    raw:['Mycelium Brick','Spore Print','Chitin Ore','Truffle Nub','Hypha Wire','Cap Leather','Stipe Core','Conk Shelf'],
+    mix:['Spawn Slurry','Substrate Tea','Enzyme Rot','Humid Mist','Casing Mix','Fruiting Trigger','Sterile Rinse'],
+    ref:['Fruiting Rack','Flow Hood Panel','Substrate Block','Humidity Coil','Harvest Knife Core','Spawn Jar Lid','Mist Nozzle']},
+  rendering:{
+    name:'RENDERING PLANT OUTFALL', suit:'TALLOW-PROOF RIG', bg:'core', tile:'bio', bgx:'furnace', tilex:'slag',
+    water:['#262014','#1b160d','#0f0c06'], rock:'#443e30',
+    scenery:['vat','rustpipe','valve','tower'], kelp:['#6a5a2e','#d8bf5f'],
+    shapes:['glob','slab','chunk'], float:'jelly', plat:['foam','stain','drip'], palHues:[42,20,88],
+    pal:{base:'#201a10',seam:'#141008',hi:'#322a18',rivet:'#423820',pipe:'#3e3422',pipeL:'#5e5236',moss:'#5e501e',accent:'#e8bf3c',acc2:'232,191,60'},
+    raw:['Bone Char','Tallow Cake','Gel Sheet','Hide Salt','Grease Pearl','Keratin Wad','Marrow Stone','Chitin Grit'],
+    mix:['Render Stock','Fat Skim','Protein Broth','Caustic Boil','Bleach Rinse','Stick Water','Press Liquor'],
+    ref:['Cooker Auger','Press Plate','Skimmer Blade','Grease Trap Core','Meal Sifter','Condenser Coil','Tallow Mold']},
+  chemlab:{
+    name:'CLANDESTINE CHEM-LAB SUMP', suit:'REAGENT SHELL', bg:'reactor', tile:'toxic', bgx:'vaults', tilex:'ceramic',
+    water:['#20142e','#170e22','#0d0814'], rock:'#3e3448',
+    scenery:['vat','circuit','valve','rustpipe'], kelp:['#6a2e7a','#d05fff'],
+    shapes:['crystal','glob','slab'], float:'bulb', plat:['stain','trace','crack'], palHues:[276,150,52],
+    pal:{base:'#1a1226',seam:'#100b1a',hi:'#2c1e3e',rivet:'#3a2a52',pipe:'#38284a',pipeL:'#584276',moss:'#4e2e6a',accent:'#bf5fff',acc2:'191,95,255'},
+    raw:['Reagent Crystal','Pyrex Shard','Precursor Salt','Catalyst Bead','Litmus Cake','Stir Bar','Retort Glass','Filter Frit'],
+    mix:['Mother Liquor','Azeotrope','Quench Bath','Reflux Bleed','Titrant','Waste Stream','Recrystal Wash'],
+    ref:['Condenser Column','Sep Funnel Core','Heating Mantle','Fume Scrubber','Vacuum Trap','Buchner Disc','Glove Port Ring']},
+  pigment:{
+    name:'PIGMENT REFINERY', suit:'CHROMA-SEAL SUIT', bg:'tanks', tile:'concrete', bgx:'channels', tilex:'ceramic',
+    water:['#2e1a10','#22130a','#140b05'], rock:'#4a3c30',
+    scenery:['vat','pipe','valve','tower'], kelp:['#8a3a2e','#ff7f5f'],
+    shapes:['glob','crystal','chunk'], float:'jelly', plat:['stain','drip','scale'], palHues:[8,204,52],
+    pal:{base:'#26140e',seam:'#180d08',hi:'#3c2016',rivet:'#4e2c1e',pipe:'#482c20',pipeL:'#6e4634',moss:'#6a301e',accent:'#ff5f4f',acc2:'255,95,79'},
+    raw:['Ochre Clod','Cobalt Frit','Cadmium Cake','Titanium White','Lake Crystal','Umber Lump','Verdigris Crust','Carbon Black'],
+    mix:['Binder Slip','Mill Base','Dispersant','Grind Paste','Wash Fastness Bath','Toner Bleed','Flush Color'],
+    ref:['Ball Mill Shell','Filter Press Leaf','Kiln Sagger','Muller Stone','Sieve Deck','Drying Tray','Batch Hopper']},
+  glassworks:{
+    name:'DROWNED GLASSWORKS', suit:'VITRIC FURNACE RIG', bg:'reactor', tile:'metal', bgx:'furnace', tilex:'slag',
+    water:['#2a2014','#1e170d','#110d06'], rock:'#463e30',
+    scenery:['tower','rustpipe','gear','valve'], kelp:['#8a6a2e','#ffd45f'],
+    shapes:['crystal','glob','slab'], float:'bulb', plat:['crack','weld','stain'], palHues:[36,190,300],
+    pal:{base:'#221a10',seam:'#161008',hi:'#362818',rivet:'#463620',pipe:'#423422',pipeL:'#645236',moss:'#5e4a1e',accent:'#ffb43c',acc2:'255,180,60'},
+    raw:['Cullet Chunk','Frit Sand','Borax Cake','Blowpipe Brass','Annealed Slab','Prunt Bead','Silica Lump','Lehr Roller'],
+    mix:['Melt Batch','Polish Rouge','Etch Cream','Devitrifier','Mold Release','Quench Mist','Flux Dose'],
+    ref:['Crucible Pot','Marver Plate','Punty Rod Core','Lehr Belt Link','Gob Shear','Blow Mold Half','Annealer Coil']},
+  polymer:{
+    name:'POLYMER EXTRUSION HALLS', suit:'MONOMER-PROOF SKIN', bg:'racks', tile:'metal', bgx:'gallery', tilex:'grate',
+    water:['#141e2c','#0e1620','#080e14'], rock:'#343e4a',
+    scenery:['pipe','gear','server','valve'], kelp:['#3a6a8a','#7fd0ff'],
+    shapes:['slab','glob','crystal'], float:'pod', plat:['tread','bolt','led'], palHues:[198,332,64],
+    pal:{base:'#121a24',seam:'#0b1118',hi:'#1e2c3c',rivet:'#2a3c50',pipe:'#283a4c',pipeL:'#405a74',moss:'#3a5a74',accent:'#4fb6ff',acc2:'79,182,255'},
+    raw:['Nurdle Cache','Regrind Flake','Die Steel','Masterbatch Puck','Barrel Liner','Screw Flight','Purge Blob','Gel Spot Crystal'],
+    mix:['Monomer Bleed','Plasticizer','Purge Compound','Cooling Bath','Antistat Spray','Melt Fracture Slick','Regrind Slurry'],
+    ref:['Extruder Die','Pelletizer Hub','Calibration Sleeve','Haul-Off Belt','Screen Changer','Hopper Dryer Core','Nip Roller']},
+  cablevault:{
+    name:'CABLE TRUNK VAULTS', suit:'INSULATOR FRAME', bg:'racks', tile:'tech', bgx:'vaults', tilex:'brick',
+    water:['#181c2a','#11141f','#0a0c13'], rock:'#383c48',
+    scenery:['circuit','pipe','girder','server'], kelp:['#4a4a7a','#9f9fe8'],
+    shapes:['chunk','slab','crystal'], float:'canister', plat:['cable','rivet','trace'], palHues:[228,36,180],
+    pal:{base:'#14162a',seam:'#0d0e1c',hi:'#20243e',rivet:'#2c3254',pipe:'#2a304c',pipeL:'#424a7a',moss:'#3a4276',accent:'#6f7fff',acc2:'111,127,255'},
+    raw:['Copper Trunk','Lead Sheath','Paper Insulation','Splice Sleeve','Armor Wire','Duct Bank Clay','Pilot Core','Jelly-Filled Pair'],
+    mix:['Cable Jelly','Pulling Lube','Dielectric Oil','Corrosion Weep','Duct Seal Foam','Tracer Dye','Bond Paste'],
+    ref:['Splice Case','Manhole Ring','Pothead Terminal','Racking Arm','Bonding Braid','Fault Locator Coil','Duct Plug']},
+  pneumatic:{
+    name:'PNEUMATIC POST TUBES', suit:'PRESSURE COURIER RIG', bg:'ducts', tile:'metal', bgx:'platform', tilex:'brick',
+    water:['#1e2220','#151816','#0c0e0d'], rock:'#3c423e',
+    scenery:['pipe','valve','gear','girder'], kelp:['#4a6a4a','#9fd89f'],
+    shapes:['chunk','crystal','glob'], float:'pod', plat:['rivet','sign','vent'], palHues:[152,36,210],
+    pal:{base:'#161e1a',seam:'#0e1310',hi:'#24322a',rivet:'#324238',pipe:'#304034',pipeL:'#4c6452',moss:'#3e6a4a',accent:'#5fe8a0',acc2:'95,232,160'},
+    raw:['Carrier Shell','Felt Ring','Diverter Brass','Station Bell','Tube Bore Steel','Gasket Leather','Vacuum Vane','Sorting Cam'],
+    mix:['Compressor Oil','Vacuum Draw','Gasket Dope','Felt Wax','Line Purge','Condensate Trap','Leak Soap'],
+    ref:['Carrier Capsule','Diverter Gate','Terminal Hood','Blower Impeller','Air Lock Collar','Dispatch Timer','Receiver Basket']},
+  catacomb:{
+    name:'OLD-CITY CATACOMB GRID', suit:'OSSUARY HARDSUIT', bg:'ducts', tile:'concrete', bgx:'vaults', tilex:'brick',
+    water:['#1e1c16','#15130f','#0c0b08'], rock:'#423e34',
+    scenery:['girder','rustpipe','tower','valve'], kelp:['#5a5a3a','#bfbf8f'],
+    shapes:['chunk','slab','crystal'], float:'canister', plat:['crack','brick','stain'], palHues:[44,26,196],
+    pal:{base:'#1c1810',seam:'#121008',hi:'#2e2818',rivet:'#3e3620',pipe:'#3a3222',pipeL:'#5a5036',moss:'#54501e',accent:'#d8bf6f',acc2:'216,191,111'},
+    raw:['Vault Brick','Bone Lime','Niche Marble','Iron Lantern','Candle Brass','Mortar Clod','Reliquary Tin','Etched Slate'],
+    mix:['Lime Wash','Grave Damp','Tallow Melt','Incense Resin Cut','Seep Mineral','Mortar Slake','Dust Suspension'],
+    ref:['Niche Lintel','Gate Grille','Lantern Bracket','Keystone Core','Plaque Frame','Stair Tread','Vault Rib']},
+  mallruin:{
+    name:'FLOODED MEGAMALL SUBLEVEL', suit:'RETAIL SALVAGE EXO', bg:'racks', tile:'concrete', bgx:'platform', tilex:'ceramic',
+    water:['#1a2030','#121724','#0a0e16'], rock:'#3a404c',
+    scenery:['neon','girder','server','pipe'], kelp:['#4a5a8a','#9fbfff'],
+    shapes:['slab','crystal','chunk'], float:'canister', plat:['sign','led','tread'], palHues:[224,340,52],
+    pal:{base:'#161a26',seam:'#0e111a',hi:'#242c3e',rivet:'#303c54',pipe:'#2e384c',pipeL:'#485878',moss:'#3e4a74',accent:'#7f9fff',acc2:'127,159,255'},
+    raw:['Escalator Tread','Mannequin Shell','Register Chrome','Skylight Pane','Kiosk Frame','Coin Fountain Ore','Tile Terrazzo','Rebar Stub'],
+    mix:['Fountain Water','Fryer Grease','Cleaner Concentrate','Perfume Bleed','Soft Drink Syrup','Wax Stripper','Fire Suppressant'],
+    ref:['Storefront Shutter','Escalator Comb','Directory Board','Turnstile Core','Planter Ring','PA Horn','Gift Card Vault']},
+  parkade:{
+    name:'SUNKEN PARKADE HELIX', suit:'MONOXIDE FILTER RIG', bg:'ducts', tile:'concrete', bgx:'platform', tilex:'grate',
+    water:['#1c1e22','#131519','#0b0c0f'], rock:'#3e424a',
+    scenery:['girder','pipe','neon','valve'], kelp:['#4a5a5a','#9fc2bf'],
+    shapes:['slab','chunk','glob'], float:'canister', plat:['chevron','sign','crack'], palHues:[204,52,352],
+    pal:{base:'#181a1e',seam:'#0f1114',hi:'#262a30',rivet:'#343a42',pipe:'#32383e',pipeL:'#4e565e',moss:'#3e4e56',accent:'#6fbfd8',acc2:'111,191,216'},
+    raw:['Ramp Rebar','Bollard Steel','Ticket Spool','Lamp Housing','Wheel Clamp','Paint Stripe Chip','Barrier Arm','Oil-Stain Agate'],
+    mix:['Sump Oil','De-Icer Melt','Exhaust Soot Wash','Tire Shine','Line Paint','Antifreeze Weep','Power Wash Runoff'],
+    ref:['Barrier Motor','Pay Station Core','Convex Mirror','Speed Hump Segment','Vent Fan Ring','Stair Nosing','Lot Camera Pod']},
+  substation:{
+    name:'DROWNED SUBSTATION', suit:'FARADAY DIVE CAGE', bg:'racks', tile:'tech', bgx:'gallery', tilex:'grate',
+    water:['#141c2e','#0e1522','#080d15'], rock:'#343c4c',
+    scenery:['circuit','girder','valve','tower'], kelp:['#3a5a9a','#7fa8ff'],
+    shapes:['crystal','chunk','slab'], float:'bulb', plat:['led','cable','chevron'], palHues:[218,56,190],
+    pal:{base:'#121828',seam:'#0b0f1a',hi:'#1e2840',rivet:'#2a3856',pipe:'#28344e',pipeL:'#40527c',moss:'#3a4a80',accent:'#5f8fff',acc2:'95,143,255'},
+    raw:['Bus Copper','Porcelain Bushing','Transformer Lam','Arc Bead','Breaker Contact','Grounding Rod','Relay Coil','Mica Sheet'],
+    mix:['Transformer Oil','SF6 Bleed','Arc Quench Foam','Insulator Wash','Ozone Trace','Gasket Weep','Silica Gel Purge'],
+    ref:['Bushing Turret','Disconnect Blade','CT Ring','Relay Rack Panel','Surge Arrester','Bus Support','Tap Changer Core']},
+  tramdepot:{
+    name:'TRAM DEPOT UNDERCROFT', suit:'RAIL-GREASE SLICKER', bg:'ducts', tile:'metal', bgx:'platform', tilex:'brick',
+    water:['#20201a','#171710','#0d0d09'], rock:'#40403a',
+    scenery:['girder','gear','pipe','neon'], kelp:['#5a6a3a','#bfd87f'],
+    shapes:['chunk','slab','glob'], float:'canister', plat:['tread','sign','weld'], palHues:[80,32,208],
+    pal:{base:'#1c1c12',seam:'#12120a',hi:'#2e2e1c',rivet:'#3e3e26',pipe:'#3a3a26',pipeL:'#5a5a3c',moss:'#546a2e',accent:'#bfd83c',acc2:'191,216,60'},
+    raw:['Rail Head','Overhead Wire','Sanding Quartz','Wheel Flange','Bell Bronze','Destination Blind','Truck Bolster','Trolley Shoe'],
+    mix:['Rail Grease','Sand Dose','Flange Lube','Rheostat Dust Wash','Varnish Bleed','Journal Oil','Wash Rack Runoff'],
+    ref:['Pit Jack Head','Trolley Pole Base','Point Lever','Depot Door Roller','Controller Drum','Resistor Bank','Lifting Beam']},
+  gasworks:{
+    name:'LEGACY GASWORKS', suit:'VAPOR-LOCK SUIT', bg:'reactor', tile:'toxic', bgx:'furnace', tilex:'brick',
+    water:['#26220e','#1b1809','#0f0d05'], rock:'#443f2c',
+    scenery:['tower','rustpipe','valve','gear'], kelp:['#7a6a1e','#e8d04f'],
+    shapes:['glob','chunk','slab'], float:'pod', plat:['stain','crack','vent'], palHues:[52,96,16],
+    pal:{base:'#201c0e',seam:'#141206',hi:'#322c16',rivet:'#423a1e',pipe:'#3e3820',pipeL:'#5e5632',moss:'#5e561e',accent:'#e8c83c',acc2:'232,200,60'},
+    raw:['Coal Tar Nugget','Coke Breeze','Retort Brick','Ammonia Salt','Naphtha Crystal','Purifier Oxide','Gas Holder Plate','Benzole Bead'],
+    mix:['Tar Liquor','Ammoniacal Wash','Naphthalene Melt','Scrubber Bleed','Foul Condensate','Lime Purge','Spent Oxide Slurry'],
+    ref:['Retort Door','Holder Guide Roller','Exhauster Vane','Purifier Grid','Condenser Stack','Valve Bonnet','Governor Bell']},
+  oiltrap:{
+    name:'OIL INTERCEPTOR MAZE', suit:'SLICK-SHED CARAPACE', bg:'tanks', tile:'concrete', bgx:'channels', tilex:'grate',
+    water:['#221c10','#18140a','#0d0b05'], rock:'#423c2e',
+    scenery:['pipe','valve','rustpipe','girder'], kelp:['#6a5a1e','#d8bf3c'],
+    shapes:['glob','slab','chunk'], float:'jelly', plat:['stain','foam','drip'], palHues:[46,26,190],
+    pal:{base:'#1e180e',seam:'#131006',hi:'#302816',rivet:'#40361e',pipe:'#3c3420',pipeL:'#5c5034',moss:'#5a4c1a',accent:'#e8bf2c',acc2:'232,191,44'},
+    raw:['Skimmer Steel','Paraffin Slab','Weir Bronze','Sorbent Boom','Sheen Crystal','Baffle Plate Ore','Coalescer Media','Sludge Coke'],
+    mix:['Free Product','Emulsion Break','Sorbent Wring','Sheen Skim','Interceptor Sludge','Surfactant Dose','Decant Water'],
+    ref:['Coalescer Pack','Skimmer Belt','Weir Gate','Sludge Auger','Level Probe','Baffle Hanger','Decant Valve']},
+  overflow:{
+    name:'COMBINED OVERFLOW CHAMBERS', suit:'SURGE HARNESS', bg:'tanks', tile:'concrete', bgx:'channels', tilex:'brick',
+    water:['#182e2a','#112320','#0a1815'], rock:'#3c4a46',
+    scenery:['valve','pipe','rustpipe','tower'], kelp:['#3a7a4e','#7fe89f'],
+    shapes:['chunk','glob','slab'], float:'canister', plat:['drip','grate','stain'], palHues:[164,196,44],
+    pal:{base:'#12241f',seam:'#0b1815',hi:'#1c3a32',rivet:'#2a4a40',pipe:'#2a483e',pipeL:'#42705e',moss:'#2e6a4a',accent:'#4fe89f',acc2:'79,232,159'},
+    raw:['Screen Rake Tooth','First-Flush Grit','Weir Crest Steel','Float Ball','Storm King Vane','Detention Rebar','Scum Board','Vortex Cone'],
+    mix:['First Flush','Screenings Wash','Scum Skim','Detention Release','Storm Split','Grit Slurry','Bypass Bleed'],
+    ref:['Tipping Bucket','Bar Screen Panel','Vortex Separator','Penstock Gate','Flap Valve','Level Sensor Stem','Chamber Baffle']},
+  greasetrap:{
+    name:'FATBERG WARREN', suit:'LIPID-CUTTER RIG', bg:'core', tile:'bio', bgx:'vaults', tilex:'slag',
+    water:['#26220f','#1b1809','#0f0d05'], rock:'#454031',
+    scenery:['rustpipe','vat','valve','pipe'], kelp:['#7a6a2e','#e8cf6f'],
+    shapes:['glob','slab','chunk'], float:'jelly', plat:['foam','drip','crack'], palHues:[48,32,110],
+    pal:{base:'#221e0e',seam:'#161306',hi:'#363016',rivet:'#46401e',pipe:'#423c20',pipeL:'#645c34',moss:'#5e561a',accent:'#e8cf3c',acc2:'232,207,60'},
+    raw:['Calcified Fat','Wet Wipe Bale','Grease Amber','Bone Fragment','Congealed Core','Hair Rope','Soap Stone','Wax Stratum'],
+    mix:['Hot Caustic','Emulsifier','Jet Wash','Enzyme Digest','Fog Effluent','Steam Lance Melt','Solvent Soak'],
+    ref:['Cutter Head','Jetter Nozzle','Vac Hose Coupler','Auger Flight','Trap Baffle','Extraction Drum','Access Collar']},
+  incinerator:{
+    name:'INCINERATOR ASH SLUICE', suit:'CINDER-PROOF SHELL', bg:'reactor', tile:'toxic', bgx:'furnace', tilex:'slag',
+    water:['#241c16','#1a140e','#0e0b08'], rock:'#443b34',
+    scenery:['tower','rustpipe','gear','valve'], kelp:['#6a4a3a','#d8977f'],
+    shapes:['chunk','glob','crystal'], float:'pod', plat:['crack','vent','stain'], palHues:[18,40,0],
+    pal:{base:'#20160f',seam:'#140d08',hi:'#342217',rivet:'#442e1f',pipe:'#402c20',pipeL:'#624634',moss:'#5e341e',accent:'#ff7f3c',acc2:'255,127,60'},
+    raw:['Bottom Ash Clinker','Fly Ash Cake','Grate Bar Stub','Refractory Chip','Metal Melt Bead','Char Lump','Slag Prill','Filter Cake'],
+    mix:['Quench Water','Lime Scrub','Ash Slurry','Dioxin Trap Carbon','Acid Gas Wash','Boiler Blowdown','Soot Bleed'],
+    ref:['Grate Segment','Baghouse Sock Ring','Quench Ram','Ash Conveyor Link','Refractory Panel','ID Fan Blade','Feed Chute Liner']},
+  isotope:{
+    name:'MED-ISOTOPE DISPOSAL', suit:'DOSIMETER HARDSUIT', bg:'reactor', tile:'tech', bgx:'coldstore', tilex:'ceramic',
+    water:['#1a2e16','#132310','#0b1709'], rock:'#3a4636',
+    scenery:['server','vat','valve','circuit'], kelp:['#5a8a2e','#bfff5f'],
+    shapes:['crystal','slab','glob'], float:'bulb', plat:['led','stain','frost'], palHues:[104,180,296],
+    pal:{base:'#14220f',seam:'#0d1708',hi:'#203818',rivet:'#2c4820',pipe:'#2c4424',pipeL:'#446838',moss:'#4a7a2e',accent:'#8fff4f',acc2:'143,255,79'},
+    raw:['Technetium Vial','Iodine Seed','Gallium Bead','Syringe Shield','Lead Pig','Molybdenum Cow','Barium Cake','Xenon Trap Frit'],
+    mix:['Eluate','Decay Bath','Contrast Flush','Chelation Dose','Hot Sink Drain','Survey Swab Rinse','Half-Life Buffer'],
+    ref:['Hot Cell Window','Elution Column','Dose Calibrator Well','Waste Decay Drum','L-Block Shield','Manipulator Claw','Wipe Test Tray']},
+  clonevats:{
+    name:'DECOMMISSIONED CLONE VATS', suit:'AMNIO-SEAL SUIT', bg:'core', tile:'bio', bgx:'coldstore', tilex:'ceramic',
+    water:['#16262e','#102028','#0a161c'], rock:'#3a464e',
+    scenery:['vat','server','pipe','circuit'], kelp:['#3a7a7a','#7fe8e0'],
+    shapes:['glob','crystal','slab'], float:'jelly', plat:['scale','led','foam'], palHues:[178,140,320],
+    pal:{base:'#10222a',seam:'#0a171e',hi:'#1a3842',rivet:'#264854',pipe:'#284650',pipeL:'#3e6a78',moss:'#2e6a66',accent:'#4fe0e8',acc2:'79,224,232'},
+    raw:['Vat Acrylic','Umbilical Coupler','Gene Slate','Scaffold Lattice','Sensor Halo','Nutrient Crystal','Cradle Alloy','Blank Tissue Wafer'],
+    mix:['Amniotic Analog','Growth Factor','Stasis Gel','Flush Saline','Telomere Serum','Waste Perfusate','Cryoprotectant'],
+    ref:['Vat Dome','Perfusion Pump','Gene Printer Head','Cradle Gimbal','Bio-Monitor Slab','Decant Sluice','Imprint Coil']},
+  cryonics:{
+    name:'FAILED CRYONICS BANK', suit:'DEFROST SALVAGE RIG', bg:'tanks', tile:'tech', bgx:'coldstore', tilex:'frost',
+    water:['#142a36','#0e202a','#08161d'], rock:'#38464e',
+    scenery:['tower','server','pipe','valve'], kelp:['#3a6a9a','#8fc2ff'],
+    shapes:['crystal','slab','chunk'], float:'bulb', plat:['frost','led','crack'], palHues:[206,236,180],
+    pal:{base:'#0f2029',seam:'#09151c',hi:'#193440',rivet:'#254452',pipe:'#26424e',pipeL:'#3c6476',moss:'#2e5a72',accent:'#6fd0ff',acc2:'111,208,255'},
+    raw:['Dewar Steel','Perfusate Crystal','Neuro Canister','Vitrified Shard','Sensor Lace','LN2 Line Stub','Memorial Plate','Frost Pearl'],
+    mix:['Boil-Off Gas','Vitrification Mix','Thaw Gradient Bath','Antifreeze Protein','Nucleation Blocker','Top-Up LN2','Condensate Sweat'],
+    ref:['Dewar Neck Plug','Patient Cradle','Fill Manifold','Level Sight Glass','Vacuum Jacket Ring','Thermal Probe','Suspension Gantry']},
+  neurofarm:{
+    name:'NEURAL LACE FARM', suit:'SYNAPSE-SHIELD HOOD', bg:'core', tile:'tech', bgx:'canopy', tilex:'ceramic',
+    water:['#1c1630','#141024','#0c0a16'], rock:'#3c3650',
+    scenery:['circuit','vat','server','neon'], kelp:['#5a3a8a','#bf8fff'],
+    shapes:['crystal','glob','slab'], float:'jelly', plat:['trace','led','foam'], palHues:[268,318,168],
+    pal:{base:'#181228',seam:'#0f0b1c',hi:'#281e40',rivet:'#362a56',pipe:'#34284e',pipeL:'#52427a',moss:'#4a3a7a',accent:'#a86fff',acc2:'168,111,255'},
+    raw:['Lace Filament','Dendrite Gold','Electrode Bead','Myelin Wrap','Cortex Wafer','Ganglion Node','Axon Wire','Synapse Crystal'],
+    mix:['Neuro Gel','Signal Buffer','Growth Cone Serum','Impulse Dampener','Glial Broth','Spike Train Trace','Wash Perfusion'],
+    ref:['Lace Loom','Probe Array','Stim Driver','Cranial Port Ring','Signal Router','Culture Cap','Impulse Cell']},
+  holograve:{
+    name:'HOLO-BILLBOARD GRAVEYARD', suit:'PHOTON-BAFFLE SUIT', bg:'racks', tile:'tech', bgx:'platform', tilex:'grate',
+    water:['#14202e','#0e1822','#080f16'], rock:'#343e4a',
+    scenery:['neon','circuit','girder','server'], kelp:['#3a5a8a','#8fbfff'],
+    shapes:['crystal','slab','chunk'], float:'bulb', plat:['led','sign','cable'], palHues:[196,286,44],
+    pal:{base:'#111a24',seam:'#0a1118',hi:'#1c2c3c',rivet:'#283c50',pipe:'#26384c',pipeL:'#3e5874',moss:'#3a5274',accent:'#4fd0ff',acc2:'79,208,255'},
+    raw:['Emitter Prism','Diffuser Film','Projector Lens','Gantry Alloy','Pixel Grid Wafer','Beam Splitter','Phosphor Plate','Ad Loop Drive'],
+    mix:['Lens Polish','Fog Medium','Coolant Loop','Photoresist','Dust Repellent','Calibration Bath','Ozone Bleed'],
+    ref:['Emitter Head','Gantry Truss Node','Playback Core','Beam Combiner','Aperture Ring','Anchor Shoe','Content Vault Chip']},
+  dronehive:{
+    name:'DERELICT DRONE HIVE', suit:'SWARM-PLATE ARMOR', bg:'racks', tile:'metal', bgx:'vaults', tilex:'grate',
+    water:['#1c1e26','#14161c','#0c0d11'], rock:'#3a3e46',
+    scenery:['gear','circuit','girder','server'], kelp:['#5a5a4a','#c2c29f'],
+    shapes:['chunk','crystal','slab'], float:'pod', plat:['vent','rivet','led'], palHues:[48,208,296],
+    pal:{base:'#181a20',seam:'#0f1014',hi:'#282c34',rivet:'#363c46',pipe:'#343a42',pipeL:'#525a66',moss:'#4a5266',accent:'#ffcf3c',acc2:'255,207,60'},
+    raw:['Rotor Blade','Airframe Rib','Gimbal Bearing','Landing Skid','Prop Hub','Antenna Whip','Optic Pod Shell','Motor Bell'],
+    mix:['ESC Coolant','Prop Balancer','Lens Cleaner','Battery Weep','Conformal Coat','Hover Wash','Telemetry Trace'],
+    ref:['Docking Cradle','Charge Pad Coil','Flight Controller','Swap Carousel','Beacon Mast','Payload Clamp','Hive Cell Door']},
+  roboline:{
+    name:'ROBOTICS DISASSEMBLY LINE', suit:'ACTUATOR EXO', bg:'racks', tile:'metal', bgx:'gallery', tilex:'grate',
+    water:['#1a1c22','#121418','#0a0b0e'], rock:'#383c44',
+    scenery:['gear','girder','server','circuit'], kelp:['#4a5a5a','#9fc2c2'],
+    shapes:['chunk','slab','crystal'], float:'pod', plat:['bolt','tread','cable'], palHues:[204,36,148],
+    pal:{base:'#161820',seam:'#0e0f14',hi:'#242832',rivet:'#323844',pipe:'#30363e',pipeL:'#4c545e',moss:'#425460',accent:'#5fbfe8',acc2:'95,191,232'},
+    raw:['Servo Housing','Harmonic Ring','Torque Cell','Chassis Spine','Encoder Disc','Gripper Pad','Joint Pin','Carbon Strut'],
+    mix:['Hydraulic Bleed','Joint Grease','Flux Bath','Sensor Cleaner','Cutting Coolant','Demag Wash','Loctite Solvent'],
+    ref:['End Effector','Reducer Core','Spine Segment','Torque Wrench Head','Pinch Roller','Diagnostic Cradle','Wrist Rotator']},
+  railgun:{
+    name:'RAIL-GUN TEST DRAIN', suit:'EM-DAMPER RIG', bg:'reactor', tile:'tech', bgx:'gallery', tilex:'slag',
+    water:['#1c1a2a','#14131f','#0c0b13'], rock:'#3c3a4a',
+    scenery:['girder','circuit','tower','valve'], kelp:['#5a4a8a','#bf9fff'],
+    shapes:['slab','chunk','crystal'], float:'pod', plat:['weld','led','crack'], palHues:[254,200,36],
+    pal:{base:'#161428',seam:'#0e0d1a',hi:'#24203e',rivet:'#302c54',pipe:'#2e2a4c',pipeL:'#48447a',moss:'#42406a',accent:'#8f7fff',acc2:'143,127,255'},
+    raw:['Rail Copper','Armature Slug','Capacitor Brick','Sabot Petal','Ablation Chip','Bore Liner','Pulse Coil','Ferrite Yoke'],
+    mix:['Rail Lubricant','Plasma Residue','Quench Bath','Dielectric Flood','Arc Soot Wash','Recoil Fluid','Ionized Mist'],
+    ref:['Rail Segment','Pulse Former','Breech Clamp','Muzzle Shunt','Cap Bank Cell','Bore Scope','Recoil Buffer']},
+  coolant:{
+    name:'DISTRICT COOLANT EXCHANGE', suit:'GLYCOL-PROOF SKIN', bg:'tanks', tile:'tech', bgx:'gallery', tilex:'frost',
+    water:['#122c30','#0d2226','#08181b'], rock:'#384a4e',
+    scenery:['pipe','valve','server','tower'], kelp:['#2e7a8a','#6fe0ff'],
+    shapes:['slab','crystal','glob'], float:'canister', plat:['frost','scale','vent'], palHues:[190,150,270],
+    pal:{base:'#0f2428',seam:'#09181c',hi:'#193a40',rivet:'#254a52',pipe:'#26484e',pipeL:'#3c6c74',moss:'#2e6a6a',accent:'#4fd8e8',acc2:'79,216,232'},
+    raw:['Chiller Copper','Glycol Crystal','Impeller Bronze','Strainer Mesh','Expansion Bladder','Gauge Brass','Insulation Shell','Header Steel'],
+    mix:['Glycol Loop','Corrosion Inhibitor','Biocide Dose','Makeup Water','Air Purge','Strainer Backflush','Delta-T Bleed'],
+    ref:['Plate Exchanger','Pump Volute','Balancing Valve','Expansion Tank Core','Flow Meter Body','Isolation Flange','BTU Register']},
+  maglev:{
+    name:'MAG-LEV UNDERTRACK', suit:'LEVITATION KEEL SUIT', bg:'racks', tile:'metal', bgx:'platform', tilex:'grate',
+    water:['#141e2e','#0e1622','#080e15'], rock:'#343e4e',
+    scenery:['girder','circuit','pipe','neon'], kelp:['#3a5a9a','#8fb6ff'],
+    shapes:['slab','crystal','chunk'], float:'canister', plat:['chevron','led','weld'], palHues:[212,268,44],
+    pal:{base:'#121a28',seam:'#0b101a',hi:'#1e2c40',rivet:'#2a3c56',pipe:'#28384e',pipeL:'#40587c',moss:'#3a5280',accent:'#5fa8ff',acc2:'95,168,255'},
+    raw:['Guideway Alloy','Levitation Magnet','Stator Pack','Eddy Plate','Cryo Coil Stub','Gap Sensor','Reaction Rail','Halbach Wedge'],
+    mix:['Cryo Coolant','Gap Calibrant','Track Degreaser','Flux Damper Gel','Vibration Fluid','Sensor Wash','Braking Dust Slurry'],
+    ref:['Guideway Girder','Levitation Bogie Frame','Propulsion Segment','Gap Controller','Cryostat Shell','Switch Beam','Eddy Brake Fin']},
+  fibervault:{
+    name:'DARK FIBER VAULT', suit:'LIGHTGUIDE FRAME', bg:'racks', tile:'tech', bgx:'vaults', tilex:'ceramic',
+    water:['#161a2c','#101320','#090b13'], rock:'#363a4c',
+    scenery:['server','circuit','pipe','girder'], kelp:['#4a4a9a','#9f9fff'],
+    shapes:['crystal','slab','glob'], float:'bulb', plat:['cable','trace','led'], palHues:[232,176,340],
+    pal:{base:'#12142a',seam:'#0b0d1c',hi:'#1e2240',rivet:'#2a3056',pipe:'#282e4e',pipeL:'#40487c',moss:'#3a4280',accent:'#7f8fff',acc2:'127,143,255'},
+    raw:['Fiber Spool','Cladding Glass','Splice Tray Alloy','Ferrule Ceramic','Buffer Tube','Kevlar Strand','Connector Boot','Dopant Crystal'],
+    mix:['Index Gel','Splice Alcohol','Cable Gel Flood','Polish Slurry','Dust Blocker','Bend Loss Trace','Cleave Coolant'],
+    ref:['Splice Enclosure','Patch Panel Blade','OTDR Probe Core','Slack Loop Ring','Fanout Kit','Attenuator Plug','Vault Lid Ring']},
+  cistern:{
+    name:'ANCIENT CISTERN GRID', suit:'AQUIFER SHELL', bg:'tanks', tile:'concrete', bgx:'vaults', tilex:'brick',
+    water:['#122a30','#0d2025','#081619'], rock:'#3a484c',
+    scenery:['tower','girder','rustpipe','valve'], kelp:['#2e6a5a','#6fd8bf'],
+    shapes:['slab','chunk','crystal'], float:'canister', plat:['brick','stain','drip'], palHues:[182,42,208],
+    pal:{base:'#102328',seam:'#0a171b',hi:'#1a383e',rivet:'#26484e',pipe:'#26464a',pipeL:'#3c6a70',moss:'#2e6a5e',accent:'#4fd8c8',acc2:'79,216,200'},
+    raw:['Column Capital','Cistern Brick','Bronze Spout','Lime Deposit','Mosaic Tessera','Keystone Chip','Terracotta Pipe','Spring Crystal'],
+    mix:['Spring Feed','Lime Slake','Silt Settle','Moss Steep','Mineral Bloom','Echo Damp','Old-Water Draw'],
+    ref:['Column Drum','Arch Voussoir','Inlet Sluice','Draw Bucket Ring','Overflow Lip','Vault Boss','Gauge Stone']},
+  brinemine:{
+    name:'BRINE MINE GALLERIES', suit:'HALITE HARDSUIT', bg:'ducts', tile:'concrete', bgx:'vaults', tilex:'frost',
+    water:['#20262a','#171c1f','#0e1113'], rock:'#464c50',
+    scenery:['girder','rustpipe','pipe','tower'], kelp:['#5a7a7a','#bfe8e0'],
+    shapes:['crystal','chunk','slab'], float:'bulb', plat:['scale','frost','crack'], palHues:[186,36,300],
+    pal:{base:'#1a2226',seam:'#11171a',hi:'#2a383e',rivet:'#384a52',pipe:'#36484e',pipeL:'#546c74',moss:'#4a6a6a',accent:'#9fe8e0',acc2:'159,232,224'},
+    raw:['Rock Salt Block','Halite Prism','Sylvite Vein','Gypsum Rose','Anhydrite Slab','Brine Pearl','Potash Nugget','Salt Horse Ore'],
+    mix:['Saturated Brine','Solution Mining Draw','Bitterns','Mother Brine','Dissolution Front','Salt Fog','Evaporite Slurry'],
+    ref:['Gallery Prop','Brine Well Head','Evaporator Pan','Salt Conveyor Link','Crusher Jaw','Pillar Anchor','Crystallizer Rake']},
+  digester:{
+    name:'METHANE DIGESTER FIELD', suit:'GAS-SCRUBBER RIG', bg:'core', tile:'bio', bgx:'canopy', tilex:'slag',
+    water:['#1e2610','#161c0a','#0d1005'], rock:'#3e442e',
+    scenery:['vat','tower','valve','rustpipe'], kelp:['#5a7a1e','#bfe84f'],
+    shapes:['glob','slab','crystal'], float:'jelly', plat:['foam','vent','stain'], palHues:[82,52,168],
+    pal:{base:'#181e0c',seam:'#0f1306',hi:'#283214',rivet:'#36421c',pipe:'#343e1e',pipeL:'#525e30',moss:'#546a1e',accent:'#a8e83c',acc2:'168,232,60'},
+    raw:['Digestate Cake','Struvite Crystal','Dome Membrane','Agitator Blade','Biogas Frit','Fiber Mat','Scum Crust','Grit Trap Ore'],
+    mix:['Biogas Condensate','Siloxane Scrub','Feedstock Slurry','Foam Suppressant','Leachate Loop','Sulfide Wash','Digestate Liquor'],
+    ref:['Dome Anchor Ring','Gas Blower Vane','Agitator Hub','Heat Jacket Coil','Flare Tip','Pressure Relief Disc','Feed Macerator']},
+  compost:{
+    name:'COMPOST SLURRY BAYS', suit:'HUMUS-PROOF SLICK', bg:'core', tile:'bio', bgx:'channels', tilex:'brick',
+    water:['#22200e','#181708','#0e0d04'], rock:'#423e2c',
+    scenery:['vat','rustpipe','tower','girder'], kelp:['#6a6a2e','#d8cf6f'],
+    shapes:['glob','chunk','slab'], float:'jelly', plat:['moss','foam','crack'], palHues:[58,96,26],
+    pal:{base:'#1c1a0c',seam:'#121106',hi:'#2e2a14',rivet:'#3e381c',pipe:'#3a341e',pipeL:'#5a5230',moss:'#5e5e1e',accent:'#d8cf3c',acc2:'216,207,60'},
+    raw:['Humus Brick','Windrow Core','Leaf Mold Cake','Worm Casting Ore','Biochar Chunk','Eggshell Grit','Straw Bale Plug','Mulch Fiber'],
+    mix:['Compost Tea','Leachate Draw','Turning Steam','Moisture Dose','Carbon Balance Mix','Anaerobic Pocket Bleed','Maturation Wash'],
+    ref:['Windrow Turner Tine','Screen Trommel Ring','Aeration Pipe','Bay Divider Panel','Temp Probe Stem','Curing Rack','Bagger Chute']},
+  mercury:{
+    name:'MERCURY RECLAIM LINE', suit:'AMALGAM SHELL', bg:'reactor', tile:'metal', bgx:'coldstore', tilex:'ceramic',
+    water:['#1e2226','#15181c','#0c0e11'], rock:'#3e444a',
+    scenery:['valve','pipe','server','vat'], kelp:['#5a6a6a','#bfd8d8'],
+    shapes:['glob','crystal','chunk'], float:'bulb', plat:['stain','led','scale'], palHues:[200,0,48],
+    pal:{base:'#181c20',seam:'#0f1214',hi:'#282e34',rivet:'#363e46',pipe:'#343a40',pipeL:'#525c64',moss:'#4a5860',accent:'#bfd8e0',acc2:'191,216,224'},
+    raw:['Quicksilver Bead','Amalgam Lump','Cinnabar Chip','Retort Iron','Thermometer Glass','Relay Tilt Switch','Dental Scrap','Cathode Pool Ore'],
+    mix:['Mercury Weep','Sulfur Fixative','Retort Distillate','Vapor Trap Draw','Nitric Leach','Amalgamation Bath','Condensed Bead Run'],
+    ref:['Retort Vessel','Vapor Condenser','Sulfur Filter Bed','Spill Tray','Sealed Flask Core','Triple Distiller Coil','Recovery Sump']},
+  plating:{
+    name:'ELECTROPLATING CANALS', suit:'ANODE GUARD SUIT', bg:'tanks', tile:'toxic', bgx:'channels', tilex:'ceramic',
+    water:['#122e26','#0d231d','#081813'], rock:'#3a4a44',
+    scenery:['vat','circuit','valve','pipe'], kelp:['#2e8a5a','#6fffbf'],
+    shapes:['crystal','slab','glob'], float:'bulb', plat:['drip','led','stain'], palHues:[158,196,42],
+    pal:{base:'#0f241e',seam:'#091812',hi:'#193a30',rivet:'#254a3e',pipe:'#26483c',pipeL:'#3c6e5a',moss:'#2e7a52',accent:'#4fffb0',acc2:'79,255,176'},
+    raw:['Anode Nickel','Chrome Flake','Copper Starter Sheet','Zinc Ball','Bus Bar Stub','Rack Tip','Cyanide Salt Cake','Bright Dip Crystal'],
+    mix:['Plating Bath','Acid Pickle','Brightener Dose','Rinse Cascade','Drag-Out','Passivation Seal','Strike Solution'],
+    ref:['Rectifier Fin','Plating Rack Spine','Filter Chamber','Fume Lip Extractor','Barrel Plater Mesh','Anode Basket','Rinse Weir']},
+  smelter:{
+    name:'SMELTER QUENCH PITS', suit:'QUENCH CARAPACE', bg:'reactor', tile:'metal', bgx:'furnace', tilex:'slag',
+    water:['#2c1a12','#20130c','#130b06'], rock:'#4a3a30',
+    scenery:['tower','gear','rustpipe','girder'], kelp:['#8a5a2e','#ffb75f'],
+    shapes:['chunk','glob','slab'], float:'pod', plat:['weld','crack','chevron'], palHues:[22,48,354],
+    pal:{base:'#221408',seam:'#160d05',hi:'#38200e',rivet:'#482c14',pipe:'#442a16',pipeL:'#664426',moss:'#5e3812',accent:'#ff9f2c',acc2:'255,159,44'},
+    raw:['Matte Copper','Blister Ingot','Converter Brick','Anode Slime','Flue Dust Cake','Tuyere Stub','Slag Wool','Dore Bead'],
+    mix:['Quench Plunge','Slag Skim','Flux Charge','Off-Gas Scrub','Granulation Jet','Acid Plant Bleed','Cooling Spray'],
+    ref:['Converter Hood','Launder Channel','Tap Hole Clay Gun','Casting Wheel Mold','Slag Pot Lug','Bag Filter Cage','Anode Hanger']},
+  turbine:{
+    name:'DEAD TURBINE HALL', suit:'ROTOR-GUARD FRAME', bg:'racks', tile:'metal', bgx:'gallery', tilex:'grate',
+    water:['#161e28','#10161e','#0a0e13'], rock:'#363e48',
+    scenery:['gear','girder','tower','pipe'], kelp:['#4a6a7a','#9fd0e0'],
+    shapes:['slab','chunk','crystal'], float:'canister', plat:['bolt','tread','vent'], palHues:[202,44,166],
+    pal:{base:'#141a22',seam:'#0c1016',hi:'#222c38',rivet:'#2e3c4c',pipe:'#2c3846',pipeL:'#465a6c',moss:'#3e5866',accent:'#6fc2e8',acc2:'111,194,232'},
+    raw:['Blade Root','Rotor Journal','Stator Segment','Governor Weight','Babbitt Shell','Nozzle Ring','Shroud Band','Balance Slug'],
+    mix:['Turbine Oil','Gland Steam Bleed','Jacking Oil','Hydrogen Purge','Boiler Carryover','Vibration Damp Fluid','Seal Leak-Off'],
+    ref:['Diaphragm Half','Bearing Pedestal','Coupling Bolt Set','Barring Gear Pinion','Oil Cooler Bundle','Steam Chest Cover','Exciter Brush Rig']},
+  pumpgallery:{
+    name:'GRAND PUMP GALLERY', suit:'IMPELLER RIG', bg:'tanks', tile:'metal', bgx:'gallery', tilex:'brick',
+    water:['#142c34','#0e2228','#08181c'], rock:'#384a50',
+    scenery:['gear','pipe','valve','tower'], kelp:['#2e7a6a','#6fe8cf'],
+    shapes:['chunk','slab','glob'], float:'canister', plat:['rivet','drip','bolt'], palHues:[192,32,212],
+    pal:{base:'#10262c',seam:'#0a1a1f',hi:'#1a3c44',rivet:'#264c56',pipe:'#264a52',pipeL:'#3c7078',moss:'#2e6e62',accent:'#4fdce8',acc2:'79,220,232'},
+    raw:['Impeller Bronze','Volute Iron','Wear Ring','Shaft Sleeve','Packing Braid','Flywheel Segment','Foot Valve Clack','Beam Pivot Brass'],
+    mix:['Priming Charge','Gland Drip','Suction Draw','Cavitation Froth','Bearing Bath','Surge Relief Bleed','Wet Well Skim'],
+    ref:['Volute Casing Half','Beam Engine Link','Check Valve Flap','Stuffing Box','Pump Bedplate','Air Vessel Dome','Rising Main Flange']},
+  aquarium:{
+    name:'RUINED CITY AQUARIUM', suit:'EXHIBIT-GLASS SUIT', bg:'tanks', tile:'concrete', bgx:'coldstore', tilex:'ceramic',
+    water:['#0e2a3e','#092132','#061724'], rock:'#364854',
+    scenery:['vat','neon','pipe','tower'], kelp:['#2e7a9a','#6fd8ff'],
+    shapes:['crystal','glob','chunk'], float:'jelly', plat:['scale','coral','stain'], palHues:[198,152,26],
+    pal:{base:'#0c2230',seam:'#071822',hi:'#153a4c',rivet:'#204a60',pipe:'#22485c',pipeL:'#366e88',moss:'#2c6a7a',accent:'#4fc8ff',acc2:'79,200,255'},
+    raw:['Acrylic Panel','Coral Skeleton','Tank Ballast','Viewing Ring','Filter Sock Frame','Substrate Aragonite','Skimmer Cup','Exhibit Plaque'],
+    mix:['Salt Mix','Kalkwasser','Tank Cycle Bloom','Quarantine Dip','Phyto Feed','Protein Skimmate','Dechlorinator'],
+    ref:['Overflow Weir Box','Return Pump Body','UV Sterilizer Tube','Wave Maker Hub','Sump Baffle','Acrylic Bond Seam','Feeding Hatch Ring']},
+  archive:{
+    name:'SUNKEN PAPER ARCHIVE', suit:'PULP-PROOF SHELL', bg:'racks', tile:'concrete', bgx:'vaults', tilex:'brick',
+    water:['#201e16','#17150f','#0d0c09'], rock:'#403c34',
+    scenery:['girder','server','rustpipe','pipe'], kelp:['#6a5a3a','#d8bf8f'],
+    shapes:['slab','chunk','glob'], float:'canister', plat:['stain','brick','sign'], palHues:[40,204,16],
+    pal:{base:'#1c1810',seam:'#121008',hi:'#2e2818',rivet:'#3e3620',pipe:'#3a3422',pipeL:'#5a5236',moss:'#544c2e',accent:'#e8c87f',acc2:'232,200,127'},
+    raw:['Ledger Spine','Microfiche Sheet','Card Catalog Brass','Vellum Roll','Seal Wax Cake','Filing Rail','Ink Well Glass','Stamp Die'],
+    mix:['Pulp Slurry','Deacidification Bath','Mold Bloom Wash','Iron Gall Bleed','Binding Glue Melt','Fumigant Trace','Humidity Purge'],
+    ref:['Compactor Crank','Map Drawer Slide','Reading Lamp Hood','Docket Press','Conservation Frame','Fiche Reader Core','Vault Dial Ring']},
+  morgue:{
+    name:'CRYO-MORGUE ANNEX', suit:'COLD-CHAIN HARDSUIT', bg:'tanks', tile:'tech', bgx:'coldstore', tilex:'frost',
+    water:['#16242c','#101b22','#0a1216'], rock:'#3a464e',
+    scenery:['server','valve','pipe','girder'], kelp:['#3a6a6a','#8fd0d0'],
+    shapes:['slab','crystal','chunk'], float:'bulb', plat:['frost','stain','led'], palHues:[196,224,120],
+    pal:{base:'#121e24',seam:'#0b1418',hi:'#1c3038',rivet:'#284048',pipe:'#283e46',pipeL:'#3e5e6a',moss:'#365e62',accent:'#8fd8e0',acc2:'143,216,224'},
+    raw:['Drawer Rail Steel','Toe Tag Brass','Gurney Frame','Slab Porcelain','Scale Weight','Chiller Fin','Instrument Tray','Formalin Crystal'],
+    mix:['Formalin','Body Wash','Chiller Loop','Disinfectant Fog','Drain Trap Draw','Embalming Feed','Odor Scrub'],
+    ref:['Drawer Front Panel','Slab Drain Ring','Lift Scissor Arm','Cold Room Latch','Autopsy Lamp Head','Specimen Cabinet','Intake Ledger Core']}
+};
+/* Introduction order for cities 2..61 — city c (c>=2) introduces ARCH_ORDER[c-2],
+ * inserted just above the bottom (finale) environment. Curated so consecutive
+ * cities alternate families: wet/industrial/tech/bio/cold/toxic. Deterministic
+ * across all players; set CITY_INTRO_SEEDED=true in the city engine to shuffle
+ * per world-seed instead. */
+const ARCH_ORDER=[
+ 'stormdrain','metro','foundry','algaefarm','cryostack','neonrunoff','pumpgallery','fungal','ewaste','geothermal',
+ 'cistern','cryptomine','brewery','substation','greasetrap','holograve','desal','chopshop','clonevats','gasworks',
+ 'mallruin','batteryfarm','dyeworks','dronehive','overflow','glassworks','neurofarm','fueldepot','catacomb','plating',
+ 'metro2__unused' /*placeholder guard, replaced below*/
+];
+/* keep ARCH_ORDER honest: fill the remainder programmatically from whatever
+ * keys were not hand-ordered above, so all 60 appear exactly once. */
+(function(){
+  const idx=ARCH_ORDER.indexOf('metro2__unused'); if(idx>=0)ARCH_ORDER.splice(idx,1);
+  const seen=new Set(ARCH_ORDER);
+  for(const k of Object.keys(ARCHETYPES_EXT)) if(!seen.has(k)) ARCH_ORDER.push(k);
+})();
+if(typeof module!=='undefined')module.exports={ARCHETYPES_EXT,ARCH_ORDER};
+
+/* ============================================================================
+ * CITY ENGINE + 60 VARIANT MODIFIERS — Sewer Diver: The Descent
+ * Pairs with archetypes-60.js (ARCHETYPES_EXT, ARCH_ORDER).
+ *
+ * A "variant" of an archetype is NOT hand-authored art. It is one of 60
+ * authored VARIANT_MODS applied deterministically to an archetype's palette,
+ * names, hazards and suit. 65 archetypes x 60 mods = 3,900 addressable,
+ * reproducible environment skins with a hard no-repeat guarantee per
+ * archetype across a 60-city run (see variantFor).
+ *
+ * Every function that touches game globals (THEME, TIERS, RES, skinTier...)
+ * is only called from inside the game; this file also runs standalone under
+ * node for validation and for the plan document's live tables.
+ * ========================================================================== */
+
+/* ---- seeded helpers (cv-prefixed: no collisions with game's clamp/hsl2hex/_seedStr) ---- */
+function cvHash(str){let h=2166136261>>>0;for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
+function cvRng(seed){let s=(seed>>>0)||1;return function(){s^=s<<13;s^=s>>>17;s^=s<<5;s>>>=0;return s/4294967296;};}
+function cvHex2hsl(hex){hex=hex.replace('#','');if(hex.length===3)hex=hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+  const r=parseInt(hex.slice(0,2),16)/255,g=parseInt(hex.slice(2,4),16)/255,b=parseInt(hex.slice(4,6),16)/255;
+  const mx=Math.max(r,g,b),mn=Math.min(r,g,b),l=(mx+mn)/2;let h=0,s=0;
+  if(mx!==mn){const d=mx-mn;s=l>0.5?d/(2-mx-mn):d/(mx+mn);
+    h=mx===r?((g-b)/d+(g<b?6:0)):mx===g?((b-r)/d+2):((r-g)/d+4);h*=60;}
+  return [h,s,l];}
+function cvHsl2hex(h,s,l){h=((h%360)+360)%360;s=Math.min(1,Math.max(0,s));l=Math.min(1,Math.max(0,l));
+  const f=n=>{const k=(n+h/30)%12,a=s*Math.min(l,1-l);const c=l-a*Math.max(-1,Math.min(k-3,Math.min(9-k,1)));
+    return Math.round(c*255).toString(16).padStart(2,'0');};
+  return '#'+f(0)+f(8)+f(4);}
+function cvShift(hex,dh,sMul,dl){const [h,s,l]=cvHex2hsl(hex);return cvHsl2hex(h+dh,s*sMul,l+dl);}
+function blendHex(a,b,w){const A=cvHex2hsl(a),B=cvHex2hsl(b);
+  let dh=B[0]-A[0];if(dh>180)dh-=360;if(dh<-180)dh+=360;              // shortest-arc hue lerp
+  return cvHsl2hex(A[0]+dh*w, A[1]+(B[1]-A[1])*w, A[2]+(B[2]-A[2])*w);}
+function blendPal(pA,pB,w){const out={};for(const k in pA){
+  if(k==='acc2'){const hx=blendHex('#'+pA.acc2.split(',').map(n=>(+n).toString(16).padStart(2,'0')).join(''),
+                                   '#'+pB.acc2.split(',').map(n=>(+n).toString(16).padStart(2,'0')).join(''),w);
+    const r=parseInt(hx.slice(1,3),16),g=parseInt(hx.slice(3,5),16),b=parseInt(hx.slice(5,7),16);out.acc2=r+','+g+','+b;}
+  else out[k]=blendHex(pA[k],pB[k]||pA[k],w);}return out;}
+
+/* ---- 60 VARIANT MODIFIERS ----------------------------------------------------
+ * tag      -> prepended to environment name ("FLOODED STORM DRAIN NETWORK")
+ * suitTag  -> suffixed to suit name ("TEMPEST SHELL MK-7 - FLOOD-SPEC")
+ * hue/sat/lit -> palette transform (rotate deg / saturation mul / lightness add)
+ * glow     -> multiplier for accent glow alpha (pass to gl()/GL() call sites)
+ * haz      -> additive deltas onto TIERS[n].haz {elec,blob,sl} (clamped >= 0)
+ * stat     -> suit stat multipliers {oxy,mv,lr} + additive {hp}
+ * kelp     -> extra hue rotation applied on top of `hue` to kelp colours only
+ * ------------------------------------------------------------------------------ */
+const VARIANT_MODS=[
+ {key:'flooded',     tag:'FLOODED',      suitTag:'FLOOD-SPEC',   hue:-8, sat:0.92,lit:-0.02,glow:0.9, kelp:0,  haz:{elec:-1,blob:1,sl:2},  stat:{oxy:1.10,hp:0,mv:0.95,lr:1.00}, desc:'high water, drowned lighting, extra sludge'},
+ {key:'collapsed',   tag:'COLLAPSED',    suitTag:'RUBBLE-SPEC',  hue:-4, sat:0.85,lit:-0.04,glow:0.8, kelp:0,  haz:{elec:0,blob:0,sl:1},   stat:{oxy:1.00,hp:1,mv:0.95,lr:0.95}, desc:'fallen spans, dense rock, dust-dim glow'},
+ {key:'overgrown',   tag:'OVERGROWN',    suitTag:'THORN-SPEC',   hue:18, sat:1.10,lit:0.00, glow:1.1, kelp:30, haz:{elec:-1,blob:1,sl:0},  stat:{oxy:1.00,hp:0,mv:1.00,lr:0.95}, desc:'kelp choked, moss on every seam'},
+ {key:'frozen',      tag:'FROZEN',       suitTag:'CRYO-SPEC',    hue:150,sat:0.80,lit:0.06, glow:1.0, kelp:-20,haz:{elec:0,blob:-1,sl:-2}, stat:{oxy:0.95,hp:1,mv:0.92,lr:1.05}, desc:'iced surfaces, pale light, sluggish water'},
+ {key:'scalded',     tag:'SCALDED',      suitTag:'HEAT-SPEC',    hue:-140,sat:1.15,lit:0.02,glow:1.3, kelp:-10,haz:{elec:0,blob:0,sl:1},  stat:{oxy:0.95,hp:0,mv:1.05,lr:1.00}, desc:'thermal bloom, orange-shifted haze'},
+ {key:'blackout',    tag:'BLACKOUT',     suitTag:'DARK-SPEC',    hue:0,  sat:0.75,lit:-0.06,glow:0.5, kelp:0,  haz:{elec:1,blob:0,sl:0},   stat:{oxy:1.00,hp:0,mv:1.00,lr:1.20}, desc:'grid down, glow starved, lamps matter'},
+ {key:'irradiated',  tag:'IRRADIATED',   suitTag:'RAD-SPEC',     hue:60, sat:1.25,lit:0.00, glow:1.5, kelp:20, haz:{elec:1,blob:1,sl:2},   stat:{oxy:1.00,hp:1,mv:1.00,lr:1.00}, desc:'hot particles, green-shifted everything'},
+ {key:'rusted',      tag:'RUSTED',       suitTag:'OXIDE-SPEC',   hue:-150,sat:0.95,lit:-0.02,glow:0.85,kelp:0, haz:{elec:0,blob:0,sl:1},   stat:{oxy:1.00,hp:0,mv:1.00,lr:1.00}, desc:'every panel bleeding oxide'},
+ {key:'pristine',    tag:'PRISTINE',     suitTag:'MINT-SPEC',    hue:0,  sat:1.05,lit:0.06, glow:1.2, kelp:0,  haz:{elec:-1,blob:-1,sl:-2},stat:{oxy:1.05,hp:0,mv:1.05,lr:1.05}, desc:'freshly abandoned, still humming'},
+ {key:'condemned',   tag:'CONDEMNED',    suitTag:'DEMO-SPEC',    hue:-10,sat:0.80,lit:-0.05,glow:0.7, kelp:0,  haz:{elec:1,blob:1,sl:1},   stat:{oxy:1.00,hp:1,mv:1.00,lr:1.00}, desc:'demolition-tagged, structurally hostile'},
+ {key:'derelict',    tag:'DERELICT',     suitTag:'HULK-SPEC',    hue:-6, sat:0.82,lit:-0.03,glow:0.75,kelp:0,  haz:{elec:0,blob:1,sl:0},   stat:{oxy:1.00,hp:0,mv:1.00,lr:1.05}, desc:'long dead, silt on everything'},
+ {key:'quarantined', tag:'QUARANTINED',  suitTag:'SEAL-SPEC',    hue:40, sat:1.10,lit:-0.01,glow:1.1, kelp:10, haz:{elec:0,blob:2,sl:0},   stat:{oxy:1.05,hp:0,mv:1.00,lr:1.00}, desc:'biohazard tape, sealed bulkheads'},
+ {key:'looted',      tag:'LOOTED',       suitTag:'SCAV-SPEC',    hue:0,  sat:0.90,lit:-0.02,glow:0.9, kelp:0,  haz:{elec:0,blob:0,sl:0},   stat:{oxy:1.00,hp:0,mv:1.05,lr:1.00}, desc:'stripped bare, scavenger trails'},
+ {key:'fortified',   tag:'FORTIFIED',    suitTag:'BUNKER-SPEC',  hue:-12,sat:0.88,lit:-0.01,glow:0.95,kelp:0,  haz:{elec:1,blob:0,sl:0},   stat:{oxy:1.00,hp:2,mv:0.95,lr:1.00}, desc:'plated over, chokepoint architecture'},
+ {key:'silted',      tag:'SILTED',       suitTag:'MURK-SPEC',    hue:10, sat:0.78,lit:-0.03,glow:0.7, kelp:0,  haz:{elec:0,blob:0,sl:2},   stat:{oxy:1.00,hp:0,mv:0.95,lr:1.15}, desc:'visibility crushed by suspended fines'},
+ {key:'vented',      tag:'VENTED',       suitTag:'PURGE-SPEC',   hue:-20,sat:1.05,lit:0.02, glow:1.15,kelp:0,  haz:{elec:0,blob:0,sl:-1},  stat:{oxy:1.10,hp:0,mv:1.00,lr:1.00}, desc:'live vents, rising bubble columns'},
+ {key:'crystallized',tag:'CRYSTALLIZED', suitTag:'PRISM-SPEC',   hue:35, sat:1.20,lit:0.04, glow:1.3, kelp:15, haz:{elec:0,blob:-1,sl:0},  stat:{oxy:1.00,hp:0,mv:1.00,lr:1.05}, desc:'mineral bloom on every edge'},
+ {key:'fermented',   tag:'FERMENTED',    suitTag:'BREW-SPEC',    hue:25, sat:1.10,lit:-0.01,glow:1.0, kelp:20, haz:{elec:-1,blob:2,sl:1},  stat:{oxy:0.95,hp:0,mv:1.00,lr:1.00}, desc:'gas pockets, sour foam lines'},
+ {key:'calcified',   tag:'CALCIFIED',    suitTag:'LIME-SPEC',    hue:15, sat:0.70,lit:0.05, glow:0.85,kelp:-15,haz:{elec:0,blob:0,sl:0},   stat:{oxy:1.00,hp:1,mv:0.97,lr:1.00}, desc:'stone-white scale entombs the works'},
+ {key:'electrified', tag:'ELECTRIFIED',  suitTag:'ARC-SPEC',     hue:-30,sat:1.20,lit:0.02, glow:1.4, kelp:0,  haz:{elec:2,blob:0,sl:0},   stat:{oxy:1.00,hp:0,mv:1.00,lr:1.05}, desc:'live rails, arc-light strobing'},
+ {key:'fogbound',    tag:'FOGBOUND',     suitTag:'MIST-SPEC',    hue:5,  sat:0.72,lit:0.03, glow:0.65,kelp:0,  haz:{elec:0,blob:1,sl:0},   stat:{oxy:1.00,hp:0,mv:1.00,lr:1.20}, desc:'thermocline haze eats the beam'},
+ {key:'tidal',       tag:'TIDAL',        suitTag:'SURGE-SPEC',   hue:-15,sat:1.00,lit:0.00, glow:1.0, kelp:10, haz:{elec:0,blob:1,sl:1},   stat:{oxy:1.05,hp:0,mv:1.05,lr:1.00}, desc:'pulsing current, debris on the move'},
+ {key:'pressurized', tag:'PRESSURIZED',  suitTag:'DEPTH-SPEC',   hue:-25,sat:1.05,lit:-0.04,glow:1.05,kelp:0,  haz:{elec:0,blob:0,sl:0},   stat:{oxy:0.92,hp:2,mv:0.95,lr:1.00}, desc:'crushing head of water, creaking seams'},
+ {key:'echoing',     tag:'ECHOING',      suitTag:'SONAR-SPEC',   hue:-5, sat:0.85,lit:-0.02,glow:0.9, kelp:0,  haz:{elec:0,blob:0,sl:0},   stat:{oxy:1.00,hp:0,mv:1.00,lr:1.10}, desc:'vast hollow spans, sound as light'},
+ {key:'molten',      tag:'MOLTEN',       suitTag:'SLAG-SPEC',    hue:-160,sat:1.30,lit:0.01,glow:1.5, kelp:-20,haz:{elec:0,blob:0,sl:2},  stat:{oxy:0.92,hp:1,mv:1.00,lr:1.00}, desc:'live melt seams underfoot'},
+ {key:'bleached',    tag:'BLEACHED',     suitTag:'CHLOR-SPEC',   hue:0,  sat:0.55,lit:0.08, glow:0.9, kelp:-30,haz:{elec:0,blob:-1,sl:1},  stat:{oxy:0.97,hp:0,mv:1.00,lr:1.05}, desc:'chemical-white, colour burned out'},
+ {key:'infested',    tag:'INFESTED',     suitTag:'VERMIN-SPEC',  hue:20, sat:1.05,lit:-0.03,glow:0.95,kelp:25, haz:{elec:0,blob:2,sl:1},   stat:{oxy:1.00,hp:0,mv:1.00,lr:1.00}, desc:'something breeds in the dark'},
+ {key:'automated',   tag:'AUTOMATED',    suitTag:'SERVO-SPEC',   hue:-35,sat:1.10,lit:0.01, glow:1.2, kelp:0,  haz:{elec:1,blob:0,sl:-1},  stat:{oxy:1.00,hp:0,mv:1.05,lr:1.00}, desc:'the machines never got the memo'},
+ {key:'salvaged',    tag:'SALVAGED',     suitTag:'RIG-SPEC',     hue:8,  sat:0.95,lit:0.00, glow:1.0, kelp:0,  haz:{elec:0,blob:0,sl:0},   stat:{oxy:1.05,hp:0,mv:1.00,lr:1.00}, desc:'half stripped by a crew that left fast'},
+ {key:'rewired',     tag:'REWIRED',      suitTag:'PATCH-SPEC',   hue:-45,sat:1.15,lit:0.00, glow:1.25,kelp:0,  haz:{elec:2,blob:0,sl:0},   stat:{oxy:1.00,hp:0,mv:1.00,lr:1.05}, desc:'cable spaghetti, improvised power'},
+ {key:'graffitied',  tag:'GRAFFITIED',   suitTag:'TAG-SPEC',     hue:30, sat:1.25,lit:0.02, glow:1.15,kelp:10, haz:{elec:0,blob:0,sl:0},   stat:{oxy:1.00,hp:0,mv:1.02,lr:1.00}, desc:'crew tags glow under the lamp'},
+ {key:'phosphor',    tag:'PHOSPHOR',     suitTag:'GLOW-SPEC',    hue:45, sat:1.20,lit:0.03, glow:1.6, kelp:35, haz:{elec:0,blob:0,sl:0},   stat:{oxy:1.00,hp:0,mv:1.00,lr:0.90}, desc:'the water itself remembers light'},
+ {key:'magnetized',  tag:'MAGNETIZED',   suitTag:'FLUX-SPEC',    hue:-50,sat:1.05,lit:-0.01,glow:1.1, kelp:0,  haz:{elec:1,blob:0,sl:0},   stat:{oxy:1.00,hp:0,mv:0.95,lr:1.00}, desc:'debris drifts wrong, compasses lie'},
+ {key:'brackish',    tag:'BRACKISH',     suitTag:'SALT-SPEC',    hue:12, sat:0.85,lit:-0.02,glow:0.85,kelp:-10,haz:{elec:0,blob:0,sl:1},   stat:{oxy:1.00,hp:0,mv:1.02,lr:1.00}, desc:'salt line creeping up the walls'},
+ {key:'smoldering',  tag:'SMOLDERING',   suitTag:'EMBER-SPEC',   hue:-155,sat:1.10,lit:-0.02,glow:1.25,kelp:-15,haz:{elec:0,blob:0,sl:1}, stat:{oxy:0.95,hp:0,mv:1.00,lr:0.95}, desc:'slow fire that water never killed'},
+ {key:'glacial',     tag:'GLACIAL',      suitTag:'FLOE-SPEC',    hue:160,sat:0.85,lit:0.07, glow:1.05,kelp:-25,haz:{elec:0,blob:-1,sl:-1},stat:{oxy:0.95,hp:1,mv:0.90,lr:1.10}, desc:'pack ice grinding through the dark'},
+ {key:'feral',       tag:'FERAL',        suitTag:'CLAW-SPEC',    hue:22, sat:1.10,lit:-0.02,glow:0.95,kelp:30, haz:{elec:-1,blob:2,sl:0},  stat:{oxy:1.00,hp:1,mv:1.00,lr:1.00}, desc:'the ecosystem won'},
+ {key:'sterile',     tag:'STERILE',      suitTag:'CLEAN-SPEC',   hue:-8, sat:0.65,lit:0.07, glow:1.1, kelp:-35,haz:{elec:0,blob:-2,sl:-1}, stat:{oxy:1.02,hp:0,mv:1.02,lr:1.02}, desc:'scrubbed lifeless, unnervingly bright'},
+ {key:'hypoxic',     tag:'HYPOXIC',      suitTag:'O2-SPEC',      hue:6,  sat:0.80,lit:-0.03,glow:0.8, kelp:-10,haz:{elec:0,blob:0,sl:1},   stat:{oxy:1.20,hp:0,mv:1.00,lr:1.00}, desc:'dead water; the tank does the living'},
+ {key:'turbulent',   tag:'TURBULENT',    suitTag:'EDDY-SPEC',    hue:-18,sat:1.05,lit:0.01, glow:1.0, kelp:15, haz:{elec:0,blob:1,sl:0},   stat:{oxy:1.00,hp:0,mv:1.08,lr:1.00}, desc:'standing eddies throw the beam around'},
+ {key:'stagnant',    tag:'STAGNANT',     suitTag:'STILL-SPEC',   hue:14, sat:0.75,lit:-0.04,glow:0.7, kelp:10, haz:{elec:0,blob:1,sl:2},   stat:{oxy:0.97,hp:0,mv:0.97,lr:1.05}, desc:'nothing moves unless you move it'},
+ {key:'luminous',    tag:'LUMINOUS',     suitTag:'LUMEN-SPEC',   hue:38, sat:1.15,lit:0.05, glow:1.55,kelp:25, haz:{elec:0,blob:0,sl:0},   stat:{oxy:1.00,hp:0,mv:1.00,lr:0.88}, desc:'lamp almost optional, shadows razor-sharp'},
+ {key:'corroded',    tag:'CORRODED',     suitTag:'PIT-SPEC',     hue:-145,sat:0.90,lit:-0.03,glow:0.85,kelp:0, haz:{elec:1,blob:0,sl:1},   stat:{oxy:1.00,hp:0,mv:1.00,lr:1.00}, desc:'acid-pitted metal, lace-thin floors'},
+ {key:'armored',     tag:'ARMORED',      suitTag:'PLATE-SPEC',   hue:-14,sat:0.85,lit:-0.02,glow:0.9, kelp:0,  haz:{elec:0,blob:0,sl:0},   stat:{oxy:1.00,hp:2,mv:0.93,lr:1.00}, desc:'blast plating from a war nobody logged'},
+ {key:'hollowed',    tag:'HOLLOWED',     suitTag:'VOID-SPEC',    hue:-4, sat:0.80,lit:-0.05,glow:0.8, kelp:0,  haz:{elec:0,blob:0,sl:-1},  stat:{oxy:1.00,hp:0,mv:1.05,lr:1.10}, desc:'mined out into cathedral emptiness'},
+ {key:'seismic',     tag:'SEISMIC',      suitTag:'QUAKE-SPEC',   hue:-9, sat:0.95,lit:-0.02,glow:0.95,kelp:0,  haz:{elec:1,blob:0,sl:1},   stat:{oxy:1.00,hp:1,mv:1.00,lr:1.00}, desc:'tremor cracks still settling'},
+ {key:'mirrored',    tag:'MIRRORED',     suitTag:'CHROME-SPEC',  hue:-28,sat:0.70,lit:0.06, glow:1.35,kelp:-15,haz:{elec:0,blob:0,sl:0},  stat:{oxy:1.00,hp:0,mv:1.00,lr:1.05}, desc:'polished surfaces double every glow'},
+ {key:'tarred',      tag:'TARRED',       suitTag:'PITCH-SPEC',   hue:-10,sat:0.70,lit:-0.06,glow:0.7, kelp:-20,haz:{elec:-1,blob:0,sl:2},  stat:{oxy:1.00,hp:0,mv:0.92,lr:1.05}, desc:'black film swallowing edges'},
+ {key:'biolit',      tag:'BIOLIT',       suitTag:'GLEAM-SPEC',   hue:55, sat:1.25,lit:0.02, glow:1.5, kelp:40, haz:{elec:0,blob:1,sl:0},   stat:{oxy:1.00,hp:0,mv:1.00,lr:0.92}, desc:'living light colonised the pipework'},
+ {key:'charged',     tag:'CHARGED',      suitTag:'VOLT-SPEC',    hue:-40,sat:1.20,lit:0.01, glow:1.3, kelp:0,  haz:{elec:2,blob:0,sl:0},   stat:{oxy:1.00,hp:0,mv:1.03,lr:1.00}, desc:'static in the water, hair-raising literal'},
+ {key:'gutted',      tag:'GUTTED',       suitTag:'STRIP-SPEC',   hue:-2, sat:0.78,lit:-0.03,glow:0.8, kelp:0,  haz:{elec:0,blob:0,sl:0},   stat:{oxy:1.00,hp:0,mv:1.06,lr:1.02}, desc:'torn to the frame; fast, empty runs'},
+ {key:'reinforced',  tag:'REINFORCED',   suitTag:'BRACE-SPEC',   hue:-12,sat:0.90,lit:0.00, glow:0.95,kelp:0,  haz:{elec:0,blob:0,sl:0},   stat:{oxy:1.00,hp:1,mv:0.97,lr:1.00}, desc:'retrofit ribs every third span'},
+ {key:'spored',      tag:'SPORED',       suitTag:'FILTER-SPEC',  hue:28, sat:1.05,lit:-0.01,glow:1.05,kelp:30, haz:{elec:0,blob:1,sl:1},   stat:{oxy:1.08,hp:0,mv:1.00,lr:0.97}, desc:'drifting motes catch the lamp like snow'},
+ {key:'brined',      tag:'BRINED',       suitTag:'CURE-SPEC',    hue:10, sat:0.80,lit:0.02, glow:0.9, kelp:-20,haz:{elec:0,blob:-1,sl:1},  stat:{oxy:1.00,hp:0,mv:1.00,lr:1.03}, desc:'salt-cured and preserved mid-collapse'},
+ {key:'scorched',    tag:'SCORCHED',     suitTag:'CHAR-SPEC',    hue:-150,sat:0.85,lit:-0.05,glow:0.9,kelp:-25,haz:{elec:0,blob:0,sl:0},  stat:{oxy:1.00,hp:0,mv:1.00,lr:1.08}, desc:'an old fire wrote on every wall'},
+ {key:'glassed',     tag:'GLASSED',      suitTag:'VITRO-SPEC',   hue:-22,sat:1.10,lit:0.04, glow:1.3, kelp:-10,haz:{elec:0,blob:0,sl:0},  stat:{oxy:1.00,hp:0,mv:1.00,lr:1.05}, desc:'heat-fused surfaces, mirror-smooth'},
+ {key:'shrouded',    tag:'SHROUDED',     suitTag:'VEIL-SPEC',    hue:2,  sat:0.70,lit:-0.05,glow:0.6, kelp:5,  haz:{elec:0,blob:1,sl:0},   stat:{oxy:1.00,hp:0,mv:1.00,lr:1.25}, desc:'hanging membranes curtain every span'},
+ {key:'humming',     tag:'HUMMING',      suitTag:'RESON-SPEC',   hue:-38,sat:1.10,lit:0.00, glow:1.2, kelp:0,  haz:{elec:1,blob:0,sl:0},   stat:{oxy:1.00,hp:0,mv:1.00,lr:1.00}, desc:'a deep chord nobody switched off'},
+ {key:'fractured',   tag:'FRACTURED',    suitTag:'SHARD-SPEC',   hue:-6, sat:1.00,lit:-0.01,glow:1.05,kelp:0,  haz:{elec:0,blob:0,sl:1},   stat:{oxy:1.00,hp:1,mv:1.00,lr:1.00}, desc:'stress cracks glowing at the seams'},
+ {key:'rebooted',    tag:'REBOOTED',     suitTag:'BOOT-SPEC',    hue:-32,sat:1.15,lit:0.03, glow:1.35,kelp:0,  haz:{elec:1,blob:-1,sl:-1}, stat:{oxy:1.02,hp:0,mv:1.02,lr:1.00}, desc:'systems waking, status lights everywhere'}
+];
+
+/* ---- CITY SCHEDULING --------------------------------------------------------
+ * A LAYER is one 34-row generation slab == exactly what growTier(n) builds
+ * today (tierTop[n]=3+34*n, tierBot=+31; game line 1659). An ENVIRONMENT is a
+ * run of layers sharing one (archetype x variant). A CITY is the full stack.
+ * ---------------------------------------------------------------------------- */
+let CITY=1;
+let WORLD_SEED=0x53574452;          // 'SWDR' — fixed => variants shared across all players.
+                                    // Set per-profile/per-run for private worlds (lever L7).
+const CITY_INTRO_SEEDED=false;      // true => shuffle ARCH_ORDER per WORLD_SEED (lever L6)
+const BASE_ORDER=['cybersewer','swamp','radioactive','datacentre','filtration']; // city-1 stack; filtration = persistent finale
+
+function _archOrder(){ // same <script> in-game; module scope under node validation
+  if(typeof ARCH_ORDER!=='undefined')return ARCH_ORDER;
+  return require('./archetypes-60.js').ARCH_ORDER;
+}
+function introOrder(){
+  if(!CITY_INTRO_SEEDED)return _archOrder();
+  const r=cvRng(cvHash('intro')^WORLD_SEED),p=_archOrder().slice();
+  for(let i=p.length-1;i>0;i--){const j=(r()*(i+1))|0;const t=p[i];p[i]=p[j];p[j]=t;}
+  return p;
+}
+/* Ordered archetype keys for city c, top -> bottom.
+ * City 1: the 5 base archetypes. Each later city inserts ONE new archetype
+ * just above the bottom (finale) environment; everything inherited keeps its
+ * order. envCount(c) = c + 4. */
+function cityEnvList(city){
+  const IO=introOrder(), list=BASE_ORDER.slice(0,4);
+  for(let c=2;c<=city;c++){const k=IO[c-2];if(k)list.push(k);}
+  list.push(BASE_ORDER[4]);
+  return list;
+}
+function envCount(city){return city+4;}
+/* Every environment is exactly 4 layers — one bulkhead + one quest per layer,
+ * suit upgrade at each environment boundary. (Was 5*city with blend buffers.) */
+const LAYER_CAP=Infinity;
+function layersPerEnv(city){return 4;}
+/* Blended border environments removed — every layer wears its env's pure coat. */
+const BUFFER_MAX=0;
+function bufferFor(city){return 0;}
+
+/* Deterministic variant pick: per (WORLD_SEED, archetype) a fixed shuffled
+ * permutation of all 60 mods; city c reads slot (c-1) mod 60. Guarantee: an
+ * archetype NEVER repeats a variant inside any 60-city window, and every
+ * archetype walks the mods in its own order. */
+function variantFor(archKey,city){
+  const r=cvRng(cvHash('perm:'+archKey)^WORLD_SEED);
+  const p=[...Array(VARIANT_MODS.length).keys()];
+  for(let i=p.length-1;i>0;i--){const j=(r()*(i+1))|0;const t=p[i];p[i]=p[j];p[j]=t;}
+  return VARIANT_MODS[p[(city-1)%VARIANT_MODS.length]];
+}
+
+/* Full build plan for one city: one descriptor per layer.
+ * d.blend = {arch,mod,w} of the NEIGHBOUR environment bleeding into this
+ * layer; w ramps k/(2B+1) so the boundary-adjacent layers are ~43% other
+ * at B=3 (weights 1/7,2/7,3/7 | 3/7,2/7,1/7) and pure after B layers. */
+function citySchedule(city){
+  const envs=cityEnvList(city),L=layersPerEnv(city),B=bufferFor(city),out=[];
+  for(let e=0;e<envs.length;e++){
+    const arch=envs[e],mod=variantFor(arch,city);
+    for(let li=0;li<L;li++){
+      const d={arch,mod,city,env:e,layerInEnv:li,first:li===0,blend:null};
+      if(e>0&&li<B){const k=B-li;d.blend={arch:envs[e-1],mod:variantFor(envs[e-1],city),w:k/(2*B+1)};}
+      else if(e+1<envs.length&&li>=L-B){const k=li-(L-B)+1;d.blend={arch:envs[e+1],mod:variantFor(envs[e+1],city),w:k/(2*B+1)};}
+      out.push(d);
+    }
+  }
+  return out;
+}
+
+/* ---- SUITS ------------------------------------------------------------------
+ * One suit per ENVIRONMENT-INSTANCE. Global env index g counts every
+ * environment ever descended: city 1 contributes 5 (g 0..4), city 2 six more,
+ * ... total through city 60 = sum(c+4, c=1..60) = 2070 suits.
+ * Stats ride the game's own curve gearStats(n) (line 1639) with g as n, so
+ * g=0 reproduces the starting loadout (oxy 110, hp 5) and growth is unchanged;
+ * th/po are clamped at 0 where the legacy formula goes negative. */
+function envGlobalIndex(city,e){let g=0;for(let c=1;c<city;c++)g+=envCount(c);return g+e;}
+function suitStatsFor(city,e,mod){
+  const g=envGlobalIndex(city,e);
+  const s={oxy:320+(g-3)*70,hp:8+(g-3),acc:1.4+(g-3)*0.1,mv:1.4+(g-3)*0.1,
+           lr:135+(g-3)*16,th:Math.max(0,5+(g-3)*2),po:Math.max(0,5+(g-3)*2)};
+  s.oxy=Math.round(s.oxy*(mod?mod.stat.oxy:1));
+  s.hp=Math.max(1,s.hp+(mod?mod.stat.hp:0));
+  s.mv=+(s.mv*(mod?mod.stat.mv:1)).toFixed(2); s.acc=s.mv;
+  s.lr=Math.round(s.lr*(mod?mod.stat.lr:1));
+  return s;
+}
+function suitNameFor(archLike,mod,city){
+  const base=(archLike&&archLike.suit)||'DIVE-RIG';
+  return base+' MK-'+city+(mod?' - '+mod.suitTag:'');
+}
+
+/* ============================================================================
+ *  RESOURCE IDENTITY: the colour and shape of every layer's 3 minerals and
+ *  3 floating resources. The rules live in resource-identity.md.
+ *  ----------------------------------------------------------------------------
+ *  1. PALETTE. An environment's resource colours come from its own coat (after
+ *     the city variant): accent, acc2, moss, kelp, hi/pipe/base, rock, water and
+ *     the authored palHues, plus the hue halfway between any two coat colours
+ *     that sit far apart on the wheel. Each is lifted to a resource-readable
+ *     lightness in three tiers (bright, deep, pale) in OKLab, the perceptual
+ *     space, so "far apart" means far apart to the eye.
+ *  2. COLOUR. All 24 resources of an environment (4 layers x 3 minerals + 3
+ *     floats) are coloured together. Inside a layer the six are pushed as far
+ *     apart as the palette allows (minerals among themselves first, then floats,
+ *     then minerals against floats); across the layers the whole palette is
+ *     spread out instead of cycling the same three colours.
+ *  3. SHAPE. Where the palette runs out and two resources of a kind share a
+ *     colour, their shapes are forced into different silhouette families: a
+ *     same-coloured pair never shares a family. Inside a layer the three
+ *     shapes always differ.
+ *  Deterministic per (city, environment, RUN_SEED), so a save needs nothing extra.
+ * ========================================================================== */
+// ---- OKLab (Björn Ottosson, 2020)
+function riLin(v){v/=255;return v<=0.04045?v/12.92:Math.pow((v+0.055)/1.055,2.4);}
+function riLab(hex){const c=hex2rgb(hex),r=riLin(c[0]),g=riLin(c[1]),b=riLin(c[2]);
+  const l=Math.cbrt(0.4122214708*r+0.5363325363*g+0.0514459929*b),m=Math.cbrt(0.2119034982*r+0.6806995451*g+0.1073969566*b),
+        s=Math.cbrt(0.0883024619*r+0.2817188376*g+0.6299787005*b);
+  return [0.2104542553*l+0.7936177850*m-0.0040720468*s,1.9779984951*l-2.4285922050*m+0.4505937099*s,0.0259040371*l+0.7827717662*m-0.8086757660*s];}
+function riLinRgb(L,a,b){const l=(L+0.3963377774*a+0.2158037573*b)**3,m=(L-0.1055613458*a-0.0638541728*b)**3,s=(L-0.0894841775*a-1.2914855480*b)**3;
+  return [4.0767416621*l-3.3077115913*m+0.2309699292*s,-1.2684380046*l+2.6097574011*m-0.3413193965*s,-0.0041960863*l-0.7034186147*m+1.7076147010*s];}
+function riLchLab(L,C,h){const k=h*Math.PI/180,ok=c=>riLinRgb(L,c*Math.cos(k),c*Math.sin(k)).every(v=>v>=-1e-4&&v<=1.0001);
+  if(!ok(C)){let lo=0,hi=C;for(let i=0;i<18;i++){const m=(lo+hi)/2;if(ok(m))lo=m;else hi=m;}C=lo;}   // clip chroma into sRGB, keep hue + lightness
+  return [L,C*Math.cos(k),C*Math.sin(k)];}
+function riHex(lab){return '#'+riLinRgb(lab[0],lab[1],lab[2]).map(v=>{v=clamp(v,0,1);v=v<=0.0031308?12.92*v:1.055*Math.pow(v,1/2.4)-0.055;
+  return Math.round(clamp(v,0,1)*255).toString(16).padStart(2,'0');}).join('');}
+function riLch(hex){const p=riLab(hex);return [p[0],Math.hypot(p[1],p[2]),(Math.atan2(p[2],p[1])*180/Math.PI+360)%360];}
+// "is it another colour?" Lightness is weighted down, so a shade of one hue still counts as that hue.
+function riDist(p,q){return Math.hypot(0.35*(p[0]-q[0]),p[1]-q[1],p[2]-q[2]);}
+const RI_DISTINCT=0.09;   // about 40° of hue at resource chroma: closer than this = "the same colour"
+// shape vocabularies and their silhouette families (a same-coloured pair must differ in FAMILY)
+const RI_ORE_FAM={chunk:'mass',cubes:'cubic',crystal:'spike',spire:'spike',glob:'round',geode:'ring',nodules:'scatter',slab:'strata',vein:'seam'};
+const RI_FLOAT_FAM={canister:'tube',vial:'tube',cell:'tube',bulb:'orb',jelly:'orb',sac:'orb',bag:'orb',coil:'ring',
+  brick:'block',core:'block',barrel:'drum',pod:'twin',crystal:'shard',cloth:'sheet'};
+
+// 1. PALETTE -------------------------------------------------------------------------------
+// the coat's colours (exactly as applyCityVariant tints them), weighted by how much they define it
+function riSources(a,m){
+  const sh=(h,dh)=>cvShift(h,m.hue+(dh||0),m.sat,m.lit), A2='#'+a.pal.acc2.split(',').map(n=>(+n).toString(16).padStart(2,'0')).join('');
+  const s=[[sh(a.pal.accent),3],[sh(A2),2],[sh(a.pal.moss),2],[sh(a.kelp[0],m.kelp),1.5],[sh(a.kelp[1],m.kelp),2],
+    [sh(a.pal.pipeL),1],[sh(a.pal.hi),1],[sh(a.pal.base),1],[cvShift(a.rock,m.hue,Math.min(1,m.sat),m.lit),1],[sh(a.water[0]),1]];
+  for(const h of a.palHues)s.push([cvHsl2hex(h+m.hue,0.62*Math.min(1.15,m.sat),0.55),2.5]);
+  return s;
+}
+function riPalette(src){
+  const sw=[],anc=[];
+  const put=(L,C,h,w,tier)=>{const lab=riLchLab(L,C,h);
+    for(const o of sw)if(Math.hypot(o.lab[0]-lab[0],o.lab[1]-lab[1],o.lab[2]-lab[2])<0.045){o.w+=w;return;}   // near-twins pool their weight
+    sw.push({lab,hex:riHex(lab),w,tier});};
+  for(const [hex,w] of src){const [L,C,h]=riLch(hex),viv=C/Math.max(0.05,Math.min(L,1-L)*0.6);
+    if(viv<0.35)put(0.86,0.022,h,w,'neutral');                      // steel / greys: one tinted silver
+    else anc.push({h,C:0.09+0.07*Math.min(1,viv),w});}
+  const n=anc.length;                                                 // hue midpoints between far-apart coat colours
+  for(let i=0;i<n;i++)for(let j=i+1;j<n;j++){let d=anc[j].h-anc[i].h;if(d>180)d-=360;if(d<-180)d+=360;if(Math.abs(d)<60)continue;
+    for(const hm of (Math.abs(d)>150?[d/2,d/2+180]:[d/2]))anc.push({h:(anc[i].h+hm+360)%360,C:(anc[i].C+anc[j].C)/2,w:0.35*Math.min(anc[i].w,anc[j].w)});}
+  for(const c of anc){put(0.75,c.C,c.h,c.w,'bright');put(0.62,c.C*1.1,c.h,c.w*0.5,'deep');put(0.88,c.C*0.5,c.h,c.w*0.4,'pale');}
+  return sw;
+}
+
+// 2 + 3. PLAN one environment: colours, then shapes --------------------------------------
+// item index i = layer*6 + kind*3 + slot   (kind 0 = mineral, 1 = floating; slot = a|b|c)
+function riPlanEnv(archKey,m,seed,L){
+  const a=ARCHETYPES[archKey], sw=riPalette(riSources(a,m)), K=sw.length, r=cvRng(seed), N=L*6;
+  const lay=i=>(i/6)|0, kind=i=>((i%6)/3)|0, wMax=Math.max(...sw.map(s=>s.w));
+  const same=sw.map(p=>sw.map(q=>Math.max(0,1-riDist(p.lab,q.lab)/RI_DISTINCT)));   // 1 identical .. 0 another colour
+  const near=sw.map(p=>sw.map(q=>Math.max(0,1-riDist(p.lab,q.lab)/(RI_DISTINCT*1.8))));   // stricter: a layer's six want a wide margin
+  const alike=sw.map(p=>sw.map(q=>Math.max(0,1-riDist(p.lab,q.lab)/(RI_DISTINCT*1.5))));  // the shape rule errs wide: "close" already counts
+  // what a clash costs: same layer & kind >> same layer >> neighbouring layer of a kind >> the rest;
+  // reusing a swatch at all costs a little, which spreads the colours over the whole palette
+  const W=new Float32Array(N*N),U=new Float32Array(N*N);
+  for(let i=0;i<N;i++)for(let j=0;j<N;j++){if(i===j)continue;const dl=Math.abs(lay(i)-lay(j)),sk=kind(i)===kind(j);
+    W[i*N+j]=dl===0?(sk?60:14):(sk?(dl===1?8:6):1);U[i*N+j]=sk?4:1.5;}
+  const pref=sw.map(s=>1.5*(1-s.w/wMax)+r()*0.05);                   // characteristic coat colours first; jitter = per-play variety
+  const col=new Int16Array(N).fill(-1);
+  const cCost=(i,s)=>{let c=pref[s];for(let j=0;j<N;j++){const t=col[j];if(j===i||t<0)continue;
+    c+=W[i*N+j]*(lay(i)===lay(j)?near:same)[s][t]+(s===t?U[i*N+j]:0);}return c;};
+  const settle=(n,opts,cost,arr)=>{                                    // greedy, then local search
+    for(let i=0;i<n;i++){let b=0,bc=1e9;for(let s=0;s<opts;s++){const c=cost(i,s);if(c<bc-1e-9){bc=c;b=s;}}arr[i]=b;}
+    for(let it=0;it<n*120;it++){const i=(r()*n)|0,s=(r()*opts)|0;if(s!==arr[i]&&cost(i,s)<cost(i,arr[i]))arr[i]=s;}};
+  settle(N,K,cCost,col);
+  const shapes=k=>{
+    const opts=k===0?Object.keys(RI_ORE_FAM):FRGen.FORMS, fam=k===0?RI_ORE_FAM:RI_FLOAT_FAM;
+    const sig=k===0?a.shapes:[a.float||(FRGen.BY_KEY[archKey]||{}).f];   // the coat's signature shapes are preferred
+    const ids=[];for(let i=0;i<N;i++)if(kind(i)===k)ids.push(i);
+    const n=ids.length,sh=new Int16Array(n).fill(-1);
+    settle(n,opts.length,(x,o)=>{const i=ids[x],f=fam[opts[o]];let c=sig.includes(opts[o])?-1.5:r()*0.05;
+      for(let y=0;y<n;y++){const p=sh[y];if(y===x||p<0)continue;const j=ids[y],sl=lay(i)===lay(j),sc=alike[col[i]][col[j]],id=col[i]===col[j];
+        if(p===o)c+=(sl?50:2)+80*sc+(id?20:0);                        // the very same shape
+        else if(fam[opts[p]]===f)c+=(sl?12:0.5)+60*sc+(id?10:0);}      // same silhouette family
+      return c;},sh);
+    return [...sh].map(o=>opts[o]);};
+  const ore=shapes(0),flt=shapes(1);
+  const layers=[];
+  for(let l=0;l<L;l++)layers.push({
+    raw:[0,1,2].map(s=>({col:sw[col[l*6+s]].hex,shape:ore[l*3+s]})),
+    mix:[0,1,2].map(s=>({col:sw[col[l*6+3+s]].hex,form:flt[l*3+s]}))});
+  return {palette:sw,layers};
+}
+// refined goods wear a pale tint of the mineral they are pressed from
+function riRefined(hex){const [L,C,h]=riLch(hex);return riHex(riLchLab(0.87,C*0.5,h));}
+let RIPLAN=new Map();     // per-environment plan cache (cleared by genTheme)
+function riPlan(d){
+  const k=d.city+':'+CITY_ID+':'+d.env+':'+RUN_SEED;
+  if(!RIPLAN.has(k))RIPLAN.set(k,riPlanEnv(d.arch,d.mod,(cvHash('ri:'+d.arch+':'+d.mod.key+':'+d.env)^RUN_SEED)>>>0,layersPerEnv(d.city)));
+  return RIPLAN.get(k);
+}
+
+
+Object.assign(ARCHETYPES,ARCHETYPES_EXT);
+// base five carry the §8 graphics-basis fields too
+Object.assign(ARCHETYPES.cybersewer, {float:'canister', plat:['chevron','rivet','moss']});
+Object.assign(ARCHETYPES.swamp,      {float:'jelly',    plat:['moss','drip','foam']});
+Object.assign(ARCHETYPES.radioactive,{float:'pod',      plat:['stain','crack','drip']});
+Object.assign(ARCHETYPES.datacentre, {float:'bulb',     plat:['trace','led','cable']});
+Object.assign(ARCHETYPES.filtration, {float:'canister', plat:['scale','drip','stain']});
+
+
+const RES={}; let CITY_ID=0;
+const sheet=document.getElementById('sheet');
+const ORE_SCALE=4, FLT_SCALE=2;
+// the environments a player meets: city 1's five, then each new one in the city it is introduced
+const envs=[];
+cityEnvList(1).forEach((k,i)=>envs.push({arch:k,city:1,pos:'city 1 · env '+(i+1)}));
+introOrder().forEach((k,i)=>envs.push({arch:k,city:i+2,pos:'city '+(i+2)+' (new)'}));
+let tierN=0;
+window.__study={plans:[],riDist,riLab,RI_DISTINCT,RI_ORE_FAM,RI_FLOAT_FAM};   // for scripted audits
+function groups(items){   // colour groups: items closer than RI_DISTINCT share a letter
+  const lab=items.map(it=>riLab(it.col)), g=items.map(()=>-1); let n=0;
+  for(let i=0;i<items.length;i++){if(g[i]>=0)continue;g[i]=n;
+    for(let j=i+1;j<items.length;j++)if(g[j]<0&&riDist(lab[i],lab[j])<RI_DISTINCT)g[j]=n;n++;}
+  return g.map(x=>String.fromCharCode(65+x));
+}
+function cell(canvas,label,sub,grp){
+  const d=document.createElement('figure');d.className='it';d.appendChild(canvas);
+  const c=document.createElement('figcaption');c.innerHTML='<b>'+grp+'</b> '+label+'<br><span>'+sub+'</span>';d.appendChild(c);return d;}
+for(const e of envs){
+  WORLD_SEED=0x53574452; CITY=e.city;   // the founding world seed (citySeed(0))
+  const mod=variantFor(e.arch,e.city), a=ARCHETYPES[e.arch];
+  const plan=riPlanEnv(e.arch,mod,(cvHash('ri:'+e.arch+':'+mod.key+':0')^0x5eed)>>>0,4);
+  window.__study.plans.push({arch:e.arch,mod:mod.key,plan});
+  const water=cvShift(a.water[1],mod.hue,mod.sat,mod.lit);
+  const sec=document.createElement('section');sec.className='env';sec.style.setProperty('--water',water);
+  sec.innerHTML='<h2>'+mod.tag+' '+a.name+' <small>'+e.pos+' · '+e.arch+'</small></h2>';
+  const pal=document.createElement('div');pal.className='pal';
+  for(const s of plan.palette){const w=document.createElement('i');w.style.background=s.hex;w.title=s.hex+' '+s.tier;
+    w.dataset.t=s.tier[0];pal.appendChild(w);}
+  sec.appendChild(pal);
+  const gr=groups(plan.layers.flatMap(L=>L.raw)), gf=groups(plan.layers.flatMap(L=>L.mix));
+  plan.layers.forEach((L,li)=>{
+    const row=document.createElement('div');row.className='row';
+    row.innerHTML='<div class="ln">L'+(li+1)+'</div>';
+    const t=tierN++;THEME[t]={key:e.arch,oreShapes:{},floatForms:{}};
+    const ore=document.createElement('div');ore.className='grp';
+    L.raw.forEach((r,j)=>{const s='abc'[j],id='t'+(t+1)+'r'+s;RES[id]={col:r.col,kind:'raw'};THEME[t].oreShapes[s]=r.shape;
+      const src=buildOreCanvas(id,0,'up'),cv=document.createElement('canvas');cv.width=16*ORE_SCALE;cv.height=16*ORE_SCALE;
+      const c=cv.getContext('2d');c.imageSmoothingEnabled=false;c.drawImage(src,0,0,cv.width,cv.height);
+      ore.appendChild(cell(cv,r.shape,r.col,gr[li*3+j]));});
+    const flt=document.createElement('div');flt.className='grp';
+    L.mix.forEach((m,j)=>{const s='abc'[j],id='t'+(t+1)+'m'+s;RES[id]={col:m.col,kind:'mix'};THEME[t].floatForms[s]=m.form;
+      const spec=FRGen.make(e.arch,j,FRGen._hash(e.arch+':'+j),{form:m.form,col:m.col});
+      const cv=document.createElement('canvas');cv.width=spec.w*FLT_SCALE;cv.height=spec.h*FLT_SCALE;
+      const c=cv.getContext('2d');FRGen.blit(c,spec,0,0,FLT_SCALE);
+      const f=cell(cv,m.form,m.col,gf[li*3+j]);
+      const ico=document.createElement('div');ico.className='ico';ico.innerHTML=floatSVG(id,20);ico.title='pack icon';f.prepend(ico);
+      flt.appendChild(f);});
+    row.appendChild(ore);row.appendChild(flt);sec.appendChild(row);
+  });
+  sheet.appendChild(sec);
+}
+
+})();
+</script>
+</body></html>

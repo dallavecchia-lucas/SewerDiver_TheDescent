@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "smoke": "node scripts/smoke.mjs",
     "sync": "node scripts/sync-legacy.mjs",
-    "legibility": "node scripts/legibility.mjs"
+    "legibility": "node scripts/legibility.mjs",
+    "study": "node scripts/resource-study.mjs"
   },
   "dependencies": {
     "three": "0.184.0"
