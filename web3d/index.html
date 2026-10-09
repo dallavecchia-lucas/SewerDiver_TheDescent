@@ -245,6 +245,9 @@
   .req .rqn{color:#8aa6b8;}
   .req .rqq{font-weight:bold;}
   .req.ok{border-color:rgba(43,211,138,.3);} .req.ok .rqq{color:var(--tox);}
+  /* requirement chips double as tracker buttons; the tracked one wears the tracker's yellow */
+  .req[data-craft],.rpchip[data-craft]{cursor:pointer;}
+  .req[data-trk],.rpchip[data-trk]{border-color:#ffd23c!important;box-shadow:0 0 0 1px #ffd23c,0 0 8px rgba(255,210,60,.45)!important;}
   .req.no{border-color:rgba(255,90,110,.25);} .req.no .rqq{color:var(--red);}
   .req .from{color:#c89a4a;margin-left:1px;}
   .cbtn{flex:0 0 auto;order:1;border:1px solid #2a4c5e;background:linear-gradient(180deg,#173042,#0e2230);color:#7fd0ee;

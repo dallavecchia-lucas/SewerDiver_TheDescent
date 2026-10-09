@@ -444,7 +444,7 @@ const ORE_ARCH = {               // default fallback shapes (overridden per play
 };
 // ----- per-play procedural-theme state (set by genTheme(), read across the renderer) -----
 let RUN_SEED = 1;     // mixed into the ore RNG so masses differ every play
-let THEME = [];       // THEME[tier] = {key,bg,tile,scenery,kelp,pal,oreShapes}
+let THEME = [];       // THEME[tier] = {key,bg,tile,scenery,kelp,pal,oreShapes,floatForms}
 let ICONSHAPE = {};   // id -> 'a'|'b'|'c' : which hand-drawn icon shape a mix/ref item uses this play
 // Shade level -> brightness multiplier applied to the resource colour.
 // 1 dark edge · 2 base · 3 lit edge · 4 specular corner · 5 grime speck.
@@ -627,15 +627,24 @@ function oreLevels(id,variant){ const k=id+'|'+variant; return _oreLv[k]||(_oreL
 // caches are pure functions of (id, variant[, face]) and rebuild identically from RUN_SEED on revisit
 function evictFarCache(cache,pti){for(const k in cache){const t=idTier(k.slice(0,k.indexOf('|')))-1;if(t<pti-2||t>pti+2)delete cache[k];}}
 
-/* ---------- 6. RENDERER A — SVG icon (menus / inventory / reward popup) ---------- */
+/* ---------- 6. RENDERER A — SVG icon (menus / inventory / shop / reward popup) ---------- */
+// The icon IS the in-world ore tile: the exact canvas drawOre blits (mass + baked rock base), read
+// back pixel by pixel into an SVG, so an icon can never drift from the sprite you mine.
+const _oreSvg=new Map();
 function oreGridSVG(id,sz){
-  const c=RES[id].col, lv=oreLevels(id,0), tier=idTier(id)-1, l=shade(c,1.6);
-  let rects='';
-  for(let gy=0;gy<GH;gy++)for(let gx=0;gx<GW;gx++){ const s=lv[gy*GW+gx]; if(!s)continue; rects+='<rect x="'+gx+'" y="'+(2+gy)+'" width="1" height="1" fill="'+shade(c,SHMUL[s])+'"/>'; }
-  let acc='';
-  if(tier>=1) acc+='<circle cx="13.4" cy="2.6" r="1" fill="'+l+'"/><path d="M13.4 1.3 V3.9 M12.1 2.6 H14.7" stroke="'+l+'" stroke-width="0.5"/>';
-  if(tier>=3) acc='<circle cx="8" cy="9" r="7.6" fill="'+c+'" opacity="0.12"/>'+acc+'<path d="M2.6 6 L3.4 6.6 M13 12.4 L12.2 13" stroke="#fff" stroke-width="0.5" opacity="0.7"/>';
-  return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16">'+acc+rects+'</svg>';
+  const ck=id+'|'+RES[id].col+'|'+oreShapeFor(id)+'|'+RUN_SEED;
+  let rects=_oreSvg.get(ck);
+  if(rects==null){rects=canvasRects(getOreCanvas(id,0,'up'));_oreSvg.set(ck,rects);}
+  return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16" shape-rendering="crispEdges">'+rects+'</svg>';
+}
+// opaque pixels of a small canvas as SVG rects, runs of one colour merged along each row
+function canvasRects(cv){
+  const w=cv.width,h=cv.height,d=cv.getContext('2d').getImageData(0,0,w,h).data;let out='';
+  for(let y=0;y<h;y++)for(let x=0;x<w;){const i=(y*w+x)*4;if(d[i+3]<8){x++;continue;}
+    const col='rgb('+d[i]+','+d[i+1]+','+d[i+2]+')';let n=1;
+    while(x+n<w){const j=(y*w+x+n)*4;if(d[j+3]<8||d[j]!==d[i]||d[j+1]!==d[i+1]||d[j+2]!==d[i+2])break;n++;}
+    out+='<rect x="'+x+'" y="'+y+'" width="'+n+'" height="1" fill="'+col+'"/>';x+=n;}
+  return out;
 }
 
 /* ---------- 7. RENDERER B — in-world ore (face-aware, baked rock base, cached) ---------- */
@@ -675,7 +684,8 @@ function floatLook(id){
   const T=THEME[idTier(id)-1], key=(T&&T.key&&FRGen.BY_KEY[T.key])?T.key:'cybersewer', s=idSlot(id);
   return {key, variant:Math.max(0,'abc'.indexOf(s)), form:(T&&T.floatForms&&T.floatForms[s])||FRGen.BY_KEY[key].f, col:RES[id].col};
 }
-// ---------- RENDERER C: SVG icon of a floating resource, the same FRGen sprite it has in the water ----------
+// ---------- RENDERER C: SVG icon of a floating resource: the FRGen sprite it has in the water, same form,
+// colour and pixels (only the per-spot seed's speckle differs) ----------
 const _floatSvg=new Map();
 function floatSVG(id,sz){
   const lk=floatLook(id), ck=lk.form+'|'+lk.col+'|'+lk.variant;
@@ -752,11 +762,13 @@ const ARCHETYPES={
  *           racks/tanks) so this file is drop-in TODAY with zero art work.
  *   tilex — preferred EXTENDED tile painter (doc §8.5); `tile` likewise
  *           always holds an existing painter (metal/bio/toxic/tech/concrete).
- *   float — floating-resource form for this archetype's 3 mixer pickups:
- *           canister | bulb | jelly | pod   (drawMixer branch, doc §8.3)
+ *   float — the archetype's SIGNATURE floating-resource form: the resource
+ *           plan (riPlanEnv) prefers it, but every layer's 3 floats get 3
+ *           different forms from all 14 FRGen forms (resource-identity.md)
  *   plat  — 3 platform-motif tags overlaid by drawTile (doc §8.2)
- *   shapes — 3 entries (was 2) from this build's 4 ore forms:
- *           chunk | crystal | glob | slab   (genOreLevels, line ~1369)
+ *   shapes — the archetype's SIGNATURE ore forms, preferred by the resource
+ *           plan; the full set is chunk | cubes | crystal | spire | glob |
+ *           geode | nodules | slab | vein   (genOreLevels, RI_ORE_FAM)
  *
  * INSTALL (1 line, after the ARCHETYPES literal closes at ~line 1601):
  *   Object.assign(ARCHETYPES, ARCHETYPES_EXT);

@@ -93,8 +93,11 @@ nothing forbids them.
 
 - Floats are drawn in their planned form and their `RES` colour: `FRGen.make(key, variant, seed,
   {form, col})`. Highlights mix toward white rather than multiply, so a light colour keeps its hue.
-- A float's pack and recipe icon is the same FRGen sprite (`floatSVG`), so the icon matches what
-  you see in the water.
+- Every menu, pack and shop icon is a render of the in-world sprite, never separate art. A float's
+  icon is its FRGen sprite (`floatSVG`). A mineral's icon is the exact ore tile `drawOre` blits,
+  rock base included, read back pixel by pixel (`oreGridSVG` → `canvasRects`). Salvage icons are
+  the water's nugget (`scrapBody`). Refined goods have no world sprite, so they keep their drawn
+  icons.
 - Refined goods (`tNf*`) wear a pale tint of the mineral they are pressed from (`riRefined`).
 - The plan is deterministic per (city, environment, `RUN_SEED`). Each dive re-rolls the small
   jitter, and saves need no new data: `THEME[n].floatForms` and `oreShapes` are saved with

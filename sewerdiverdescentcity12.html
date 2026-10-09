@@ -245,6 +245,9 @@
   .req .rqn{color:#8aa6b8;}
   .req .rqq{font-weight:bold;}
   .req.ok{border-color:rgba(43,211,138,.3);} .req.ok .rqq{color:var(--tox);}
+  /* requirement chips double as tracker buttons; the tracked one wears the tracker's yellow */
+  .req[data-craft],.rpchip[data-craft]{cursor:pointer;}
+  .req[data-trk],.rpchip[data-trk]{border-color:#ffd23c!important;box-shadow:0 0 0 1px #ffd23c,0 0 8px rgba(255,210,60,.45)!important;}
   .req.no{border-color:rgba(255,90,110,.25);} .req.no .rqq{color:var(--red);}
   .req .from{color:#c89a4a;margin-left:1px;}
   .cbtn{flex:0 0 auto;order:1;border:1px solid #2a4c5e;background:linear-gradient(180deg,#173042,#0e2230);color:#7fd0ee;
@@ -2018,15 +2021,24 @@ function oreLevels(id,variant){ const k=id+'|'+variant; return _oreLv[k]||(_oreL
 // caches are pure functions of (id, variant[, face]) and rebuild identically from RUN_SEED on revisit
 function evictFarCache(cache,pti){for(const k in cache){const t=idTier(k.slice(0,k.indexOf('|')))-1;if(t<pti-2||t>pti+2)delete cache[k];}}
 
-/* ---------- 6. RENDERER A — SVG icon (menus / inventory / reward popup) ---------- */
+/* ---------- 6. RENDERER A — SVG icon (menus / inventory / shop / reward popup) ---------- */
+// The icon IS the in-world ore tile: the exact canvas drawOre blits (mass + baked rock base), read
+// back pixel by pixel into an SVG, so an icon can never drift from the sprite you mine.
+const _oreSvg=new Map();
 function oreGridSVG(id,sz){
-  const c=RES[id].col, lv=oreLevels(id,0), tier=idTier(id)-1, l=shade(c,1.6);
-  let rects='';
-  for(let gy=0;gy<GH;gy++)for(let gx=0;gx<GW;gx++){ const s=lv[gy*GW+gx]; if(!s)continue; rects+='<rect x="'+gx+'" y="'+(2+gy)+'" width="1" height="1" fill="'+shade(c,SHMUL[s])+'"/>'; }
-  let acc='';
-  if(tier>=1) acc+='<circle cx="13.4" cy="2.6" r="1" fill="'+l+'"/><path d="M13.4 1.3 V3.9 M12.1 2.6 H14.7" stroke="'+l+'" stroke-width="0.5"/>';
-  if(tier>=3) acc='<circle cx="8" cy="9" r="7.6" fill="'+c+'" opacity="0.12"/>'+acc+'<path d="M2.6 6 L3.4 6.6 M13 12.4 L12.2 13" stroke="#fff" stroke-width="0.5" opacity="0.7"/>';
-  return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16">'+acc+rects+'</svg>';
+  const ck=id+'|'+RES[id].col+'|'+oreShapeFor(id)+'|'+RUN_SEED;
+  let rects=_oreSvg.get(ck);
+  if(rects==null){rects=canvasRects(getOreCanvas(id,0,'up'));_oreSvg.set(ck,rects);}
+  return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16" shape-rendering="crispEdges">'+rects+'</svg>';
+}
+// opaque pixels of a small canvas as SVG rects, runs of one colour merged along each row
+function canvasRects(cv){
+  const w=cv.width,h=cv.height,d=cv.getContext('2d').getImageData(0,0,w,h).data;let out='';
+  for(let y=0;y<h;y++)for(let x=0;x<w;){const i=(y*w+x)*4;if(d[i+3]<8){x++;continue;}
+    const col='rgb('+d[i]+','+d[i+1]+','+d[i+2]+')';let n=1;
+    while(x+n<w){const j=(y*w+x+n)*4;if(d[j+3]<8||d[j]!==d[i]||d[j+1]!==d[i+1]||d[j+2]!==d[i+2])break;n++;}
+    out+='<rect x="'+x+'" y="'+y+'" width="'+n+'" height="1" fill="'+col+'"/>';x+=n;}
+  return out;
 }
 
 /* ---------- 7. RENDERER B — in-world ore (face-aware, baked rock base, cached) ---------- */
@@ -2066,7 +2078,8 @@ function floatLook(id){
   const T=THEME[idTier(id)-1], key=(T&&T.key&&FRGen.BY_KEY[T.key])?T.key:'cybersewer', s=idSlot(id);
   return {key, variant:Math.max(0,'abc'.indexOf(s)), form:(T&&T.floatForms&&T.floatForms[s])||FRGen.BY_KEY[key].f, col:RES[id].col};
 }
-// ---------- RENDERER C: SVG icon of a floating resource, the same FRGen sprite it has in the water ----------
+// ---------- RENDERER C: SVG icon of a floating resource: the FRGen sprite it has in the water, same form,
+// colour and pixels (only the per-spot seed's speckle differs) ----------
 const _floatSvg=new Map();
 function floatSVG(id,sz){
   const lk=floatLook(id), ck=lk.form+'|'+lk.col+'|'+lk.variant;
@@ -3709,7 +3722,7 @@ function skinTier(i,archKey){
 // City bootstrap: build the layer schedule for the current city and skin the first 4 layers from it.
 function genTheme(){
   RUN_SEED=((Date.now()>>>0)^((Math.random()*0xffffffff)>>>0))>>>0||1;
-  _oreLv={}; _oreCanv={}; ICONSHAPE={}; RIPLAN=new Map(); _floatSvg.clear();   // drop caches keyed on last play's shapes/colours
+  _oreLv={}; _oreCanv={}; ICONSHAPE={}; RIPLAN=new Map(); _floatSvg.clear(); _oreSvg.clear();   // drop caches keyed on last play's shapes/colours
   SCHED=cityScheduleFor(CITY,CITY_ID);
   THEME=[];
   for(let i=0;i<4;i++)applyCityVariant(i,SCHED[i],ARCHETYPES);   // skinTier runs inside
@@ -4776,9 +4789,38 @@ function activateBase(b){const kit={};kit['t'+b.tier+'fb']=1;
     showMsg('⚓ BASE ONLINE');}
   else showMsg('✕ NEEDS #2 COMPOSITE');
 }
+// ===== RESOURCE TRACKER =====================================================================
+// Tap a required resource in the base menus and the HUD's yellow ingot stack leads to the nearest
+// one in the water, exactly like the task compass. Tap it again to stop. It clears itself once the
+// hold has as many as the recipe asked for. Refined goods aren't out in the water, so tapping one
+// tracks the first of its ingredients still short. Lives on the player, so it rides the save.
+function trackRes(id,need){
+  const t=player.track;
+  if(t&&(t.id===id||t.from===id)){player.track=null;osdTrk=null;sfx.back();return;}
+  let tid=id,tn=Math.max(need,invGet(id)+1);
+  if(RES[id].kind==='ref'){const r=RES[id],short=Math.max(1,tn-invGet(id));tid=null;
+    for(const k in r.in)if(invGet(k)<r.in[k]*short){tid=k;tn=r.in[k]*short;break;}
+    if(!tid){sfx.deny();showMsg('✕ MIX IT · MIXER');return;}}
+  player.track={id:tid,need:tn,from:id};osdTrk=null;trkScan=0;sfx.select();
+  showMsg('◈ TRACKING '+RES[tid].name);}
+let trkPos=null,trkScan=0;   // the tracked resource's nearest spot, rescanned every 20 ticks
+function trackTarget(){
+  const t=player.track;if(!t||!RES[t.id])return null;
+  if(invGet(t.id)>=t.need){player.track=null;sfx.select();showMsg('◆ GOT '+RES[t.id].name);return null;}
+  if(state.tick>=trkScan){trkScan=state.tick+20;trkPos=null;
+    const px=player.x+4,py=player.y+4;let bd=Infinity;
+    const pick=(x,y)=>{const d=(x-px)*(x-px)+(y-py)*(y-py);if(d<bd){bd=d;trkPos={x,y};}};
+    if(RES[t.id].kind==='raw'){for(const o of oreCells)if(o.resId===t.id)pick(o.x*TS+8,o.y*TS+8);}
+    else for(const m of mixers)if(m.resId===t.id)pick(m.x,m.y);
+    if(!trkPos&&!t.gone){t.gone=true;showMsg('✕ NO '+RES[t.id].name+' LEFT');}
+    if(trkPos)t.gone=false;}
+  return trkPos;}
+// requirement chips are tracker buttons: data-craft="track:id:need", the tracked one ringed in yellow
+function trkAttr(id,nd){const t=player.track,on=t&&(t.id===id||t.from===id);
+  return ' data-craft="track:'+id+':'+(nd==null?0:nd)+'"'+(on?' data-trk="1"':'');}
 function chip(id){const r=RES[id];return '<span class="chip">'+iconSVG(id,18)+'<span class="n">'+r.name+'</span><span class="q">'+invGet(id)+'</span></span>';}
 function need(m,curT){return Object.keys(m).map(id=>{const r=RES[id],nd=m[id],hv=invGet(id),ok=hv>=nd,it=idTier(id)-1,carry=it<curT;
-  return '<span class="req '+(ok?'ok':'no')+'">'+iconSVG(id,15)+'<span class="rqn">'+r.name+'</span><span class="rqq">'+hv+'/'+nd+'</span>'+(carry?'<span class="from">◂</span>':'')+'</span>';}).join('');}
+  return '<span class="req '+(ok?'ok':'no')+'"'+trkAttr(id,nd)+'>'+iconSVG(id,15)+'<span class="rqn">'+r.name+'</span><span class="rqq">'+hv+'/'+nd+'</span>'+(carry?'<span class="from">◂</span>':'')+'</span>';}).join('');}
 const DIVICON={"crate": "<svg class=\"dico\" viewBox=\"0 0 16 16\" width=\"100%\" height=\"100%\" shape-rendering=\"crispEdges\" fill=\"#c79a5a\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"1\" y=\"2\" width=\"14\" height=\"1\"/><rect x=\"1\" y=\"3\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"3\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"3\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"12\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"4\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"11\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"10\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"9\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"8\" width=\"1\" height=\"1\"/><rect x=\"7\" y=\"8\" width=\"2\" height=\"1\"/><rect x=\"14\" y=\"8\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"9\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"10\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"10\" width=\"1\" height=\"1\"/><rect x=\"10\" y=\"10\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"10\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"11\" width=\"1\" height=\"1\"/><rect x=\"4\" y=\"11\" width=\"1\" height=\"1\"/><rect x=\"11\" y=\"11\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"11\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"12\" width=\"1\" height=\"1\"/><rect x=\"3\" y=\"12\" width=\"1\" height=\"1\"/><rect x=\"12\" y=\"12\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"12\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"13\" width=\"14\" height=\"1\"/></svg>", "flask": "<svg class=\"dico\" viewBox=\"0 0 16 16\" width=\"100%\" height=\"100%\" shape-rendering=\"crispEdges\" fill=\"#5fe3c8\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"6\" y=\"0\" width=\"4\" height=\"1\"/><rect x=\"6\" y=\"1\" width=\"1\" height=\"1\"/><rect x=\"9\" y=\"1\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"2\" width=\"1\" height=\"1\"/><rect x=\"9\" y=\"2\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"3\" width=\"1\" height=\"1\"/><rect x=\"9\" y=\"3\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"4\" width=\"2\" height=\"1\"/><rect x=\"9\" y=\"4\" width=\"2\" height=\"1\"/><rect x=\"5\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"10\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"4\" y=\"6\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"6\" width=\"2\" height=\"1\"/><rect x=\"4\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"7\" y=\"7\" width=\"2\" height=\"1\"/><rect x=\"11\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"3\" y=\"8\" width=\"2\" height=\"1\"/><rect x=\"6\" y=\"8\" width=\"4\" height=\"1\"/><rect x=\"11\" y=\"8\" width=\"2\" height=\"1\"/><rect x=\"3\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"9\" width=\"4\" height=\"1\"/><rect x=\"12\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"3\" y=\"10\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"10\" width=\"6\" height=\"1\"/><rect x=\"12\" y=\"10\" width=\"1\" height=\"1\"/><rect x=\"3\" y=\"11\" width=\"10\" height=\"1\"/><rect x=\"4\" y=\"12\" width=\"8\" height=\"1\"/></svg>", "wrench": "<svg class=\"dico\" viewBox=\"0 0 16 16\" width=\"100%\" height=\"100%\" shape-rendering=\"crispEdges\" fill=\"#bfeaff\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"12\" y=\"0\" width=\"2\" height=\"1\"/><rect x=\"11\" y=\"1\" width=\"4\" height=\"1\"/><rect x=\"10\" y=\"2\" width=\"2\" height=\"1\"/><rect x=\"14\" y=\"2\" width=\"1\" height=\"1\"/><rect x=\"10\" y=\"3\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"3\" width=\"1\" height=\"1\"/><rect x=\"10\" y=\"4\" width=\"2\" height=\"1\"/><rect x=\"14\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"9\" y=\"5\" width=\"4\" height=\"1\"/><rect x=\"8\" y=\"6\" width=\"3\" height=\"1\"/><rect x=\"7\" y=\"7\" width=\"3\" height=\"1\"/><rect x=\"6\" y=\"8\" width=\"3\" height=\"1\"/><rect x=\"5\" y=\"9\" width=\"3\" height=\"1\"/><rect x=\"4\" y=\"10\" width=\"3\" height=\"1\"/><rect x=\"3\" y=\"11\" width=\"3\" height=\"1\"/><rect x=\"2\" y=\"12\" width=\"3\" height=\"1\"/><rect x=\"1\" y=\"13\" width=\"3\" height=\"1\"/><rect x=\"1\" y=\"14\" width=\"2\" height=\"1\"/></svg>", "swap": "<svg class=\"dico\" viewBox=\"0 0 16 16\" width=\"100%\" height=\"100%\" shape-rendering=\"crispEdges\" fill=\"#9fd0e6\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"7\" y=\"0\" width=\"2\" height=\"1\"/><rect x=\"6\" y=\"1\" width=\"4\" height=\"1\"/><rect x=\"5\" y=\"2\" width=\"6\" height=\"1\"/><rect x=\"4\" y=\"3\" width=\"2\" height=\"1\"/><rect x=\"7\" y=\"3\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"3\" width=\"2\" height=\"1\"/><rect x=\"7\" y=\"4\" width=\"2\" height=\"1\"/><rect x=\"7\" y=\"5\" width=\"2\" height=\"1\"/><rect x=\"7\" y=\"6\" width=\"2\" height=\"1\"/><rect x=\"7\" y=\"7\" width=\"2\" height=\"1\"/><rect x=\"7\" y=\"8\" width=\"2\" height=\"1\"/><rect x=\"7\" y=\"9\" width=\"2\" height=\"1\"/><rect x=\"4\" y=\"10\" width=\"2\" height=\"1\"/><rect x=\"7\" y=\"10\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"10\" width=\"2\" height=\"1\"/><rect x=\"5\" y=\"11\" width=\"6\" height=\"1\"/><rect x=\"6\" y=\"12\" width=\"4\" height=\"1\"/><rect x=\"7\" y=\"13\" width=\"2\" height=\"1\"/></svg>"};
 const TABICON={"craft": "<svg class=\"dico\" viewBox=\"0 0 16 16\" width=\"100%\" height=\"100%\" shape-rendering=\"crispEdges\" fill=\"#9fdcff\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"6\" y=\"0\" width=\"4\" height=\"1\"/><rect x=\"2\" y=\"1\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"1\" width=\"4\" height=\"1\"/><rect x=\"13\" y=\"1\" width=\"1\" height=\"1\"/><rect x=\"2\" y=\"2\" width=\"2\" height=\"1\"/><rect x=\"5\" y=\"2\" width=\"6\" height=\"1\"/><rect x=\"12\" y=\"2\" width=\"2\" height=\"1\"/><rect x=\"3\" y=\"3\" width=\"10\" height=\"1\"/><rect x=\"1\" y=\"4\" width=\"5\" height=\"1\"/><rect x=\"10\" y=\"4\" width=\"5\" height=\"1\"/><rect x=\"1\" y=\"5\" width=\"4\" height=\"1\"/><rect x=\"11\" y=\"5\" width=\"4\" height=\"1\"/><rect x=\"1\" y=\"6\" width=\"3\" height=\"1\"/><rect x=\"7\" y=\"6\" width=\"2\" height=\"1\"/><rect x=\"12\" y=\"6\" width=\"3\" height=\"1\"/><rect x=\"1\" y=\"7\" width=\"3\" height=\"1\"/><rect x=\"6\" y=\"7\" width=\"4\" height=\"1\"/><rect x=\"12\" y=\"7\" width=\"3\" height=\"1\"/><rect x=\"1\" y=\"8\" width=\"3\" height=\"1\"/><rect x=\"6\" y=\"8\" width=\"4\" height=\"1\"/><rect x=\"12\" y=\"8\" width=\"3\" height=\"1\"/><rect x=\"1\" y=\"9\" width=\"3\" height=\"1\"/><rect x=\"7\" y=\"9\" width=\"2\" height=\"1\"/><rect x=\"12\" y=\"9\" width=\"3\" height=\"1\"/><rect x=\"1\" y=\"10\" width=\"4\" height=\"1\"/><rect x=\"11\" y=\"10\" width=\"4\" height=\"1\"/><rect x=\"1\" y=\"11\" width=\"5\" height=\"1\"/><rect x=\"10\" y=\"11\" width=\"5\" height=\"1\"/><rect x=\"3\" y=\"12\" width=\"10\" height=\"1\"/><rect x=\"2\" y=\"13\" width=\"2\" height=\"1\"/><rect x=\"5\" y=\"13\" width=\"6\" height=\"1\"/><rect x=\"12\" y=\"13\" width=\"2\" height=\"1\"/><rect x=\"2\" y=\"14\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"14\" width=\"4\" height=\"1\"/><rect x=\"13\" y=\"14\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"15\" width=\"4\" height=\"1\"/></svg>", "shop": "<svg class=\"dico\" viewBox=\"0 0 16 16\" width=\"100%\" height=\"100%\" shape-rendering=\"crispEdges\" fill=\"#ffd23c\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"6\" y=\"0\" width=\"4\" height=\"1\"/><rect x=\"4\" y=\"1\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"1\" width=\"2\" height=\"1\"/><rect x=\"3\" y=\"2\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"2\" width=\"4\" height=\"1\"/><rect x=\"12\" y=\"2\" width=\"1\" height=\"1\"/><rect x=\"2\" y=\"3\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"3\" width=\"2\" height=\"1\"/><rect x=\"9\" y=\"3\" width=\"2\" height=\"1\"/><rect x=\"13\" y=\"3\" width=\"1\" height=\"1\"/><rect x=\"2\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"10\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"13\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"7\" y=\"5\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"7\" y=\"6\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"7\" y=\"7\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"8\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"8\" width=\"1\" height=\"1\"/><rect x=\"7\" y=\"8\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"8\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"8\" width=\"1\" height=\"1\"/><rect x=\"2\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"10\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"13\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"2\" y=\"10\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"10\" width=\"2\" height=\"1\"/><rect x=\"9\" y=\"10\" width=\"2\" height=\"1\"/><rect x=\"13\" y=\"10\" width=\"1\" height=\"1\"/><rect x=\"3\" y=\"11\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"11\" width=\"4\" height=\"1\"/><rect x=\"12\" y=\"11\" width=\"1\" height=\"1\"/><rect x=\"4\" y=\"12\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"12\" width=\"2\" height=\"1\"/><rect x=\"6\" y=\"13\" width=\"4\" height=\"1\"/></svg>"};
 
@@ -4815,7 +4857,7 @@ let tutorialsOn=true;
 
 function resChip(id,nd){
  const have=invGet(id), ok=(nd==null)?true:(have>=nd);
- return '<span class="rpchip '+(nd==null?'':(ok?'ok':'no'))+'">'+iconSVG(id,16)+'<span class="rpn">'+have+'</span>'+(nd!=null?'<span class="rpneed">/'+nd+'</span>':'')+'</span>';
+ return '<span class="rpchip '+(nd==null?'':(ok?'ok':'no'))+'"'+trkAttr(id,nd)+'>'+iconSVG(id,16)+'<span class="rpn">'+have+'</span>'+(nd!=null?'<span class="rpneed">/'+nd+'</span>':'')+'</span>';
 }
 // resources relevant to ONLY what's craftable in this module at this base/level (concise inventory)
 function relevantResPanel(tab,div,T0){
@@ -5199,6 +5241,7 @@ craftEl.addEventListener('click',e=>{const b=e.target.closest('[data-craft]');if
   if(craftBusy)return;
   const p=v.split(':');
   if(p[0]==='div'){openDivision(p[1]);return;}
+  if(p[0]==='track'){trackRes(p[1],+p[2]||0);buildCraft();return;}
   if(v==='divback'){menuBackToGrid();return;}
   if(p[0]==='refine'){const id=p[1],r=RES[id];if(!canPay(r.in)){craftDeny();return;}
     const ins=expandInputs(r.in);pay(r.in);addInv(id,1);sfx.mix();craftBusy=true;buildCraft();
@@ -6017,6 +6060,10 @@ function drawMixer(m){
   ctx.drawImage(spr.cv,ox,oy,dw,dh);
   ctx.imageSmoothingEnabled=sm;
 }
+// the salvage nugget itself (the dealer's icon is a render of exactly this)
+function scrapBody(c,X,Y,col){
+  px(c,X-3,Y-2,6,5,shade(col,0.5));px(c,X-2,Y-1,4,3,col);px(c,X-2,Y+3,6,1,'#0c141b');
+  px(c,X-1,Y-1,1,1,shade(col,1.8));}
 function drawScrap(s){
   const sc=s.x-RCX,sr=s.y-RCY;if(sc<-24||sc>VW+24||sr<-24||sr>VH+24)return;
   const yb=Math.round(Math.sin(state.tick*0.05+s.ph)*2);
@@ -6024,9 +6071,7 @@ function drawScrap(s){
   const pulse=0.45+Math.sin(state.tick*0.1+s.ph)*0.22;
   // strong attract-glow (two layers)
   gl(s.x,s.y+yb,18,rgb,pulse*0.5);gl(s.x,s.y+yb,9,rgb,pulse);
-  // little salvage nugget
-  px(ctx,X-3,Y-2,6,5,shade(col,0.5));px(ctx,X-2,Y-1,4,3,col);px(ctx,X-2,Y+3,6,1,'#0c141b');
-  px(ctx,X-1,Y-1,1,1,shade(col,1.8));
+  scrapBody(ctx,X,Y,col);
   // rotating sparkle + cross rays
   const sp=(state.tick*0.06+s.ph);
   for(let i=0;i<4;i++){const a=sp+i*1.57,rr=4+Math.sin(state.tick*0.12+i)*1.5;px(ctx,X+Math.round(Math.cos(a)*rr),Y+Math.round(Math.sin(a)*rr),1,1,'#ffffff');}
@@ -6204,8 +6249,11 @@ function drawRope(b,ex,ey,held){
     gl(bx,by,near?13:9,'255,210,60',near?0.6:0.3+Math.sin(state.tick*0.16)*0.2);}
 }
 function ropeIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><circle cx="8" cy="3.2" r="2" fill="none" stroke="#c9a14a" stroke-width="1.5"/><path d="M8 5.2 V13" stroke="#c9a14a" stroke-width="1.5"/><path d="M2.6 9 a5.4 5.4 0 0 0 10.8 0" fill="none" stroke="#c9a14a" stroke-width="1.5"/><path d="M1.4 9 H4 M12 9 H14.6" stroke="#c9a14a" stroke-width="1.5"/></svg>';}
-function scrapIcon(id,sz){const c=SCRAPBYID[id].col,d=shade(c,0.55),l=shade(c,1.6);
-  return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><path d="M3 6 L7 3 L13 5 L12 11 L6 13 L2 10 Z" fill="'+c+'" stroke="'+d+'" stroke-width="1"/><path d="M7 3 L8 8 L13 5" fill="none" stroke="'+d+'" stroke-width="0.8"/><circle cx="6" cy="6" r="1" fill="'+l+'"/></svg>';}
+// salvage icon = the nugget drawScrap paints in the water, pixel for pixel
+const _scrapSvg={};
+function scrapIcon(id,sz){
+  if(!_scrapSvg[id]){const cv=document.createElement('canvas');cv.width=cv.height=8;scrapBody(cv.getContext('2d'),4,3,SCRAPBYID[id].col);_scrapSvg[id]=canvasRects(cv);}
+  return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 8 8" shape-rendering="crispEdges">'+_scrapSvg[id]+'</svg>';}
 function coinIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#ffd23c" stroke="#a9791a" stroke-width="1.2"/><circle cx="8" cy="8" r="3.4" fill="none" stroke="#a9791a" stroke-width="1"/><path d="M6 4.5 L10 11.5" stroke="#fff4c2" stroke-width="0.8" opacity="0.7"/></svg>';}
 function tankIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><rect x="5" y="3" width="6" height="11" rx="3" fill="#2c8fae" stroke="#16586e" stroke-width="1"/><rect x="6.5" y="1.5" width="3" height="2" fill="#9fe8ff"/><rect x="6" y="5" width="2" height="6" fill="#9fe8ff" opacity="0.7"/></svg>';}
 function filterIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#1f5f2a" stroke="#0e3a18" stroke-width="1"/><path d="M5 8 h6 M8 5 v6" stroke="#7dff4a" stroke-width="1.2"/><circle cx="8" cy="8" r="2.4" fill="none" stroke="#7dff4a" stroke-width="0.9"/></svg>';}
@@ -6558,13 +6606,15 @@ function drawHeart(c,x,y,on){const col=on?'#ff4d5e':'#33272c';const p=['0110110'
 // turns the HP bar true red. Hits blink the HP bar, then it settles shorter; drain damage
 // (drowning, pollution, heat) just shortens it.
 const OSD_G='#6bff72', OSD_R='#ff2424', OSD_DIM='rgba(107,255,114,0.16)', OSD_DIMR='rgba(255,36,36,0.2)';
+const OSD_Y='#ffd23c';   // the resource tracker's own colour, so it never reads as the task compass
 const OSD_ICON={
   heart:['0110110','1111111','1111111','0111110','0011100','0001000'],
   air:  ['0011100','0100010','1000101','1000001','1000001','0100010','0011100'],
   cell: ['0011100','1111111','1000001','1011101','1011101','1000001','1111111'],
   city: ['0000010','0010010','0010111','1011101','1010111','1111101','1011111','1111111'],                    // skyline, antenna, lit windows
-  clip: ['0011100','0100010','1111111','1000001','1011101','1000001','1011001','1000001','1111111']};  // the clip ring gripping the page
-let osdC=null,osdX=null,osdB=null,osdBX=null,osdS=null,osdSX=null,osdPrompt=null,osdBtn=null,osdNav=null;
+  clip: ['0011100','0100010','1111111','1000001','1011101','1000001','1011001','1000001','1111111'],  // the clip ring gripping the page
+  ingots:['00001110000','00011111000','00011111000','00000000000','00111001110','01111101111','01111101111']};  // 3 ingots end-on: one stacked on two
+let osdC=null,osdX=null,osdB=null,osdBX=null,osdS=null,osdSX=null,osdPrompt=null,osdBtn=null,osdNav=null,osdTrk=null;
 // font pixel size in world px: 1 where a world px is already >= 1.6 CSS px, else 2 (8px cap floor)
 function osdScale(){return UIPX*((typeof TH!=='undefined'&&TH)?0.94:1)>=1.6?1:2;}
 function osdTextW(str,s){let w=0;for(const ch of str)w+=(glyphW(ch)+1)*s;return Math.max(0,w-s);}
@@ -6616,6 +6666,24 @@ function osdTri(c,ax,ay,bx,by,cx,cy,s,col){c.fillStyle=col;
   const e=(x,y,px,py,qx,qy)=>(qx-px)*(y-py)-(qy-py)*(x-px);
   for(let y=y0;y<=y1;y+=s)for(let x=x0;x<=x1;x+=s){const mx=x+s/2,my=y+s/2,d1=e(mx,my,ax,ay,bx,by),d2=e(mx,my,bx,by,cx,cy),d3=e(mx,my,cx,cy,ax,ay);
     if((d1>=0&&d2>=0&&d3>=0)||(d1<=0&&d2<=0&&d3<=0))c.fillRect(x,y,s,s);}}
+// an edge pointer: the icon rides the screen edge toward world point (wx,wy) and slides along it as
+// you swim; once the point is in view it hovers over it. A small arrow orbits the icon, always
+// pointing at the target. `nav` is the pointer's eased state ({x,y,a}); the updated one is returned.
+function osdPointer(c,nav,wx,wy,icon,col,s,yMin){
+  const tk=state.tick,vx=wx-RCX,vy=wy-RCY,hw0=icon[0].length/2,m=Math.round((hw0+8.5)*s);   // margin clears the whole orbit, arrow tip included
+  const L=m,R=VW-m-(player.hasMap?28:0),Tp=yMin+m,B=VH-m;
+  let gx,gy,ang;
+  if(vx>L&&vx<R&&vy>Tp&&vy<B){const q=osdAt(vx,vy-24-Math.round(Math.sin(tk*0.08)*2*s/2));gx=q[0];gy=q[1];ang=Math.PI/2;}   // in view: hover above it, arrow down
+  else{const ox=clamp(player.x+4-RCX,L,R),oy=clamp(player.y+4-RCY,Tp,B),dx=vx-ox,dy=vy-oy;ang=Math.atan2(dy,dx);   // off screen: the ray player -> target, clipped to the frame
+   const kx=dx>0?(R-ox)/dx:dx<0?(L-ox)/dx:Infinity,ky=dy>0?(B-oy)/dy:dy<0?(Tp-oy)/dy:Infinity,k=Math.min(kx,ky);gx=ox+dx*k;gy=oy+dy*k;}
+  if(!nav)nav={x:gx,y:gy,a:ang};
+  nav.x+=(gx-nav.x)*0.3;nav.y+=(gy-nav.y)*0.3;
+  let da=ang-nav.a;while(da>Math.PI)da-=2*Math.PI;while(da<-Math.PI)da+=2*Math.PI;nav.a+=da*0.25;   // the arrow orbits, never jumps
+  const nx=Math.round(nav.x),ny=Math.round(nav.y),a=nav.a,ca=Math.cos(a),sa=Math.sin(a);
+  osdIcon(c,icon,nx-Math.round(hw0*s),ny-Math.round(3.5*s),s,col);
+  const r=(hw0+3.5)*s+Math.sin(tk*0.12)*s*0.75,tip=r+3.5*s,hw=2.2*s;
+  osdTri(c,nx+ca*tip,ny+sa*tip,nx+ca*r-sa*hw,ny+sa*r+ca*hw,nx+ca*r+sa*hw,ny+sa*r-ca*hw,s,col);
+  return nav;}
 function drawHUD(tier){
   if(player.hasMap&&state.mode==='play')drawMinimap(tier);
   const c=osdBegin(),s=osdScale(),G=OSD_G;
@@ -6651,24 +6719,14 @@ function drawHUD(tier){
    c.fillStyle=OSD_DIM;c.fillRect(bx,cy,cw,s);
    if(!mech.boostOut||((state.tick>>2)&1)){c.fillStyle=G;c.fillRect(bx,cy,Math.round(cw*cf),s);}   // burnt out: the strip blinks
    y+=rowH+gap;}
-  // ---- task compass: the clipboard rides the screen edge toward the next task and slides along it
-  // as you swim; once the task is in view it hovers over it. A small arrow orbits the clipboard,
-  // always pointing at the task. Hidden while the task's own prompt is up (you're already there).
+  // ---- task compass: the clipboard points to the next task (osdPointer). Hidden while the task's
+  // own prompt is up (you're already there).
+  const yMin=top+2*(rowH+gap)+2*s;
   {const T=navTarget(tier);
-   if(!T||(osdPrompt&&nearMission===T))osdNav=null;
-   else{const tk=state.tick,vx=T.x-RCX,vy=T.y-RCY,m=12*s;   // margin clears the whole orbit, arrow tip included
-    const L=m,R=VW-m-(player.hasMap?28:0),Tp=top+2*(rowH+gap)+2*s+m,B=VH-m;
-    let gx,gy,ang;
-    if(vx>L&&vx<R&&vy>Tp&&vy<B){const q=osdAt(vx,vy-24-Math.round(Math.sin(tk*0.08)*2*s/2));gx=q[0];gy=q[1];ang=Math.PI/2;}   // in view: hover above it, arrow down
-    else{const ox=clamp(player.x+4-RCX,L,R),oy=clamp(player.y+4-RCY,Tp,B),dx=vx-ox,dy=vy-oy;ang=Math.atan2(dy,dx);   // off screen: the ray player -> task, clipped to the frame
-     const kx=dx>0?(R-ox)/dx:dx<0?(L-ox)/dx:Infinity,ky=dy>0?(B-oy)/dy:dy<0?(Tp-oy)/dy:Infinity,k=Math.min(kx,ky);gx=ox+dx*k;gy=oy+dy*k;}
-    if(!osdNav)osdNav={x:gx,y:gy,a:ang};
-    osdNav.x+=(gx-osdNav.x)*0.3;osdNav.y+=(gy-osdNav.y)*0.3;
-    let da=ang-osdNav.a;while(da>Math.PI)da-=2*Math.PI;while(da<-Math.PI)da+=2*Math.PI;osdNav.a+=da*0.25;   // the arrow orbits, never jumps
-    const nx=Math.round(osdNav.x),ny=Math.round(osdNav.y),a=osdNav.a,ca=Math.cos(a),sa=Math.sin(a);
-    osdIcon(c,OSD_ICON.clip,nx-Math.round(3.5*s),ny-Math.round(3.5*s),s,G);
-    const r=7*s+Math.sin(tk*0.12)*s*0.75,tip=r+3.5*s,hw=2.2*s;
-    osdTri(c,nx+ca*tip,ny+sa*tip,nx+ca*r-sa*hw,ny+sa*r+ca*hw,nx+ca*r+sa*hw,ny+sa*r-ca*hw,s,G);}}
+   osdNav=(!T||(osdPrompt&&nearMission===T))?null:osdPointer(c,osdNav,T.x,T.y,OSD_ICON.clip,G,s,yMin);}
+  // ---- resource tracker: the yellow ingot stack points to the nearest resource tracked at the base
+  {const T=trackTarget();
+   osdTrk=T?osdPointer(c,osdTrk,T.x,T.y,OSD_ICON.ingots,OSD_Y,s,yMin):null;}
   // ---- context prompt: the button to press + the verb, over the thing it acts on
   if(osdPrompt){const q=osdAt(osdPrompt.x,osdPrompt.y),k=osdPrompt.kind,t=osdPrompt.text;
    const key=(k&&pcMode)?((pcSrc==='pad'?IP_PAD:IP_KEY)[k]||''):'',ic=(k&&!pcMode)?osdBtnIcon(k):null;
