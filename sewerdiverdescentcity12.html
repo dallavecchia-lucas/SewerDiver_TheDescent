@@ -1138,18 +1138,19 @@
   /* ============================================================
      CYBER DECK: the base terminal (CRAFT + SHOP). One column of stacked rows on a
      vector-display panel: a Tron light-cycle grid wall round the edge, a perspective grid
-     floor, neon wireframe icons. Everything is scoped to .cy, so nothing else on the unit
+     floor, neon wireframe icons, all on smoked glass so the flooded screen stays in shot behind
+     it. Everything is scoped to .cy, so nothing else on the unit
      changes. No text here is under 12px: the --cyf stack (SF Mono, Menlo, Roboto Mono,
      Droid Sans Mono, DejaVu Sans Mono) has caps of 0.70 em or more, so 12px keeps the
      8px cap floor of ui-legibility-floor.md (Courier New would need 14px).
      Resource icons get no filter, tint or glow: they stay the in-world sprite.
      ============================================================ */
-  #craft{padding:11px;background:radial-gradient(130% 90% at 50% 0%,rgba(8,22,36,.92),rgba(2,4,9,.97) 72%);}
+  #craft{padding:11px;background:radial-gradient(130% 90% at 50% 0%,rgba(4,14,24,.2),rgba(1,4,9,.42) 75%);}
   .cy{--cyf:ui-monospace,'SF Mono',SFMono-Regular,Menlo,'Roboto Mono','Droid Sans Mono','DejaVu Sans Mono',Consolas,'Liberation Mono',monospace;
     --cyan:#19f0ff;--mag:#ff2bd6;--lime:#7dff5a;--red:#ff4d6d;--gold:#ffd23c;--ink:#e2f9ff;--ink2:#9cc4d2;--ink3:#6c93a3;
     position:relative;isolation:isolate;width:100%;height:100%;display:flex;flex-direction:column;overflow:hidden;
     font-family:var(--cyf);color:var(--ink);image-rendering:auto;
-    background:radial-gradient(120% 60% at 50% 0%,rgba(25,240,255,.07),transparent 60%),linear-gradient(180deg,#030a12 0%,#02060b 55%,#06030e 100%);
+    background:radial-gradient(120% 60% at 50% 0%,rgba(25,240,255,.08),transparent 60%),linear-gradient(180deg,rgba(3,10,18,.46) 0%,rgba(2,6,11,.36) 55%,rgba(6,3,14,.5) 100%);
     clip-path:polygon(16px 0,calc(100% - 6px) 0,100% 6px,100% calc(100% - 16px),calc(100% - 16px) 100%,6px 100%,0 calc(100% - 6px),0 16px);}
   .cy button{font-family:inherit;appearance:none;-webkit-appearance:none;}
   /* grid floor racing toward you under the list (transform-only animation: it stays on the compositor) */
@@ -1161,7 +1162,7 @@
   @keyframes cy-floor{from{transform:rotateX(70deg) translateY(-30px);}to{transform:rotateX(70deg) translateY(0);}}
   /* top bar: slanted tab keys, coin readout, close */
   .cy-top{position:relative;z-index:2;flex:none;display:flex;align-items:center;gap:8px;padding:9px 10px 8px 22px;
-    background:linear-gradient(180deg,rgba(25,240,255,.09),rgba(25,240,255,0));}
+    background:linear-gradient(180deg,rgba(6,24,36,.88),rgba(2,9,16,.72));}
   .cy-top::after{content:"";position:absolute;left:10px;right:10px;bottom:0;height:1px;opacity:.75;
     background:linear-gradient(90deg,transparent,var(--cyan) 15%,var(--mag) 85%,transparent);box-shadow:0 0 8px rgba(25,240,255,.6);}
   .cy-tabs{display:flex;gap:7px;flex:1;min-width:0;}
@@ -1179,17 +1180,17 @@
     background:rgba(50,6,18,.65);border:1px solid rgba(255,77,109,.6);box-shadow:inset 0 0 8px rgba(255,77,109,.2);}
   .cy-x:active{background:rgba(255,77,109,.3);}
   .cy-stat{position:relative;z-index:2;flex:none;padding:6px 14px 2px;font-size:12px;line-height:1.3;letter-spacing:1px;text-transform:uppercase;
-    color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:rgba(2,8,14,.62);}
   .cy-stat b{color:var(--cyan);font-weight:700;text-shadow:0 0 6px rgba(25,240,255,.5);}
   .cy .cbody{position:relative;z-index:2;padding:8px 10px 4px;scrollbar-width:thin;scrollbar-color:rgba(25,240,255,.5) transparent;}
   .cy .cbody::-webkit-scrollbar{width:4px;}
   .cy .cbody::-webkit-scrollbar-thumb{background:rgba(25,240,255,.5);}
   .cy-nav{position:relative;z-index:2;flex:none;padding:6px 12px 8px;font-size:12px;line-height:1.2;letter-spacing:1px;text-transform:uppercase;text-align:center;
-    color:var(--ink3);border-top:1px solid rgba(25,240,255,.16);background:rgba(2,8,14,.7);}
+    color:var(--ink3);border-top:1px solid rgba(25,240,255,.16);background:rgba(2,8,14,.88);}
   .cy-nav b{color:var(--cyan);font-weight:700;}
   /* rows: dark glass with a neon accent bar, a lit corner tick and the row's own colour (--c, an r,g,b triplet) */
   .cy-row{--c:25,240,255;position:relative;display:flex;align-items:center;gap:10px;min-height:58px;margin:0 0 7px;padding:7px 9px 7px 10px;cursor:pointer;
-    background:linear-gradient(90deg,rgba(7,24,38,.93),rgba(3,11,20,.88));border:1px solid rgba(var(--c),.3);
+    background:linear-gradient(90deg,rgba(7,24,38,.8),rgba(3,11,20,.68));border:1px solid rgba(var(--c),.3);
     transition:border-color .12s,background .12s,box-shadow .12s;}
   .cy-row::before{content:"";position:absolute;left:-1px;top:-1px;bottom:-1px;width:3px;background:rgb(var(--c));box-shadow:0 0 8px rgba(var(--c),.8);}
   .cy-row::after{content:"";position:absolute;right:-1px;top:-1px;width:9px;height:9px;background:linear-gradient(225deg,rgb(var(--c)) 0 50%,transparent 50%);opacity:.85;}
@@ -1247,17 +1248,31 @@
   /* page furniture: back bar + breadcrumb, page line, group labels, notes, empty states */
   .cy-back{display:flex;align-items:center;gap:8px;min-height:40px;margin:0 0 6px;padding:6px 10px;cursor:pointer;
     font-size:13px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--cyan);
-    background:linear-gradient(90deg,rgba(25,240,255,.1),rgba(25,240,255,.02));border:1px solid rgba(25,240,255,.32);}
+    background:linear-gradient(90deg,rgba(10,44,60,.9),rgba(3,12,20,.86));border:1px solid rgba(25,240,255,.32);}
   .cy-bk{font-size:15px;text-shadow:0 0 8px rgba(25,240,255,.9);}
   .cy-crumb{color:var(--ink3);font-weight:400;letter-spacing:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
   .cy-here{color:var(--ink);text-shadow:0 0 8px rgba(25,240,255,.6);white-space:nowrap;}
   .cy .cy-back.mfocus{outline:none!important;border-color:var(--cyan);box-shadow:0 0 14px rgba(25,240,255,.5),inset 0 0 12px rgba(25,240,255,.12)!important;}
-  .cy-pg{margin:0 2px 10px;font-size:12px;line-height:1.35;color:var(--ink2);}
+  .cy-pg{margin:0 2px 10px;font-size:12px;line-height:1.35;color:var(--ink);text-shadow:0 1px 2px #000,0 0 6px #000;}
   .cy-grp{display:flex;align-items:center;gap:8px;margin:12px 2px 7px;font-size:12px;font-weight:700;line-height:1;letter-spacing:3px;text-transform:uppercase;
-    color:var(--mag);text-shadow:0 0 8px rgba(255,43,214,.55);}
+    color:var(--mag);text-shadow:0 1px 2px #000,0 0 8px rgba(255,43,214,.55);}
   .cy-grp::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,rgba(255,43,214,.6),transparent);}
-  .cy-note{margin:2px 2px 10px;padding:7px 9px;font-size:12px;line-height:1.45;color:var(--ink2);border-left:2px solid rgba(255,159,28,.75);background:rgba(255,159,28,.06);}
-  .cy-empty{margin:4px 2px 10px;padding:16px 10px;text-align:center;font-size:12px;line-height:1.5;color:var(--ink3);border:1px dashed rgba(25,240,255,.28);background:rgba(2,8,14,.6);}
+  .cy-note{margin:2px 2px 10px;padding:7px 9px;font-size:12px;line-height:1.45;color:var(--ink2);border-left:2px solid rgba(255,159,28,.75);background:linear-gradient(90deg,rgba(40,22,4,.86),rgba(3,10,18,.82));}
+  .cy-empty{margin:4px 2px 10px;padding:16px 10px;text-align:center;font-size:12px;line-height:1.5;color:var(--ink2);border:1px dashed rgba(25,240,255,.28);background:rgba(2,8,14,.82);}
+  /* water: light shafts sway down through the glass behind the rows, bubbles rise up it in front.
+     Transform-only animations, so they stay on the compositor. */
+  .cy-rays{position:absolute;left:-35%;right:-35%;top:-8%;height:80%;z-index:1;pointer-events:none;transform-origin:50% 0;
+    background:repeating-linear-gradient(100deg,transparent 0 40px,rgba(130,235,255,.13) 40px 68px,transparent 68px 112px,rgba(130,235,255,.08) 112px 124px,transparent 124px 176px);
+    -webkit-mask-image:linear-gradient(180deg,#000 10%,transparent);mask-image:linear-gradient(180deg,#000 10%,transparent);
+    animation:cy-rays 8s ease-in-out infinite alternate;}
+  @keyframes cy-rays{from{transform:skewX(-7deg) translateX(-16px);}to{transform:skewX(7deg) translateX(16px);}}
+  .cy-bubbles{position:absolute;inset:0;z-index:3;overflow:hidden;pointer-events:none;}
+  .cy-bubbles b{position:absolute;left:var(--x);top:100%;width:12px;height:100%;animation:cy-rise var(--d) linear infinite;animation-delay:var(--dl);}
+  .cy-bubbles i{position:absolute;left:0;top:0;width:var(--s);height:var(--s);border-radius:50%;
+    border:1px solid rgba(200,248,255,.55);background:radial-gradient(circle at 35% 30%,rgba(255,255,255,.6),rgba(170,240,255,.08) 60%,transparent 72%);
+    animation:cy-wob 1.9s ease-in-out infinite alternate;}
+  @keyframes cy-rise{0%{transform:translateY(0);opacity:0;}10%{opacity:.85;}88%{opacity:.7;}100%{transform:translateY(-112%);opacity:0;}}
+  @keyframes cy-wob{from{transform:translateX(-3px);}to{transform:translateX(4px);}}
   /* message line: toasts raised inside the terminal print here (the OSD toast is under the panel) */
   .cy-msg{position:absolute;left:10px;right:10px;bottom:9px;z-index:4;display:none;padding:7px 10px;font-size:12px;font-weight:700;line-height:1.2;
     letter-spacing:1.5px;color:var(--cyan);background:rgba(1,7,12,.96);border:1px solid currentColor;box-shadow:0 0 14px rgba(0,0,0,.8),0 0 10px rgba(25,240,255,.25);
@@ -1276,10 +1291,10 @@
   .cy-frame .trk{stroke:none;}
   .cy-frame .tr{stroke-linecap:butt;}
   .cy-frame .bike{filter:drop-shadow(0 0 3px currentColor);}
-  .cy-frame .c1 .bike{color:#19f0ff;} .cy-frame .c2 .bike{color:#ff9f1c;}
+  .cy-frame .c1 .bike{color:#19f0ff;}
   @media (max-height:640px){.cy-stat,.cy-nav{display:none;}.cy-top{padding-top:7px;padding-bottom:6px;}
     .cy-row{min-height:52px;padding-top:5px;padding-bottom:5px;}.cy-ico,.cy-ico canvas{width:42px;height:42px;}}
-  @media (prefers-reduced-motion:reduce){.cy-frame .tr,.cy-frame .bike{display:none;}.cy-floor i{animation:none;transform:rotateX(70deg);}
+  @media (prefers-reduced-motion:reduce){.cy-frame .tr,.cy-frame .bike,.cy-bubbles{display:none;}.cy-rays{animation:none;}.cy-floor i{animation:none;transform:rotateX(70deg);}
     .cy-sw{display:none!important;}.cy .cy-row.mpop{animation:none;}}
 </style>
 </head>
@@ -1305,12 +1320,14 @@
     <div id="drydock" class="hidden"></div>
     <div id="craft" class="hidden"><div class="cy" id="cyPanel">
       <div class="cy-floor" aria-hidden="true"><i></i></div>
+      <div class="cy-rays" aria-hidden="true"></div>
       <div class="cy-top"><div class="cy-tabs" id="ctabs"></div><span class="cy-coin" id="cyCoin"></span>
         <button class="cy-x" data-craft="close" aria-label="close">✕</button></div>
       <div class="cy-stat" id="chSub"></div>
       <div class="cbody" id="cbody"></div>
       <div class="cy-nav"><b>▲▼</b> move · <b>⛏</b> select · <b>◀ ⚙</b> back</div>
       <div class="cy-msg" id="cyMsg" role="status" aria-live="polite"></div>
+      <div class="cy-bubbles" aria-hidden="true"><b style="--x:9%;--d:7.5s;--dl:-1s"><i style="--s:5px"></i></b><b style="--x:23%;--d:10s;--dl:-6s"><i style="--s:3px"></i></b><b style="--x:38%;--d:8.5s;--dl:-3.5s"><i style="--s:7px"></i></b><b style="--x:52%;--d:12s;--dl:-9s"><i style="--s:4px"></i></b><b style="--x:66%;--d:9s;--dl:-2.5s"><i style="--s:6px"></i></b><b style="--x:79%;--d:11s;--dl:-7.5s"><i style="--s:3px"></i></b><b style="--x:91%;--d:8s;--dl:-5s"><i style="--s:5px"></i></b><b style="--x:31%;--d:13s;--dl:-11s"><i style="--s:9px"></i></b><b style="--x:72%;--d:10.5s;--dl:-4s"><i style="--s:4px"></i></b></div>
       <svg class="cy-frame" id="cyFrame" aria-hidden="true"></svg>
     </div></div>
     <div id="mine" class="hidden">
@@ -5018,11 +5035,11 @@ const WIRE=(()=>{
   return {get,draw,svg,scan,hot,DEF};
 })();
 
-// ---- light cycles: two bikes race round the panel, each dragging its fading wall -------------
+// ---- light cycle: one bike races round the panel, dragging its fading wall -------------------
 // The track is the panel's chamfered outline, a few px in (rebuilt on resize). Each trail layer is
 // one dash `0 (1000-L) L 0` on a pathLength-1000 copy of it, so every layer's leading edge sits on
-// the same point; the bike glyph rides that point with animateMotion. Trails and bikes share one
-// SMIL timeline, so a bike can never drift off the head of its own wall.
+// the same point; the bike glyph rides that point with animateMotion. Trail and bike share one
+// SMIL timeline, so the bike can never drift off the head of its own wall.
 const CYFRAME=(()=>{
   let host=null,svg=null,W=0,H=0;
   const CUT1=16,CUT2=6,LAP=9;   // chamfers (top-left & bottom-right, top-right & bottom-left; match .cy) · s per lap
@@ -5036,15 +5053,15 @@ const CYFRAME=(()=>{
       +'M'+(x0+b+n)+' '+y1+'H'+(x0+b)+'L'+x0+' '+(y1-b)+'V'+(y1-b-n);}
   function build(){
     let s='<path class="wallg"/><path class="wall"/><path class="trk" id="cyTrack"/>';
-    for(const [cls,col,core,beg] of[['c1','#19f0ff','#effffe','0s'],['c2','#ff9f1c','#fff4de','-'+LAP/2+'s']]){
-      s+='<g class="'+cls+'">';
-      for(const [L,w,o] of TR)s+='<path class="tr" pathLength="1000" stroke="'+col+'" stroke-width="'+w+'" opacity="'+o+'" stroke-dasharray="0 '+(1000-L)+' '+L+' 0">'
-        +'<animate attributeName="stroke-dashoffset" from="0" to="-1000" dur="'+LAP+'s" begin="'+beg+'" repeatCount="indefinite"/></path>';
-      // top-down light cycle: glow, dark hull with a white-hot rim, canopy stripe in its colour, headlight
-      s+='<g class="bike"><ellipse rx="14" ry="6.5" fill="'+col+'" opacity=".3"/>'
-        +'<path d="M-11 -3.2H3Q9.5 -3.2 11 0Q9.5 3.2 3 3.2H-11Z" fill="#02070c" stroke="'+core+'" stroke-width="1.4"/>'
-        +'<path d="M-6 -1.3H4Q6.5 0 4 1.3H-6Z" fill="'+col+'"/><circle cx="10.2" r="1.5" fill="#fff"/>'
-        +'<animateMotion dur="'+LAP+'s" begin="'+beg+'" repeatCount="indefinite" rotate="auto"><mpath href="#cyTrack" xlink:href="#cyTrack"/></animateMotion></g></g>';}
+    const col='#19f0ff',core='#effffe';   // Tron blue
+    s+='<g class="c1">';
+    for(const [L,w,o] of TR)s+='<path class="tr" pathLength="1000" stroke="'+col+'" stroke-width="'+w+'" opacity="'+o+'" stroke-dasharray="0 '+(1000-L)+' '+L+' 0">'
+      +'<animate attributeName="stroke-dashoffset" from="0" to="-1000" dur="'+LAP+'s" repeatCount="indefinite"/></path>';
+    // top-down light cycle: glow, dark hull with a white-hot rim, canopy stripe in its colour, headlight
+    s+='<g class="bike"><ellipse rx="14" ry="6.5" fill="'+col+'" opacity=".3"/>'
+      +'<path d="M-11 -3.2H3Q9.5 -3.2 11 0Q9.5 3.2 3 3.2H-11Z" fill="#02070c" stroke="'+core+'" stroke-width="1.4"/>'
+      +'<path d="M-6 -1.3H4Q6.5 0 4 1.3H-6Z" fill="'+col+'"/><circle cx="10.2" r="1.5" fill="#fff"/>'
+      +'<animateMotion dur="'+LAP+'s" repeatCount="indefinite" rotate="auto"><mpath href="#cyTrack" xlink:href="#cyTrack"/></animateMotion></g></g>';
     svg.innerHTML=s+'<path class="brk"/>';
     if(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches&&svg.pauseAnimations)svg.pauseAnimations();}
   function size(){if(!host)return;const w=host.clientWidth,h=host.clientHeight;if(!w||!h||(w===W&&h===H))return;W=w;H=h;

@@ -3302,11 +3302,11 @@ const WIRE=(()=>{
   return {get,draw,svg,scan,hot,DEF};
 })();
 
-// ---- light cycles: two bikes race round the panel, each dragging its fading wall -------------
+// ---- light cycle: one bike races round the panel, dragging its fading wall -------------------
 // The track is the panel's chamfered outline, a few px in (rebuilt on resize). Each trail layer is
 // one dash `0 (1000-L) L 0` on a pathLength-1000 copy of it, so every layer's leading edge sits on
-// the same point; the bike glyph rides that point with animateMotion. Trails and bikes share one
-// SMIL timeline, so a bike can never drift off the head of its own wall.
+// the same point; the bike glyph rides that point with animateMotion. Trail and bike share one
+// SMIL timeline, so the bike can never drift off the head of its own wall.
 const CYFRAME=(()=>{
   let host=null,svg=null,W=0,H=0;
   const CUT1=16,CUT2=6,LAP=9;   // chamfers (top-left & bottom-right, top-right & bottom-left; match .cy) · s per lap
@@ -3320,15 +3320,15 @@ const CYFRAME=(()=>{
       +'M'+(x0+b+n)+' '+y1+'H'+(x0+b)+'L'+x0+' '+(y1-b)+'V'+(y1-b-n);}
   function build(){
     let s='<path class="wallg"/><path class="wall"/><path class="trk" id="cyTrack"/>';
-    for(const [cls,col,core,beg] of[['c1','#19f0ff','#effffe','0s'],['c2','#ff9f1c','#fff4de','-'+LAP/2+'s']]){
-      s+='<g class="'+cls+'">';
-      for(const [L,w,o] of TR)s+='<path class="tr" pathLength="1000" stroke="'+col+'" stroke-width="'+w+'" opacity="'+o+'" stroke-dasharray="0 '+(1000-L)+' '+L+' 0">'
-        +'<animate attributeName="stroke-dashoffset" from="0" to="-1000" dur="'+LAP+'s" begin="'+beg+'" repeatCount="indefinite"/></path>';
-      // top-down light cycle: glow, dark hull with a white-hot rim, canopy stripe in its colour, headlight
-      s+='<g class="bike"><ellipse rx="14" ry="6.5" fill="'+col+'" opacity=".3"/>'
-        +'<path d="M-11 -3.2H3Q9.5 -3.2 11 0Q9.5 3.2 3 3.2H-11Z" fill="#02070c" stroke="'+core+'" stroke-width="1.4"/>'
-        +'<path d="M-6 -1.3H4Q6.5 0 4 1.3H-6Z" fill="'+col+'"/><circle cx="10.2" r="1.5" fill="#fff"/>'
-        +'<animateMotion dur="'+LAP+'s" begin="'+beg+'" repeatCount="indefinite" rotate="auto"><mpath href="#cyTrack" xlink:href="#cyTrack"/></animateMotion></g></g>';}
+    const col='#19f0ff',core='#effffe';   // Tron blue
+    s+='<g class="c1">';
+    for(const [L,w,o] of TR)s+='<path class="tr" pathLength="1000" stroke="'+col+'" stroke-width="'+w+'" opacity="'+o+'" stroke-dasharray="0 '+(1000-L)+' '+L+' 0">'
+      +'<animate attributeName="stroke-dashoffset" from="0" to="-1000" dur="'+LAP+'s" repeatCount="indefinite"/></path>';
+    // top-down light cycle: glow, dark hull with a white-hot rim, canopy stripe in its colour, headlight
+    s+='<g class="bike"><ellipse rx="14" ry="6.5" fill="'+col+'" opacity=".3"/>'
+      +'<path d="M-11 -3.2H3Q9.5 -3.2 11 0Q9.5 3.2 3 3.2H-11Z" fill="#02070c" stroke="'+core+'" stroke-width="1.4"/>'
+      +'<path d="M-6 -1.3H4Q6.5 0 4 1.3H-6Z" fill="'+col+'"/><circle cx="10.2" r="1.5" fill="#fff"/>'
+      +'<animateMotion dur="'+LAP+'s" repeatCount="indefinite" rotate="auto"><mpath href="#cyTrack" xlink:href="#cyTrack"/></animateMotion></g></g>';
     svg.innerHTML=s+'<path class="brk"/>';
     if(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches&&svg.pauseAnimations)svg.pauseAnimations();}
   function size(){if(!host)return;const w=host.clientWidth,h=host.clientHeight;if(!w||!h||(w===W&&h===H))return;W=w;H=h;
