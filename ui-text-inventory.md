@@ -232,7 +232,7 @@ whether you can afford it, and what it does. Everything else goes behind focus o
 | Division labels under the icons: `Cargo`, `Mixer`, `Fab Bay`, `Air Line`, `O₂ Gear`, `Seals`, `Lens`, `Patch`, `Mech` / `Dealer`, `Parts`, `Machines`, `Outfit`, `Mech Lab`, `Exchange` | 10px | **REWORK** | Icons only in the grid. The focused cell's name goes in one caption line, at the floor. |
 | `◂ <division title>` back row | 11px | **SYMBOL** | `◂` + the division icon. |
 | `resources · in stock`, `parts aboard` panel headers | 9px | **CUT** | The chips (icon + have/need) explain themselves. |
-| Resource chips: icon + have / need | 9px | **KEEP** | Already symbol + numbers. Raise them to the floor. |
+| Resource chips: icon + have / need | 9px | **KEEP** | Already symbol + numbers. Raise them to the floor. Tap one to track it (yellow ring). Mineral, float and salvage icons are renders of the in-world sprite. |
 | Next-base panel: `next base · power-on` + `haul 1× <item> — this layer's #2 composite — down to the dead base below to power it on` | 9–10px | **SYMBOL** | A symbol sentence: `[item 0/1] ▼ [dead base]`, then ✓ when it's powered. |
 | Card name (`O₂ tank V2`, `Battery cell`, …) | 12px | **KEEP** | This is the choice. |
 | Card detail in grey (`+20 max air`, `−5% air drain`, `heals 2 · max 5 · 3 aboard`, `have 2 · 15 coin`) | 9px | **SYMBOL** where it's an effect (`+20 [tank]`, `✚2`), otherwise **REWORK** | Show it on the focused card only, like the pack's detail dock. |
@@ -394,6 +394,12 @@ space where it matters: the live HUD shrinks while its type gets bigger.
      unfinished machine of the current step, then the airlock / transit gate), sliding along it
      in real time, and hovers over the task once it is in view. A small arrow orbits the
      clipboard, always pointing at the task. It hides while that task's own prompt is up.
+   - **Resource tracker**: tap a required resource's chip in a base menu (mixer, fab bay, any
+     cost chip or the in-stock panel) and a **yellow** stack of three ingots (end-on, one on two)
+     points to the nearest one in the water, with the same edge-riding and orbiting arrow as the
+     compass. The tracked chip is ringed in yellow; tap it again to stop. It clears itself when
+     the hold has what the recipe asked for. A refined item tracks its first missing ingredient.
+     Toasts: `◈ TRACKING <name>`, `◆ GOT <name>`, `✕ NO <name> LEFT`, `✕ MIX IT · MIXER`.
 3. **Keyboard words on touch** (`press space`, menu footers, map hints). Mostly CSS
    `.pconly` toggles, which already exist.
 4. **Minigame state words → symbols**, and first-attempt-only hints.

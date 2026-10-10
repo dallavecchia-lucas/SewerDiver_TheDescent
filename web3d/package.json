@@ -10,7 +10,8 @@
     "smoke": "node scripts/smoke.mjs",
     "shots": "node scripts/shots.mjs",
     "sync": "node scripts/sync-legacy.mjs",
-    "legibility": "node scripts/legibility.mjs"
+    "legibility": "node scripts/legibility.mjs",
+    "study": "node scripts/resource-study.mjs"
   },
   "dependencies": {
     "three": "0.184.0"
