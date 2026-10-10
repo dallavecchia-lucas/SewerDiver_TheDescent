@@ -12,7 +12,7 @@ WebGL2 automatically, using the same shaders.
 
 | Trick | What it does | Code |
 |---|---|---|
-| Hovering plastic theatre + shadow play | The game draws onto 6 plastic plates at real depths: back cloth 0 mm, scenery 11, rock 20, actors 27.5, foreground 41 (kept empty: edge props read as junk stuck to the glass), card flat 44.5; a proscenium frame at 48; the glass at 62. A texture-space ray tracer lights every plate texel with area lights (room key light through the glass, the diver's lantern, every glow in the game). Each shadow ray is tested exactly against every plate's alpha, so a shadow's softness and offset grow with the gap between caster and receiver. Plates have real thickness (lit side walls on cut edges), a satin clear-coat, and bright paint behaves as edge-lit translucent acrylic. Each plate rides its own magnetic hover spring, and water knocks nudge it. | `passes.js` (irradiance, compose), `gpu.js` (`shadow`, `plateHit`), `scene.js` |
+| Hovering plastic theatre + shadow play | The game draws onto 6 plastic plates at real depths: back cloth 0 mm, scenery 11, rock 20, actors 27.5, foreground 41 (kept empty: edge props read as junk stuck to the glass), card flat 44.5; a proscenium frame at 48; the glass at 62. A texture-space ray tracer lights every plate texel with area lights. The sewer is lit from inside: the strip lamps and neon painted on the back wall are read back from its emissive layer every other frame and become capsule lights along each strip, joined with the diver's lantern and every glow in the game. A faint, cold room fill from just off the viewer's shoulder only keeps the dark gaps readable. Each shadow ray is tested exactly against every plate's alpha, so a shadow's softness and offset grow with the gap between caster and receiver. Plates have real thickness (lit side walls on cut edges), a satin clear-coat, and bright paint behaves as edge-lit translucent acrylic. Each plate rides its own magnetic hover spring, and water knocks nudge it. | `passes.js` (irradiance, compose), `gpu.js` (`shadow`, `plateHit`), `scene.js` |
 | Flooded screen | A 3D stable-fluids solver (velocity / silt / dye / heat) fills the box. The diver's wake, dashes, creature wakes, mining puffs, vents (buoyant heat), sludge (dye), floods, the sub's stream, the sliding plates and the device's own shake all stir it. Water colour, absorption and murk follow the current tier's palette and pollution. GPU silt specks drift with the flow, breaths rise as real bubbles that cling to the glass, and the inner glass films over with grime in dirty water. There is no waterline: the murk sells it. The HUD is the set's own green on-screen display, seen through the flooded glass: currents drag it, heat shimmer bends it, the water softens it and grime dims it. | `fluid.js`, `particles.js`, `water.js`, `passes.js` (volume, final) |
 | Liquid optics | Each eye ray refracts air → glass → water through a spherical faceplate (R = 210 mm in portrait; a landscape view gets a flatter, squarer face with a rim as deep at the sides as at the top, so the bulge stays subtle and the picture keeps its edges and corners). Plates look about 9% bigger at the centre (15% at the back cloth), with Fresnel room reflections, a total-internal-reflection rim, lateral dispersion near the rim, and heat/current shimmer. Prompts and taps are mapped back through the same optics. | `optics.js` (`fitTube`), `gpu.js` (`glassRay`, `bulbRadius`), `index.js` (input mapping) |
 | Tilt-shift | A Scheimpflug-tilted focal plane through the diver's row. The circle of confusion is computed per pixel from the true 3D hit point, then a gather bokeh with near-field spill is applied. Autofocus racks to the diver; on menus and minigames the focus lies on the card. | `passes.js` (cocTile, dof), `index.js` |
@@ -49,12 +49,13 @@ npm install
 npm run dev          # http://localhost:5173
 npm run build        # dist/ + publishes ../sewerdiverdescent3d.html
 npm run smoke        # headless end-to-end on WebGL2 and WebGPU (needs the build)
+npm run shots -- <dir> <tag> [query] [layers]   # lighting look-dev frames, e.g. layers 0,2,4
 ```
 
 URL switches: `?flat` (original 2D game), `?webgl` (force the WebGL2 backend),
 `?quality=ultra|high|mobile|low`, `?debug` (fps / backend overlay),
 `?view=compose|irr|vol|coc|fluid|velocity|albedo|hud` (inspect a buffer),
-`?lights=key,lantern,glows` (isolate light groups).
+`?lights=key,lantern,wall,glows` (isolate light groups).
 
 `dev/shadowtest.html` is a synthetic scene: the same bar on three plates over a light back
 cloth, key light only. It shows that shadow softness and offset grow with the caster's

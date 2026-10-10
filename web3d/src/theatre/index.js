@@ -46,6 +46,7 @@ const TH = {
 window.SD_THEATRE = TH;
 
 let renderer = null, scene = null, quality = null, water = null;
+let wallCache = null, wallTick = 0;
 let stage = null, canvas3d = null, flatCanvas = null;
 const cssView = { x: 0, y: 0, w: 1, h: 1 }, cssStage = { w: 1, h: 1 };
 
@@ -173,12 +174,21 @@ function loop(now) {
   let keyScale = 1;
   if (B && B.player && kind === 'world') {
     const env = B.envOfTier(B.tAt(B.player.y)) || 0;
-    keyScale = Math.max(0.3, Math.pow(0.78, env)) * (B.player.builtFloodlight ? 1.3 : 1);
+    keyScale = Math.max(0.5, Math.pow(0.86, env)) * (B.player.builtFloodlight ? 1.3 : 1);
   }
-  const lights = { glows: B && kind !== 'flat' ? B.glows : [], lantern: kind === 'world' ? TH.lantern : null, boat: kind === 'sub' && B ? { x: B.subS.sx, y: B.subS.y } : null, keyScale };
+  // the back cloth's painted lamps are light sources: read them back from its emissive layer
+  // every other frame; in between, the found lamps slide with the back cloth's scroll
+  let wall = null;
+  if (kind === 'world') {
+    const sc = scroll[P_BACK];
+    if (!wallCache || !sc || (++wallTick & 1)) wallCache = scene.scanWall(TH.atlas, P_BACK);
+    else for (const e of wallCache) { e.x -= sc[0]; e.y -= sc[1]; }
+    wall = wallCache;
+  } else wallCache = null;
+  const lights = { glows: B && kind !== 'flat' ? B.glows : [], lantern: kind === 'world' ? TH.lantern : null, boat: kind === 'sub' && B ? { x: B.subS.sx, y: B.subS.y } : null, keyScale, wall, wallScroll: kind === 'world' ? scroll[P_BACK] : null, dt };
   scene.buildLights(lights);
   const only = window.__theatreLights || params.get('lights');   // debug: isolate light groups
-  if (only) scene.lights = scene.lights.filter((l) => (only.includes('key') && l.tag === 'key') || (only.includes('lantern') && l.tag === 'lantern') || (only.includes('glows') && l.tag === 'glow'));
+  if (only) scene.lights = scene.lights.filter((l) => (only.includes('key') && l.tag === 'key') || (only.includes('lantern') && l.tag === 'lantern') || (only.includes('glows') && l.tag === 'glow') || (only.includes('wall') && l.tag === 'wall'));
 
   const f = { dt, time: now / 1000, scroll, plateVel, splats: [], current: [0, 0, 0, 0], body: [-motion[0] * 9, -motion[1] * 9, motion[2] * 4], ambientSilt: 0.05, ambientDye: 0 };
   water.frame(B, kind, dt, f);
@@ -202,8 +212,14 @@ function loop(now) {
   f.dofScale = kind === 'flat' ? 0.35 : 0.62;
 
   const views = { compose: 1, vol: 2, irr: 3, albedo: 4, coc: 5, fluid: 6, spec: 7, hud: 8, hv: 9, velocity: 10 };
+  // platforms and actors keep the same gloss at every depth: the room fill dims as you descend,
+  // so their sheen (and edge catch-light) grow by as much as it fell
+  renderer.U.uPropSheen.value = 0.075 / keyScale;
+  renderer.U.uRim.value = 0.4 / Math.sqrt(keyScale);
   renderer.U.uDebugView.value = views[window.__theatreView || params.get('view')] || 0;
   if (params.has('sheen')) renderer.U.uSheen.value = +params.get('sheen');
+  if (params.has('propsheen')) renderer.U.uPropSheen.value = +params.get('propsheen');
+  if (params.has('rim')) renderer.U.uRim.value = +params.get('rim');
   renderer.render(f);
   if (params.has('debug')) debugOverlay();
 }
