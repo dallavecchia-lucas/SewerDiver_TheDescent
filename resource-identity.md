@@ -98,6 +98,9 @@ nothing forbids them.
   rock base included, read back pixel by pixel (`oreGridSVG` → `canvasRects`). Salvage icons are
   the water's nugget (`scrapBody`). Refined goods have no world sprite, so they keep their drawn
   icons.
+- The base terminal draws mineral, float and salvage icons at a whole number of device pixels
+  per sprite pixel (`crispPx`), so no sprite pixel prints wider than its neighbours. It never
+  tints, filters or glows them: the neon wireframes are only for sections and gear.
 - Refined goods (`tNf*`) wear a pale tint of the mineral they are pressed from (`riRefined`).
 - The plan is deterministic per (city, environment, `RUN_SEED`). Each dive re-rolls the small
   jitter, and saves need no new data: `THEME[n].floatForms` and `oreShapes` are saved with

@@ -424,10 +424,6 @@ function iconSVG(id,sz){if(RES[id].kind==='raw')return oreGridSVG(id,sz);   // r
   if(tier>=3)acc='<circle cx="8" cy="8" r="7.5" fill="'+c+'" opacity="0.13"/>'+acc+'<path d="M2.5 5 L3.4 5.6 M13 12 L12.1 12.6 M5 2.6 L5.6 3.4" stroke="#fff" stroke-width="0.5" opacity="0.7"/>';
   return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16">'+acc+inner+'</svg>';
 }
-function gearIcon(sz){const g='#ffd23c',d='#8f7016';let teeth='';
-  for(let i=0;i<8;i++){const a=i/8*Math.PI*2,x=8+Math.cos(a)*6.3,y=8+Math.sin(a)*6.3;teeth+='<circle cx="'+x.toFixed(2)+'" cy="'+y.toFixed(2)+'" r="1.7" fill="'+g+'"/>';}
-  return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16">'+teeth+'<circle cx="8" cy="8" r="5" fill="'+g+'"/><circle cx="8" cy="8" r="3.4" fill="'+d+'"/><circle cx="8" cy="8" r="1.6" fill="#0b1822"/><path d="M8 3.2 A4.8 4.8 0 0 1 12.8 8" stroke="#fff0b0" stroke-width="0.7" fill="none"/></svg>';
-}
 
 // ============ AUDIO ============
 let actx=null;
@@ -2114,7 +2110,6 @@ function bubbleBurst(x,y,n,vxSpread,vyBase,vySpread,life,size,col){
 const overlayEl=document.getElementById('overlay');
 const craftEl=document.getElementById('craft');
 const cbodyEl=document.getElementById('cbody');
-const chTitle=document.getElementById('chTitle');
 const chSub=document.getElementById('chSub');
 const toastEl=document.getElementById('toast');
 const mineEl=document.getElementById('mine');
@@ -2126,7 +2121,8 @@ let toastTimer=null;
 // toasts are printed by the on-screen display (drawHUD), so in the 3D build they sit in the
 // flooded glass with the rest of the HUD instead of floating over it as a DOM box
 let osdToast=null;
-function showMsg(t){osdToast={text:String(t).toUpperCase(),t0:performance.now()};}
+function showMsg(t){osdToast={text:String(t).toUpperCase(),t0:performance.now()};
+  if(state&&state.mode==='craft')cyLog(t);}   // the base terminal covers the OSD: it prints its own copy
 
 // ============ WORLD GEN ============
 function fillRect(x0,y0,x1,y1,t){for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++)if(x>=0&&y>=0&&x<MW&&y<MH)map[y][x]=t;}
@@ -3109,7 +3105,7 @@ function trackRes(id,need){
   let tid=id,tn=Math.max(need,invGet(id)+1);
   if(RES[id].kind==='ref'){const r=RES[id],short=Math.max(1,tn-invGet(id));tid=null;
     for(const k in r.in)if(invGet(k)<r.in[k]*short){tid=k;tn=r.in[k]*short;break;}
-    if(!tid){sfx.deny();showMsg('✕ MIX IT · MIXER');return;}}
+    if(!tid){sfx.deny();showMsg('✕ MIX IT · RESOURCES');return;}}
   player.track={id:tid,need:tn,from:id};osdTrk=null;trkScan=0;sfx.select();
   showMsg('◈ TRACKING '+RES[tid].name);}
 let trkPos=null,trkScan=0;   // the tracked resource's nearest spot, rescanned every 20 ticks
@@ -3127,287 +3123,475 @@ function trackTarget(){
 // requirement chips are tracker buttons: data-craft="track:id:need", the tracked one ringed in yellow
 function trkAttr(id,nd){const t=player.track,on=t&&(t.id===id||t.from===id);
   return ' data-craft="track:'+id+':'+(nd==null?0:nd)+'"'+(on?' data-trk="1"':'');}
-function chip(id){const r=RES[id];return '<span class="chip">'+iconSVG(id,18)+'<span class="n">'+r.name+'</span><span class="q">'+invGet(id)+'</span></span>';}
-function need(m,curT){return Object.keys(m).map(id=>{const r=RES[id],nd=m[id],hv=invGet(id),ok=hv>=nd,it=idTier(id)-1,carry=it<curT;
-  return '<span class="req '+(ok?'ok':'no')+'"'+trkAttr(id,nd)+'>'+iconSVG(id,15)+'<span class="rqn">'+r.name+'</span><span class="rqq">'+hv+'/'+nd+'</span>'+(carry?'<span class="from">◂</span>':'')+'</span>';}).join('');}
-const DIVICON={"crate": "<svg class=\"dico\" viewBox=\"0 0 16 16\" width=\"100%\" height=\"100%\" shape-rendering=\"crispEdges\" fill=\"#c79a5a\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"1\" y=\"2\" width=\"14\" height=\"1\"/><rect x=\"1\" y=\"3\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"3\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"3\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"12\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"4\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"11\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"10\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"9\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"8\" width=\"1\" height=\"1\"/><rect x=\"7\" y=\"8\" width=\"2\" height=\"1\"/><rect x=\"14\" y=\"8\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"9\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"10\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"10\" width=\"1\" height=\"1\"/><rect x=\"10\" y=\"10\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"10\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"11\" width=\"1\" height=\"1\"/><rect x=\"4\" y=\"11\" width=\"1\" height=\"1\"/><rect x=\"11\" y=\"11\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"11\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"12\" width=\"1\" height=\"1\"/><rect x=\"3\" y=\"12\" width=\"1\" height=\"1\"/><rect x=\"12\" y=\"12\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"12\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"13\" width=\"14\" height=\"1\"/></svg>", "flask": "<svg class=\"dico\" viewBox=\"0 0 16 16\" width=\"100%\" height=\"100%\" shape-rendering=\"crispEdges\" fill=\"#5fe3c8\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"6\" y=\"0\" width=\"4\" height=\"1\"/><rect x=\"6\" y=\"1\" width=\"1\" height=\"1\"/><rect x=\"9\" y=\"1\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"2\" width=\"1\" height=\"1\"/><rect x=\"9\" y=\"2\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"3\" width=\"1\" height=\"1\"/><rect x=\"9\" y=\"3\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"4\" width=\"2\" height=\"1\"/><rect x=\"9\" y=\"4\" width=\"2\" height=\"1\"/><rect x=\"5\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"10\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"4\" y=\"6\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"6\" width=\"2\" height=\"1\"/><rect x=\"4\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"7\" y=\"7\" width=\"2\" height=\"1\"/><rect x=\"11\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"3\" y=\"8\" width=\"2\" height=\"1\"/><rect x=\"6\" y=\"8\" width=\"4\" height=\"1\"/><rect x=\"11\" y=\"8\" width=\"2\" height=\"1\"/><rect x=\"3\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"9\" width=\"4\" height=\"1\"/><rect x=\"12\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"3\" y=\"10\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"10\" width=\"6\" height=\"1\"/><rect x=\"12\" y=\"10\" width=\"1\" height=\"1\"/><rect x=\"3\" y=\"11\" width=\"10\" height=\"1\"/><rect x=\"4\" y=\"12\" width=\"8\" height=\"1\"/></svg>", "wrench": "<svg class=\"dico\" viewBox=\"0 0 16 16\" width=\"100%\" height=\"100%\" shape-rendering=\"crispEdges\" fill=\"#bfeaff\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"12\" y=\"0\" width=\"2\" height=\"1\"/><rect x=\"11\" y=\"1\" width=\"4\" height=\"1\"/><rect x=\"10\" y=\"2\" width=\"2\" height=\"1\"/><rect x=\"14\" y=\"2\" width=\"1\" height=\"1\"/><rect x=\"10\" y=\"3\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"3\" width=\"1\" height=\"1\"/><rect x=\"10\" y=\"4\" width=\"2\" height=\"1\"/><rect x=\"14\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"9\" y=\"5\" width=\"4\" height=\"1\"/><rect x=\"8\" y=\"6\" width=\"3\" height=\"1\"/><rect x=\"7\" y=\"7\" width=\"3\" height=\"1\"/><rect x=\"6\" y=\"8\" width=\"3\" height=\"1\"/><rect x=\"5\" y=\"9\" width=\"3\" height=\"1\"/><rect x=\"4\" y=\"10\" width=\"3\" height=\"1\"/><rect x=\"3\" y=\"11\" width=\"3\" height=\"1\"/><rect x=\"2\" y=\"12\" width=\"3\" height=\"1\"/><rect x=\"1\" y=\"13\" width=\"3\" height=\"1\"/><rect x=\"1\" y=\"14\" width=\"2\" height=\"1\"/></svg>", "swap": "<svg class=\"dico\" viewBox=\"0 0 16 16\" width=\"100%\" height=\"100%\" shape-rendering=\"crispEdges\" fill=\"#9fd0e6\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"7\" y=\"0\" width=\"2\" height=\"1\"/><rect x=\"6\" y=\"1\" width=\"4\" height=\"1\"/><rect x=\"5\" y=\"2\" width=\"6\" height=\"1\"/><rect x=\"4\" y=\"3\" width=\"2\" height=\"1\"/><rect x=\"7\" y=\"3\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"3\" width=\"2\" height=\"1\"/><rect x=\"7\" y=\"4\" width=\"2\" height=\"1\"/><rect x=\"7\" y=\"5\" width=\"2\" height=\"1\"/><rect x=\"7\" y=\"6\" width=\"2\" height=\"1\"/><rect x=\"7\" y=\"7\" width=\"2\" height=\"1\"/><rect x=\"7\" y=\"8\" width=\"2\" height=\"1\"/><rect x=\"7\" y=\"9\" width=\"2\" height=\"1\"/><rect x=\"4\" y=\"10\" width=\"2\" height=\"1\"/><rect x=\"7\" y=\"10\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"10\" width=\"2\" height=\"1\"/><rect x=\"5\" y=\"11\" width=\"6\" height=\"1\"/><rect x=\"6\" y=\"12\" width=\"4\" height=\"1\"/><rect x=\"7\" y=\"13\" width=\"2\" height=\"1\"/></svg>"};
 const TABICON={"craft": "<svg class=\"dico\" viewBox=\"0 0 16 16\" width=\"100%\" height=\"100%\" shape-rendering=\"crispEdges\" fill=\"#9fdcff\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"6\" y=\"0\" width=\"4\" height=\"1\"/><rect x=\"2\" y=\"1\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"1\" width=\"4\" height=\"1\"/><rect x=\"13\" y=\"1\" width=\"1\" height=\"1\"/><rect x=\"2\" y=\"2\" width=\"2\" height=\"1\"/><rect x=\"5\" y=\"2\" width=\"6\" height=\"1\"/><rect x=\"12\" y=\"2\" width=\"2\" height=\"1\"/><rect x=\"3\" y=\"3\" width=\"10\" height=\"1\"/><rect x=\"1\" y=\"4\" width=\"5\" height=\"1\"/><rect x=\"10\" y=\"4\" width=\"5\" height=\"1\"/><rect x=\"1\" y=\"5\" width=\"4\" height=\"1\"/><rect x=\"11\" y=\"5\" width=\"4\" height=\"1\"/><rect x=\"1\" y=\"6\" width=\"3\" height=\"1\"/><rect x=\"7\" y=\"6\" width=\"2\" height=\"1\"/><rect x=\"12\" y=\"6\" width=\"3\" height=\"1\"/><rect x=\"1\" y=\"7\" width=\"3\" height=\"1\"/><rect x=\"6\" y=\"7\" width=\"4\" height=\"1\"/><rect x=\"12\" y=\"7\" width=\"3\" height=\"1\"/><rect x=\"1\" y=\"8\" width=\"3\" height=\"1\"/><rect x=\"6\" y=\"8\" width=\"4\" height=\"1\"/><rect x=\"12\" y=\"8\" width=\"3\" height=\"1\"/><rect x=\"1\" y=\"9\" width=\"3\" height=\"1\"/><rect x=\"7\" y=\"9\" width=\"2\" height=\"1\"/><rect x=\"12\" y=\"9\" width=\"3\" height=\"1\"/><rect x=\"1\" y=\"10\" width=\"4\" height=\"1\"/><rect x=\"11\" y=\"10\" width=\"4\" height=\"1\"/><rect x=\"1\" y=\"11\" width=\"5\" height=\"1\"/><rect x=\"10\" y=\"11\" width=\"5\" height=\"1\"/><rect x=\"3\" y=\"12\" width=\"10\" height=\"1\"/><rect x=\"2\" y=\"13\" width=\"2\" height=\"1\"/><rect x=\"5\" y=\"13\" width=\"6\" height=\"1\"/><rect x=\"12\" y=\"13\" width=\"2\" height=\"1\"/><rect x=\"2\" y=\"14\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"14\" width=\"4\" height=\"1\"/><rect x=\"13\" y=\"14\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"15\" width=\"4\" height=\"1\"/></svg>", "shop": "<svg class=\"dico\" viewBox=\"0 0 16 16\" width=\"100%\" height=\"100%\" shape-rendering=\"crispEdges\" fill=\"#ffd23c\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"6\" y=\"0\" width=\"4\" height=\"1\"/><rect x=\"4\" y=\"1\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"1\" width=\"2\" height=\"1\"/><rect x=\"3\" y=\"2\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"2\" width=\"4\" height=\"1\"/><rect x=\"12\" y=\"2\" width=\"1\" height=\"1\"/><rect x=\"2\" y=\"3\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"3\" width=\"2\" height=\"1\"/><rect x=\"9\" y=\"3\" width=\"2\" height=\"1\"/><rect x=\"13\" y=\"3\" width=\"1\" height=\"1\"/><rect x=\"2\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"10\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"13\" y=\"4\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"7\" y=\"5\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"5\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"7\" y=\"6\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"7\" y=\"7\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"7\" width=\"1\" height=\"1\"/><rect x=\"1\" y=\"8\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"8\" width=\"1\" height=\"1\"/><rect x=\"7\" y=\"8\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"8\" width=\"1\" height=\"1\"/><rect x=\"14\" y=\"8\" width=\"1\" height=\"1\"/><rect x=\"2\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"10\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"13\" y=\"9\" width=\"1\" height=\"1\"/><rect x=\"2\" y=\"10\" width=\"1\" height=\"1\"/><rect x=\"5\" y=\"10\" width=\"2\" height=\"1\"/><rect x=\"9\" y=\"10\" width=\"2\" height=\"1\"/><rect x=\"13\" y=\"10\" width=\"1\" height=\"1\"/><rect x=\"3\" y=\"11\" width=\"1\" height=\"1\"/><rect x=\"6\" y=\"11\" width=\"4\" height=\"1\"/><rect x=\"12\" y=\"11\" width=\"1\" height=\"1\"/><rect x=\"4\" y=\"12\" width=\"2\" height=\"1\"/><rect x=\"10\" y=\"12\" width=\"2\" height=\"1\"/><rect x=\"6\" y=\"13\" width=\"4\" height=\"1\"/></svg>"};
 
-// ===== HIERARCHICAL CRAFT/SHOP MENU: tabs (top) -> division icons -> options =====
-const DIVS={
- work:[
-  {k:'hold',  label:'Cargo',   fn:()=>DIVICON.crate},
-  {k:'mixer', label:'Mixer',   fn:()=>DIVICON.flask},
-  {k:'fab',   label:'Fab Bay', fn:()=>gearIcon(34)},
-  {k:'airline',label:'Air Line',fn:()=>ropeIcon(34)},
-  {k:'o2',    label:'O₂ Gear', fn:()=>tankIcon(34)},
-  {k:'seals', label:'Seals',   fn:()=>sealIcon(34)},
-  {k:'lens',  label:'Lens',    fn:()=>lensIcon(34)},
-  {k:'patch', label:'Patch',   fn:()=>medIcon(34)},
-  {k:'mech',  label:'Mech',    fn:()=>machIcon('mech',34)},
- ],
- shop:[
-  {k:'dealer', label:'Dealer',   fn:()=>coinIcon(34)},
-  {k:'parts',  label:'Parts',    fn:()=>partIcon('bolt',34)},
-  {k:'machine',label:'Machines', fn:()=>machIcon('robot',34)},
-  {k:'outfit', label:'Outfit',   fn:()=>DIVICON.wrench},
-  {k:'mechlab',label:'Mech Lab', fn:()=>machIcon('mech',34)},
-  {k:'exch',   label:'Exchange', fn:()=>DIVICON.swap},
- ]
-};
-const DIVTITLE={hold:'Cargo hold',mixer:'The mixer',fab:'Fabrication bay',airline:'Air line',o2:'O₂ tank & regulator',seals:'Hazard seals',lens:'Lantern lens',patch:'Patch kits',mech:'Mech bay',dealer:'Scrap dealer',parts:'Buy parts',machine:'Machine shop',outfit:'Outfitter',mechlab:'Mech lab',exch:'Resource exchange'};
-const ctabsEl=document.getElementById('ctabs');
-let mDiv=null, mZone='tab', mIdx=0, mGridIdx=0;
+// ===== CYBER DECK: the base terminal (CRAFT + SHOP) =========================================
+// One column of stacked rows: an icon, a name and one line saying what the row is for.
+// Section rows open a page. Leaf rows act on tap: if the hold can pay they build, otherwise
+// they TRACK the first missing resource (the HUD's yellow ingot stack leads to it).
+// Section and gear icons are little vector wireframes turning in perspective (WIRE), drawn
+// like an 80s vector display. Resources never get that treatment: they keep their in-world
+// sprite (iconPX), at a whole number of device pixels per sprite pixel.
 let baseIntroSeen=false;
 let mineIntroSeen=false, mineIntroActive=false;
 /* answer to the studio intro's FIRST TIME HERE prompt: NO turns every tutorial deck
  * off for the whole run (boot manual, base briefing, mining primer). */
 let tutorialsOn=true;
+const ctabsEl=document.getElementById('ctabs'), cyCoinEl=document.getElementById('cyCoin'), cyPanel=document.getElementById('cyPanel');
+let mPath=[], mZone='list', mIdx=0, mIdxStack=[];   // open pages (root = []), cursor zone + row, cursor per parent page
+// the terminal's own message line: a copy of every toast raised while the deck is open
+const cyMsgEl=document.getElementById('cyMsg');let cyMsgT=null;
+function cyLog(t){if(!cyMsgEl)return;t=String(t).toUpperCase();const k=t[0];
+  cyMsgEl.className='cy-msg on '+(k==='✕'?'err':k==='◈'?'trk':k==='◆'||k==='⚓'?'ok':'');cyMsgEl.textContent=t;
+  void cyMsgEl.offsetWidth;cyMsgEl.classList.add('in');clearTimeout(cyMsgT);cyMsgT=setTimeout(()=>cyMsgEl.classList.remove('on','in'),2400);}
 
-function resChip(id,nd){
- const have=invGet(id), ok=(nd==null)?true:(have>=nd);
- return '<span class="rpchip '+(nd==null?'':(ok?'ok':'no'))+'"'+trkAttr(id,nd)+'>'+iconSVG(id,16)+'<span class="rpn">'+have+'</span>'+(nd!=null?'<span class="rpneed">/'+nd+'</span>':'')+'</span>';
-}
-// resources relevant to ONLY what's craftable in this module at this base/level (concise inventory)
-function relevantResPanel(tab,div,T0){
- const ord=[], nd={};
- function add(id,n){ if(!RES[id])return; if(!(id in nd)){nd[id]=(n==null?null:0);ord.push(id);} if(n!=null)nd[id]=(nd[id]||0)+n; }
- let baseRow='';
- if(tab==='work'){
-  if(div==='hold')return '';                                   // cargo already shows the full hold
-  else if(div==='mixer'){ for(let t=0;t<=T0;t++)for(const rid of TIERS[t].ref){const r=RES[rid];for(const k in r.in)add(k,null);} }
-  else if(div==='fab'){
-   const _gi=nextGearTier();
-   if(_gi>=0){const g=TIERS[_gi].gear;for(const k in g.in)add(k,g.in[k]);}
-   const nb=bases[T0+1];
-   if(nb&&!nb.active){const aid='t'+nb.tier+'fb',ah=invGet(aid),aok=ah>=1;
-    baseRow='<div class="rpbase"><span class="rpb-l">NEXT BASE \u25be</span><span class="rpchip '+(aok?'ok':'no')+'">'+iconSVG(aid,16)+'<span class="rpn">'+ah+'</span><span class="rpneed">/1</span></span><span class="rpb-t">'+(aok?'ready \u2014 haul it down &amp; power on':'haul '+RES[aid].name+' down to power it on')+'</span></div>';}
+// ---- WIRE: vector wireframe models ------------------------------------------------------
+// A model is {v:[[x,y,z]…], e:[[i,j]…]}: y up, z towards the viewer. Models are normalised
+// into the unit sphere, spun about y and seen a little from above with real perspective:
+// far edges dim, near edges bright, lines add up like light on a vector tube.
+const WIRE=(()=>{
+  const P=Math.PI,TILT=0.38,D=3.4;
+  const mk=(v,e)=>({v,e});
+  function join(...ms){const v=[],e=[];for(const m of ms){const b=v.length;for(const p of m.v)v.push(p);for(const q of m.e)e.push([q[0]+b,q[1]+b]);}return mk(v,e);}
+  const map=(m,f)=>mk(m.v.map(f),m.e);
+  const tr=(m,x,y,z)=>map(m,p=>[p[0]+x,p[1]+y,p[2]+z]);
+  const sc=(m,x,y,z)=>map(m,p=>[p[0]*x,p[1]*(y==null?x:y),p[2]*(z==null?x:z)]);
+  const rx=(m,a)=>{const c=Math.cos(a),s=Math.sin(a);return map(m,p=>[p[0],p[1]*c-p[2]*s,p[1]*s+p[2]*c]);};
+  const ry=(m,a)=>{const c=Math.cos(a),s=Math.sin(a);return map(m,p=>[p[0]*c+p[2]*s,p[1],-p[0]*s+p[2]*c]);};
+  const rz=(m,a)=>{const c=Math.cos(a),s=Math.sin(a);return map(m,p=>[p[0]*c-p[1]*s,p[0]*s+p[1]*c,p[2]]);};
+  function line(pts,closed){const e=[];for(let i=0;i+1<pts.length;i++)e.push([i,i+1]);if(closed)e.push([pts.length-1,0]);return mk(pts.map(p=>[p[0],p[1],p[2]||0]),e);}
+  const pol=(r,a)=>[Math.cos(a)*r,Math.sin(a)*r];
+  function ngon(r,n,a0){const p=[];for(let i=0;i<n;i++)p.push(pol(r,(a0||0)+i/n*2*P));return p;}
+  function arc(r,a0,a1,n){const p=[];for(let i=0;i<=n;i++)p.push(pol(r,a0+(a1-a0)*i/n));return p;}
+  function box(w,h,d){const v=[];for(const x of[-w,w])for(const y of[-h,h])for(const z of[-d,d])v.push([x,y,z]);
+    const e=[];for(let i=0;i<8;i++)for(let j=i+1;j<8;j++){let n=0;for(let k=0;k<3;k++)if(v[i][k]!==v[j][k])n++;if(n===1)e.push([i,j]);}return mk(v,e);}
+  // surface of revolution about y: a ring per profile point, a meridian every `mer` segments (0 = none)
+  function lathe(prof,n,mer){const v=[],e=[];
+    for(const [r,y] of prof)for(let i=0;i<n;i++){const a=i/n*2*P;v.push([Math.cos(a)*r,y,Math.sin(a)*r]);}
+    prof.forEach(([r],k)=>{if(r>1e-6)for(let i=0;i<n;i++)e.push([k*n+i,k*n+(i+1)%n]);});
+    if(mer)for(let k=0;k+1<prof.length;k++)for(let i=0;i<n;i+=mer)e.push([k*n+i,(k+1)*n+i]);
+    return mk(v,e);}
+  function sphere(r,n,rings,mer){const prof=[];for(let k=0;k<=rings;k++){const a=-P/2+P*k/rings;prof.push([Math.cos(a)*r,Math.sin(a)*r]);}return lathe(prof,n,mer);}
+  function torus(R,r,nu,nv){const v=[],e=[];
+    for(let i=0;i<nu;i++)for(let j=0;j<nv;j++){const u=i/nu*2*P,w=j/nv*2*P,q=R+r*Math.cos(w);v.push([Math.cos(u)*q,Math.sin(u)*q,r*Math.sin(w)]);}
+    for(let i=0;i<nu;i++)for(let j=0;j<nv;j++){const a=i*nv+j;e.push([a,i*nv+(j+1)%nv]);e.push([a,((i+1)%nu)*nv+j]);}
+    return mk(v,e);}
+  function helix(r,h,turns,n){const p=[];for(let i=0;i<=n;i++){const t=i/n,a=t*turns*2*P;p.push([Math.cos(a)*r,-h/2+t*h,Math.sin(a)*r]);}return line(p);}
+  // closed XY outline pushed out to ±d along z
+  function extrude(pts,d){const n=pts.length,v=[],e=[];for(const z of[-d,d])for(const p of pts)v.push([p[0],p[1],z]);
+    for(let i=0;i<n;i++){const j=(i+1)%n;e.push([i,j],[n+i,n+j],[i,n+i]);}return mk(v,e);}
+  const ring=(r,n,y)=>lathe([[r,y||0]],n,0);   // flat ring in the XZ plane
+  const disc=(r,n)=>line(ngon(r,n).map(p=>[p[0],p[1],0]),true);   // flat ring in the XY plane
+
+  const DEF={
+    cargo:()=>join(box(.9,.7,.7),
+      line([[-.72,-.52,.7],[.72,-.52,.7],[.72,.52,.7],[-.72,.52,.7]],true),line([[-.72,-.52,.7],[.72,.52,.7]]),
+      line([[.9,-.52,.52],[.9,-.52,-.52],[.9,.52,-.52],[.9,.52,.52]],true),line([[.9,-.52,.52],[.9,.52,-.52]]),
+      line([[-.72,.7,-.52],[.72,.7,-.52],[.72,.7,.52],[-.72,.7,.52]],true)),
+    flask:()=>join(lathe([[.2,1],[.2,.42],[.78,-.7],[.78,-.9],[0,-.9]],12,2),ring(.27,12,1),ring(.57,12,-.3),
+      tr(sphere(.09,6,3,3),-.18,-.52,.1),tr(sphere(.07,6,3,3),.2,-.62,-.12),tr(sphere(.06,6,3,3),.05,-.1,.05)),
+    helmet:()=>join(tr(sphere(.82,12,6,2),0,.08,0),tr(disc(.38,14),0,.1,.86),tr(disc(.27,12),0,.1,.9),
+      line([[-.27,.1,.9],[.27,.1,.9]]),line([[0,-.17,.9],[0,.37,.9]]),
+      tr(rz(ry(disc(.18,10),P/2),0),.82,.1,0),tr(ry(disc(.18,10),P/2),-.82,.1,0),
+      lathe([[.62,-.62],[.86,-.86],[.86,-.98]],12,3)),
+    gear:()=>{const T=8,w=P/T*.42,p=[];for(let i=0;i<T;i++){const a=i/T*2*P;p.push(pol(.66,a-w*1.3),pol(.95,a-w*.75),pol(.95,a+w*.75),pol(.66,a+w*1.3));}
+      const m=join(extrude(p,.17),extrude(ngon(.27,8),.17));
+      for(let i=0;i<4;i++){const a=i/4*2*P+P/8;m.v.push([Math.cos(a)*.27,Math.sin(a)*.27,0],[Math.cos(a)*.66,Math.sin(a)*.66,0]);m.e.push([m.v.length-2,m.v.length-1]);}
+      return m;},
+    medkit:()=>{const a=.15,l=.38,plus=[[-a,l],[a,l],[a,a],[l,a],[l,-a],[a,-a],[a,-l],[-a,-l],[-a,-a],[-l,-a],[-l,a],[-a,a]];
+      return join(box(.85,.56,.34),tr(extrude(plus,.04),0,-.02,.38),line([[-.3,.56,0],[-.3,.8,0],[.3,.8,0],[.3,.56,0]]));},
+    mech:()=>{const m=join(tr(box(.6,.36,.46),0,.28,0),line([[-.46,.46,.46],[.2,.46,.46],[.34,.2,.46],[-.46,.2,.46]],true),
+      line([[-.3,.64,-.2],[-.3,.86,-.2]]),
+      tr(rx(lathe([[.17,0],[.17,.12],[0,.6]],8,2),P/2),.74,.2,.2),line([[.6,.2,.12],[.74,.2,.2]]));
+      for(const s of[-1,1]){const L=join(line([[s*.4,-.08,.14],[s*.66,-.42,.3],[s*.54,-.8,.06]]),line([[s*.4,-.08,-.14],[s*.66,-.42,-.12],[s*.54,-.8,-.2]]),
+        line([[s*.66,-.42,.3],[s*.66,-.42,-.12]]),tr(box(.19,.05,.27),s*.54,-.86,-.06));
+        const j=join(m,L);m.v=j.v;m.e=j.e;}
+      return m;},
+    hose:()=>join(helix(.6,1.2,4.5,96),line([[.6,-.6,0],[.95,-.75,0]]),line([[.6*Math.cos(9*P),.6,.6*Math.sin(9*P)],[-.95,.8,0]]),
+      tr(rz(ry(disc(.1,8),P/2),0),-1,.82,0)),
+    tank:()=>join(lathe([[0,.95],[.22,.9],[.4,.74],[.44,.55],[.44,-.75],[.36,-.92],[0,-.96]],10,2),
+      lathe([[.1,.95],[.1,1.12]],8,4),ring(.2,10,1.12),line([[0,1.04,0],[.34,1.04,0],[.34,.94,0]])),
+    gauge:()=>{const m=join(extrude(ngon(.72,16),.12),tr(disc(.6,16),0,0,.13),tr(rx(lathe([[.1,-.72],[.1,-1.02]],8,4),0),0,0,0));
+      for(let i=0;i<7;i++){const a=P*1.25-i/6*P*1.5;m.v.push([Math.cos(a)*.48,Math.sin(a)*.48,.13],[Math.cos(a)*.6,Math.sin(a)*.6,.13]);m.e.push([m.v.length-2,m.v.length-1]);}
+      m.v.push([0,0,.13],[Math.cos(P*.3)*.5,Math.sin(P*.3)*.5,.13]);m.e.push([m.v.length-2,m.v.length-1]);return m;},
+    oring:()=>join(torus(.66,.22,16,6)),
+    lens:()=>{const L=rx(lathe([[0,.22],[.4,.17],[.66,.07],[.74,0],[.66,-.07],[.4,-.17],[0,-.22]],14,2),P/2),r=[];
+      for(let i=0;i<6;i++){const a=i/6*2*P,c=Math.cos(a),s=Math.sin(a);r.push(line([[c*.38,s*.38,-.75],[c*.38,s*.38,-.16]]),line([[c*.5,s*.5,.12],[c*.95,s*.95,.7]]));}
+      return join(L,...r);},
+    coins:()=>{const c=(x,y,z)=>tr(lathe([[.52,.07],[.52,-.07]],14,2),x,y,z);
+      return join(c(0,-.62,0),c(.05,-.46,.03),c(-.03,-.3,.05),c(.04,-.14,-.02),tr(rx(lathe([[.46,.06],[.46,-.06]],14,2),P/2),.3,.42,-.12),
+        tr(rx(disc(.3,12),0),.3,.42,-.05));},
+    nut:()=>join(extrude(ngon(.82,6,P/6),.3),extrude(ngon(.38,10),.3)),
+    bolt:()=>join(tr(rx(extrude(ngon(.46,6,P/6),.14),P/2),0,.72,0),lathe([[.2,.58],[.2,-.98]],8,4),tr(helix(.21,1.3,5,70),0,-.25,0)),
+    frame:()=>{const m=join(box(.82,.82,.82),box(.4,.4,.4));for(let i=0;i<8;i++)m.e.push([i,8+i]);return m;},
+    core:()=>join(sphere(.38,10,5,2),rz(rx(ring(.88,28),.35),.55),rz(rx(ring(.88,28),-.35),-.55),ring(.88,28)),
+    drone:()=>join(sc(sphere(.66,12,6,3),1,.82,1),tr(disc(.24,12),0,.04,.66),tr(disc(.12,8),0,.04,.68),line([[0,.54,0],[0,.92,0]]),tr(sphere(.07,6,3,3),0,.96,0),
+      line([[.62,-.1,0],[.92,-.32,0],[.86,.06,0]],true),line([[-.62,-.1,0],[-.92,-.32,0],[-.86,.06,0]],true)),
+    dish:()=>{const T=-.5,R=q=>rx(mk([q],[]),T).v[0];
+      const fp=R([0,.44,0]),ctr=R([0,-.3,0]);
+      const m=join(rx(lathe([[0,-.3],[.3,-.24],[.58,-.06],[.8,.24]],14,2),T),line([ctr,fp]),line([[0,-.95,0],ctr]),
+        line([[-.4,-1,.25],[0,-.95,0],[.4,-1,.25]]),line([[0,-.95,0],[0,-1,-.42]]));
+      for(let i=0;i<3;i++){const a=i/3*2*P+.4;m.v.push(R([Math.cos(a)*.8,.24,Math.sin(a)*.8]),fp);m.e.push([m.v.length-2,m.v.length-1]);}
+      return m;},
+    gem:()=>{const v=[[.82,0,0],[-.82,0,0],[0,1,0],[0,-1,0],[0,0,.82],[0,0,-.82]],e=[];for(let i=0;i<6;i++)for(let j=i+1;j<6;j++)if(!(i%2===0&&j===i+1))e.push([i,j]);
+      const a1=arc(1.1,P*.15,P*.85,12),a2=arc(1.1,P*1.15,P*1.85,12);
+      const head=(p,q)=>{const dx=q[0]-p[0],dy=q[1]-p[1],l=Math.hypot(dx,dy)||1,ux=dx/l,uy=dy/l;return line([[q[0]-ux*.2-uy*.12,0,q[1]-uy*.2+ux*.12],[q[0],0,q[1]],[q[0]-ux*.2+uy*.12,0,q[1]-uy*.2-ux*.12]]);};
+      return join(mk(v,e),line(a1.map(p=>[p[0],0,p[1]])),line(a2.map(p=>[p[0],0,p[1]])),head(a1[11],a1[12]),head(a2[11],a2[12]));},
+    battery:()=>join(box(.42,.75,.42),tr(box(.16,.08,.16),0,.83,0),line([[.1,.46,.42],[-.14,.02,.42],[.04,.02,.42],[-.08,-.46,.42],[.16,0,.42],[-.02,0,.42]],true)),
+    thruster:()=>join(lathe([[.28,.8],[.3,.4],[.2,.22],[.46,-.46],[.5,-.58]],10,2),
+      line([[.32,-.66,0],[0,-1.12,0],[-.32,-.66,0]]),line([[0,-.66,.32],[0,-1.12,0],[0,-.66,-.32]]),line([[.14,-.66,.14],[0,-.95,0],[-.14,-.66,-.14]])),
+    coil:()=>join(helix(.42,1.3,6,110),ring(.52,12,.7),ring(.52,12,-.7),ring(.52,12,.78),ring(.52,12,-.78),line([[0,.78,0],[0,1.02,0]]),line([[0,-.78,0],[0,-1.02,0]])),
+    hook:()=>{const c=arc(.34,P,2.15*P,14).map(p=>[p[0]+.34,p[1]-.25,0]);
+      return join(line([[0,1,0],[0,-.25,0]]),line(c),line([c[c.length-1],[c[c.length-1][0]-.18,c[c.length-1][1]+.02,0]]),tr(disc(.13,10),0,1.12,0),
+        lathe([[.3,.7],[.3,.45]],10,2));},
+    beacon:()=>join(line([[0,-.95,0],[0,.42,0]]),line([[0,-.5,0],[.5,-.98,0]]),line([[0,-.5,0],[-.26,-.98,.42]]),line([[0,-.5,0],[-.26,-.98,-.42]]),
+      tr(sphere(.09,6,3,3),0,.5,0),ring(.3,14,.5),ring(.55,18,.5),ring(.8,22,.5)),
+    flood:()=>join(lathe([[.2,.62],[.28,.38],[.52,.06],[.56,0]],10,2),ring(.95,16,-.98),
+      line([[.56,0,0],[.95,-.98,0]]),line([[-.56,0,0],[-.95,-.98,0]]),line([[0,0,.56],[0,-.98,.95]]),line([[0,0,-.56],[0,-.98,-.95]]),line([[0,.62,0],[0,.92,0]])),
+    filter:()=>join(lathe([[.4,.8],[.4,-.8]],12,3),lathe([[.4,.48],[.4,.16],[.4,-.16],[.4,-.48]],12,0),lathe([[.24,.98],[.24,.8]],10,5),lathe([[.24,-.8],[.24,-.98]],10,5)),
+    navunit:()=>{const m=join(box(.86,.6,.07),line([[-.74,-.46,.08],[.74,-.46,.08],[.74,.46,.08],[-.74,.46,.08]],true));
+      for(const x of[-.37,0,.37]){m.v.push([x,-.46,.08],[x,.46,.08]);m.e.push([m.v.length-2,m.v.length-1]);}
+      for(const y of[-.15,.15]){m.v.push([-.74,y,.08],[.74,y,.08]);m.e.push([m.v.length-2,m.v.length-1]);}
+      return join(m,tr(line([[0,.1,0],[.1,0,0],[0,-.1,0],[-.1,0,0]],true),.2,.12,.09));},
+  };
+  const M={};
+  function norm(m){let a=[1e9,1e9,1e9],b=[-1e9,-1e9,-1e9];for(const p of m.v)for(let k=0;k<3;k++){a[k]=Math.min(a[k],p[k]);b[k]=Math.max(b[k],p[k]);}
+    const c=[(a[0]+b[0])/2,(a[1]+b[1])/2,(a[2]+b[2])/2];let r=1e-6;for(const p of m.v)r=Math.max(r,Math.hypot(p[0]-c[0],p[1]-c[1],p[2]-c[2]));
+    return map(m,p=>[(p[0]-c[0])/r,(p[1]-c[1])/r,(p[2]-c[2])/r]);}
+  function get(k){return M[k]||(M[k]=norm((DEF[k]||DEF.cargo)()));}
+  function project(m,S,ang){const f=.5*S*(D-1),cx=S/2,cy=S/2,ca=Math.cos(ang),sa=Math.sin(ang),ct=Math.cos(TILT),st=Math.sin(TILT);
+    const n=m.v.length,X=new Float32Array(n),Y=new Float32Array(n),Z=new Float32Array(n);
+    for(let i=0;i<n;i++){const [x,y,z]=m.v[i],x1=x*ca+z*sa,z1=-x*sa+z*ca,y2=y*ct-z1*st,z2=y*st+z1*ct,k=f/(D-z2);X[i]=cx+x1*k;Y[i]=cy-y2*k;Z[i]=z2;}
+    return {X,Y,Z};}
+  // one draw = glow pass + core pass per depth band (near / mid / far), additive like phosphor
+  function draw(cv,k,col,ang,hot){
+    const dpr=Math.min(3,window.devicePixelRatio||1),css=cv.clientWidth||44,S=Math.max(8,Math.round(css*dpr));
+    if(cv.width!==S){cv.width=S;cv.height=S;}
+    const g=cv.getContext('2d');g.setTransform(1,0,0,1,0,0);g.globalCompositeOperation='source-over';g.globalAlpha=1;g.clearRect(0,0,S,S);
+    const m=get(k),{X,Y,Z}=project(m,S,ang),bands=[[],[],[]];
+    for(const [a,b] of m.e){const z=(Z[a]+Z[b])/2;bands[z>.3?0:z<-.3?2:1].push(a,b);}
+    const AL=hot?[1,.78,.46]:[.9,.62,.34];
+    g.globalCompositeOperation='lighter';g.lineCap='round';g.lineJoin='round';g.strokeStyle=col;
+    for(const [w,mul] of[[hot?3.6:2.8,.26],[1.15,1]]){g.lineWidth=w*dpr;
+      for(let i=0;i<3;i++){const B=bands[i];if(!B.length)continue;g.globalAlpha=AL[i]*mul;g.beginPath();
+        for(let j=0;j<B.length;j+=2){g.moveTo(X[B[j]],Y[B[j]]);g.lineTo(X[B[j+1]],Y[B[j+1]]);}g.stroke();}}
+    if(hot){g.strokeStyle='#ffffff';g.lineWidth=.5*dpr;g.globalAlpha=.5;g.beginPath();
+      for(let i=0;i<2;i++){const B=bands[i];for(let j=0;j<B.length;j+=2){g.moveTo(X[B[j]],Y[B[j]]);g.lineTo(X[B[j+1]],Y[B[j+1]]);}}g.stroke();}
   }
-  else if(div==='airline'){const rc=ropeCost(T0);for(const k in rc)add(k,rc[k]);}
-  else if(div==='o2'){const e=envOfTier(T0);
-   const tk=progFlags(player,'o2tank',e);let tv=0;while(tv<4&&tk[tv])tv++;
-   if(tv<4){const c=o2TankCost(e,tv);for(const k in c)add(k,c[k]);}
-   const rg=progFlags(player,'o2reg',e);let rv=0;while(rv<4&&rg[rv])rv++;
-   if(rv<4){const c=o2RegCost(e,rv);for(const k in c)add(k,c[k]);}
-  }
-  else if(div==='seals'){if(envOfTier(T0)>=1&&!(player.seals&&player.seals[T0])){const sc=sealCost(T0);for(const k in sc)add(k,sc[k]);}}
-  else if(div==='lens'){const e=envOfTier(T0),lf=progFlags(player,'lensUpg',e);let lv=0;while(lv<4&&lf[lv])lv++;
-   if(lv<4){const lc=lensCost(e,lv);for(const k in lc)add(k,lc[k]);}}
-  else if(div==='patch'){add('t'+(T0+1)+'ra',1);add('t'+(T0+1)+'ma',1);}
-  else if(div==='mech'){
-   if(mech&&(player.mechBattery||0)<1){const bc=mechBatteryCost(T0);for(const k in bc)add(k,bc[k]);}
-   if(mech){const cc=mechCallCost(T0);if(cc)for(const k in cc)add(k,cc[k]);}
-  }
- } else {
-  if(div==='dealer'||div==='parts'||div==='exch'||div==='mechlab')return '';    // these run on coins/scrap shown elsewhere
-  else if(div==='machine'){
-   const seen={},chips=[];for(const m of MACHINES)for(const k in m.cost){if(seen[k])continue;seen[k]=1;chips.push('<span class="rpchip">'+partIcon(k,16)+'<span class="rpn">'+(partsInv[k]||0)+'</span></span>');}
-   if(!chips.length)return '';
-   return '<div class="rpanel"><div class="rphead">parts aboard</div><div class="rpgrid">'+chips.join('')+'</div></div>';
-  }
-  else if(div==='outfit')return '';                              // coin-only now — tank & regulator craft in the workshop
- }
- if(!ord.length&&!baseRow)return '';
- let chips=ord.map(id=>resChip(id,nd[id])).join('');
- if(!chips&&baseRow)chips='<span class="rpempty">bring resources down to power the base below</span>';
- return '<div class="rpanel"><div class="rphead">resources \u00b7 in stock</div><div class="rpgrid">'+chips+'</div>'+baseRow+'</div>';
-}
-// overview-grid panel: what it takes to power on the NEXT base (updates per level)
-function nextBasePanel(T0){
- const nb=bases[T0+1];
- if(nb&&!nb.active){
-  const aid='t'+nb.tier+'fb',ah=invGet(aid),aok=ah>=1;
-  return '<div class="rpanel rpnext"><div class="rphead">next base \u00b7 power-on</div><div class="rpnextrow">'
-   +'<span class="rpchip '+(aok?'ok':'no')+'">'+iconSVG(aid,18)+'<span class="rpn">'+ah+'</span><span class="rpneed">/1</span></span>'
-   +'<span class="rpb-t">'+(aok? RES[aid].name+' ready \u2014 haul it to the dead base below &amp; press X to power on' : 'haul 1\u00d7 '+RES[aid].name+' \u2014 this layer\u2019s #2 composite \u2014 down to the dead base below to power it on')+'</span>'
-   +'</div></div>';
- }
- if(nb&&nb.active) return '<div class="rpanel rpnext"><div class="rphead">next base</div><div class="rpnextrow"><span class="rpb-t" style="color:#5dff8a">\u2713 the base below is powered \u2014 gear up and descend</span></div></div>';
- return '<div class="rpanel rpnext"><div class="rphead">deepest reach</div><div class="rpnextrow"><span class="rpb-t">no base below \u2014 this is the bottom of the route</span></div></div>';
-}
-function divContent(tab,div,T0){
- let h='';
- if(tab==='work'){
-  if(div==='hold'){
-   const raws=[],mixs=[],refs=[];
-   for(const id in inv){if(invGet(id)<=0)continue;const k=RES[id].kind;(k==='raw'?raws:k==='mix'?mixs:refs).push(id);}
-   if(!raws.length&&!mixs.length&&!refs.length)h+='<div class="emptyhold">hold\u2019s empty \u2014 go crack some outcrops and snag mixer canisters</div>';
-   else h+='<div class="chips">'+raws.map(chip).join('')+mixs.map(chip).join('')+refs.map(chip).join('')+'</div>';
-  }
-  else if(div==='mixer'){
-   for(let t=0;t<=T0;t++)for(const rid of TIERS[t].ref){const r=RES[rid],ok=canPay(r.in);
-    h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+iconSVG(rid,30)+'<span class="nm">'+r.name+'</span></div><div class="rin">'+need(r.in,t)+'</div><button class="cbtn '+(ok?'go':'')+'" data-craft="refine:'+rid+'"'+(ok?'':' disabled')+'>Mix</button></div>';}
-  }
-  else if(div==='fab'){
-   const gi=nextGearTier(), g=gi>=0&&TIERS[gi].gear;
-   if(g){const ok=canPay(g.in);
-    h+='<div class="recipe gearrec '+(ok?'rok':'')+'"><div class="rout">'+gearIcon(30)+'<span class="nm" style="color:var(--gold)">'+g.name+'</span></div><div class="rin">'+need(g.in,gi)+'</div><button class="cbtn build" data-craft="gear:'+gi+'"'+(ok?'':' disabled')+'>Build</button></div>';
-    if(g.carry)h+='<div class="gearnote">\u25c2 needs '+RES[g.carry].name+' carried down from the tier above</div>';
-    h+='<div class="gearnote">the top (#3) composite from each of this environment\u2019s 4 layers \u2014 the control unit at its last bulkhead demands this suit</div>';}
-   else h+='<div class="emptyhold">no suit line to fabricate right now \u2014 the next environment\u2019s spec unlocks as you descend; the transit gate waits at the bottom</div>';
-  }
-  else if(div==='airline'){
-   const _b=bases[T0];
-   if(!_b)h+='<div class="emptyhold">no base on this level</div>';
-   else if(_b.ropeLen>=ROPE_MAX)h+='<div class="allbuilt" style="color:#46d0ff;text-shadow:0 0 10px rgba(70,208,255,.4)">air line maxed \u00b7 '+_b.ropeLen+'u</div>';
-   else{const rc=ropeCost(T0),ok=canPay(rc);
-    h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+ropeIcon(30)+'<span class="nm">Extend rope +'+ROPE_STEP+' <span style="color:#5b8095;font-size:9px">'+_b.ropeLen+'\u2192'+Math.min(ROPE_MAX,_b.ropeLen+ROPE_STEP)+'u</span></span></div><div class="rin">'+need(rc,T0)+'</div><button class="cbtn '+(ok?'go':'')+'" data-craft="rope"'+(ok?'':' disabled')+'>Extend</button></div>';}
-  }
-  else if(div==='o2'){
-   const e=envOfTier(T0),tk=progFlags(player,'o2tank',e),rg=progFlags(player,'o2reg',e);
-   h+='<div class="gearnote">each version draws on one layer of this environment \u2014 V1 from its 1st layer down to V4 from its 4th</div>';
-   for(let vv=0;vv<4;vv++){const fitted=tk[vv],rid='t'+(envTier(e,vv)+1)+'ma';
-    if(!RES[rid]){h+='<div class="gearnote">\u25c2 O\u2082 tank V'+(vv+1)+' \u2014 descend to this environment\u2019s layer '+(vv+1)+' to spec it</div>';continue;}
-    const c=o2TankCost(e,vv),ok=!fitted&&(vv===0||tk[vv-1])&&canPay(c);
-    h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+tankIcon(30)+'<span class="nm">O\u2082 tank V'+(vv+1)+' <span style="color:#5b8095;font-size:9px">+'+TANK_STEP+' max air</span></span></div><div class="rin">'+(fitted?'<span style="color:#5dff8a;font-size:9px">FITTED</span>':need(c,T0))+'</div><button class="cbtn '+(ok?'build':'')+'" data-craft="o2tank:'+vv+'"'+(ok?'':' disabled')+'>'+(fitted?'\u2713':'Fit')+'</button></div>';}
-   for(let vv=0;vv<4;vv++){const fitted=rg[vv],rid='t'+(envTier(e,vv)+1)+'ra';
-    if(!RES[rid]){h+='<div class="gearnote">\u25c2 O\u2082 regulator V'+(vv+1)+' \u2014 descend to this environment\u2019s layer '+(vv+1)+' to spec it</div>';continue;}
-    const c=o2RegCost(e,vv),ok=!fitted&&(vv===0||rg[vv-1])&&canPay(c);
-    h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+tankIcon(30)+'<span class="nm">O\u2082 regulator V'+(vv+1)+' <span style="color:#5b8095;font-size:9px">\u22125% air drain</span></span></div><div class="rin">'+(fitted?'<span style="color:#5dff8a;font-size:9px">FITTED</span>':need(c,T0))+'</div><button class="cbtn '+(ok?'build':'')+'" data-craft="o2reg:'+vv+'"'+(ok?'':' disabled')+'>'+(fitted?'\u2713':'Fit')+'</button></div>';}
-  }
-  else if(div==='seals'){
-   const e=envOfTier(T0),V=(SCHED[T0]?SCHED[T0].layerInEnv:T0%4)+1;
-   if(e<1)h+='<div class="emptyhold">this environment runs clean \u2014 pollution (and the seals that counter it) begin one environment down</div>';
-   else if(player.seals&&player.seals[T0])h+='<div class="allbuilt" style="color:#7dff4a">seal V'+V+' fitted for this layer \u2713</div>';
-   else{const sc=sealCost(T0),ok=canPay(sc);
-    h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+sealIcon(30)+'<span class="nm">Hazard seal V'+V+' <span style="color:#5b8095;font-size:9px">big cut to this layer\u2019s pollution \u00b7 its #1 + #2 composites</span></span></div><div class="rin">'+need(sc,T0)+'</div><button class="cbtn '+(ok?'go':'')+'" data-craft="seal"'+(ok?'':' disabled')+'>Fit</button></div>';}
-  }
-  else if(div==='lens'){
-   const e=envOfTier(T0),lf=progFlags(player,'lensUpg',e),LL=player.lanternLevel||0;
-   let lv=0;while(lv<4&&lf[lv])lv++;
-   if(lv>=4)h+='<div class="allbuilt" style="color:#ffd23c;text-shadow:0 0 10px rgba(255,210,60,.4)">lens fully focused for this environment \u00b7 beam +'+(LL*10)+'%</div>';
-   else{const rid='t'+(envTier(e,lv)+1)+'fb';
-    if(!RES[rid])h+='<div class="gearnote">\u25c2 lens V'+(lv+1)+' \u2014 descend to this environment\u2019s layer '+(lv+1)+' to spec it</div>';
-    else{const lc=lensCost(e,lv),ok=canPay(lc);
-     h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+lensIcon(30)+'<span class="nm">Grind lens V'+(lv+1)+' <span style="color:#5b8095;font-size:9px">beam +10% ('+(LL*10)+'%\u2192'+((LL+1)*10)+'%) \u00b7 layer '+(lv+1)+'\u2019s #2 composite</span></span></div><div class="rin">'+need(lc,T0)+'</div><button class="cbtn '+(ok?'go':'')+'" data-craft="lens"'+(ok?'':' disabled')+'>Grind</button></div>';}}
-  }
-  else if(div==='patch'){
-   const mc={};mc['t'+(T0+1)+'ra']=1;mc['t'+(T0+1)+'ma']=1;const full=(player.medkits||0)>=5,ok=!full&&canPay(mc);
-   if(full)h+='<div class="allbuilt" style="color:#5dff8a">patch kits full (5)</div>';
-   else h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+medIcon(30)+'<span class="nm">Patch kit <span style="color:#5b8095;font-size:9px">heals 2 \u00b7 max 5 \u00b7 '+(player.medkits||0)+' aboard</span></span></div><div class="rin">'+need(mc,T0)+'</div><button class="cbtn '+(ok?'go':'')+'" data-craft="medkit"'+(ok?'':' disabled')+'>Make</button></div>';
-  }
-  else if(div==='mech'){
-   if(!mech)h+='<div class="emptyhold">no mech aboard \u2014 build the DV-8 \u201cMULE\u201d in the SHOP\u2019s machine bay</div>';
-   else{
-    const pct=Math.round(100*mech.battery/mechBatMax());
-    h+='<div class="gearnote">MULE status \u2014 battery '+(mech.battery>0?pct+'%':'<span style="color:#ff4d5e">DEAD</span>')+' \u00b7 cap '+mechBatMax().toFixed(0)+'s \u00b7 coil '+mechBoostMax().toFixed(1)+'s @ +'+mechBoostRegen().toFixed(2)+'/s (burnout '+mechBoostRebuild().toFixed(1)+'s) \u00b7 hook '+mechHookReach()+'u'+(mech.off?' \u00b7 <span style="color:#ff9a3c">LEFT BEHIND \u2014 call it below</span>':'')+'</div>';
-    h+='<div class="gearnote">the cell drains only while the MULE works \u2014 drill '+MECH_DRILL_COST.toFixed(0)+'s a vein \u00b7 saw '+MECH_SAW_COST.toFixed(1)+'s a kill \u00b7 hook '+MECH_HOOK_COST.toFixed(1)+'s a shot \u00b7 boost 1s/s \u00b7 walking is free. the thruster coil <b>recharges whenever it isn\u2019t firing</b> (+'+mechBoostRegen().toFixed(2)+'s a second, free), but burn it to <b>empty</b> and the thruster <b>cuts out</b> for '+mechBoostRebuild().toFixed(1)+'s while it rebuilds \u2014 land to clear it instantly. the Mech Lab upgrades <b>how much it holds</b> and <b>how fast it winds back</b> separately. the cockpit is <b>sealed</b> \u2014 your tank holds while you pilot, so the cell is the only thing you spend</div>';
-    const bc=mechBatteryCost(T0),carrying=(player.mechBattery||0)>=1,ok=!carrying&&canPay(bc);
-    h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+batIcon(30)+'<span class="nm">Battery cell <span style="color:#5b8095;font-size:9px">4\u00d7 each of this layer\u2019s ores &amp; floats \u00b7 carry max 1</span></span></div><div class="rin">'+(carrying?'<span style="color:#5dff8a;font-size:9px">STOWED 1/1</span>':need(bc,T0))+'</div><button class="cbtn '+(ok?'go':'')+'" data-craft="mbat"'+(ok?'':' disabled')+'>Cell</button></div>';
-    const cc=mechCallCost(T0),cok=!!cc&&canPay(cc);
-    h+='<div class="recipe '+(cok?'rok':'')+'"><div class="rout">'+machIcon('mech',30)+'<span class="nm">Call the MULE here <span style="color:#5b8095;font-size:9px">arrives exactly as you left it \u2014 dead or alive \u00b7 10\u00d7 one floating kind</span></span></div><div class="rin">'+(cc?need(cc,T0):'')+'</div><button class="cbtn '+(cok?'go':'')+'" data-craft="mcall"'+(cok?'':' disabled')+'>Call</button></div>';
-   }
-  }
- } else {
-  if(div==='dealer'){
-   const sids=SCRAP.map(s=>s.id).filter(id=>(scrapInv[id]||0)>0);
-   if(!sids.length)h+='<div class="emptyhold">no salvage aboard \u2014 grab the glinting scrap out in the dark</div>';
-   else{for(const id of sids){const s=SCRAPBYID[id];
-     h+='<div class="recipe rok"><div class="rout">'+scrapIcon(id,30)+'<span class="nm">'+s.name+' \u00d7'+scrapInv[id]+' <span style="color:#5b8095;font-size:9px">'+s.coin+' coin ea</span></span></div><button class="cbtn go" data-craft="sell:'+id+'">Sell</button></div>';}
-    let tot=0;for(const id of sids)tot+=scrapInv[id]*SCRAPBYID[id].coin;
-    h+='<div class="recipe rok"><div class="rout"><span class="nm" style="color:var(--gold)">Sell everything <span style="color:#5b8095;font-size:9px">+'+tot+' coin</span></span></div><button class="cbtn build" data-craft="sellall">Cash in</button></div>';}
-  }
-  else if(div==='parts'){
-   for(const pt of PARTS){const have=partsInv[pt.id]||0,ok=coins>=pt.coin;
-    h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+partIcon(pt.id,30)+'<span class="nm">'+pt.name+' <span style="color:#5b8095;font-size:9px">have '+have+' \u00b7 '+pt.coin+' coin</span></span></div><button class="cbtn '+(ok?'go':'')+'" data-craft="buypart:'+pt.id+'"'+(ok?'':' disabled')+'>Buy</button></div>';}
-  }
-  else if(div==='machine'){
-   for(const m of MACHINES){const built=(m.id==='robot'&&companion)||(m.id==='floodlight'&&player.builtFloodlight)||(m.id==='thruster'&&player.builtThruster)||(m.id==='mech'&&mech);
-    const ok=!built&&canPayParts(m.cost);
-    let costStr=Object.keys(m.cost).map(k=>partIcon(k,16)+'<span class="pq'+((partsInv[k]||0)>=m.cost[k]?' ok':'')+'">'+(partsInv[k]||0)+'/'+m.cost[k]+'</span>').join('');
-    h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+machIcon(m.id,30)+'<span class="nm">'+m.name+' <span style="color:#5b8095;font-size:9px">'+m.desc+'</span></span></div><div class="rin">'+(built?'<span style="color:#5dff8a;font-size:9px">BUILT</span>':costStr)+'</div><button class="cbtn '+(ok?'build':'')+'" data-craft="machine:'+m.id+'"'+(ok?'':' disabled')+'>'+(built?'\u2713':'Build')+'</button></div>';}
-  }
-  else if(div==='outfit'){
-   // spare tank + O2 regulator moved to the workshop's O2 GEAR division \u2014 crafted per environment now
-   if(envOfTier(T0)<1)h+='<div class="gearnote">no pollution in this environment \u2014 filter cartridges matter from the next one down</div>';
-   else{const fc=Math.round((player.filterBonus||0)/FILT_STEP),fcost=14+fc*9,fmax=(player.filterBonus||0)>=FILT_MAX-1e-6,fok=!fmax&&coins>=fcost;
-    h+='<div class="recipe '+(fok?'rok':'')+'"><div class="rout">'+filterIcon(30)+'<span class="nm">Filter cartridge <span style="color:#5b8095;font-size:9px">cuts pollution'+(fmax?' \u00b7 MAX':' \u00b7 '+fcost+' coin')+'</span></span></div><button class="cbtn '+(fok?'go':'')+'" data-craft="buy:filter"'+(fok?'':' disabled')+'>Buy</button></div>';}
-   const owned=!!player.hasMap,mok=!owned&&coins>=MAP_COST;
-   h+='<div class="recipe '+(owned?'rok':mok?'rok':'')+'"><div class="rout">'+mapIcon(30)+'<span class="nm">Sector-nav unit <span style="color:#5b8095;font-size:9px">'+(owned?'installed \u00b7 live HUD map':'live minimap on your HUD \u00b7 '+MAP_COST+' coin')+'</span></span></div>'+(owned?'<span style="color:#5dff8a;font-size:9px;align-self:center">OWNED</span>':'<button class="cbtn '+(mok?'go':'')+'" data-craft="buy:map"'+(mok?'':' disabled')+'>Buy</button>')+'</div>';
-  }
-  else if(div==='mechlab'){
-   if(!mech)h+='<div class="emptyhold">build the DV-8 “MULE” first — Machines, one shelf over</div>';
-   else{
-    const e=mechUpgEnv(T0);
-    h+='<div class="gearnote">one of each fitting per <b>environment</b> — all four layers of an environment share one slot, and every new environment opens a fresh set. permanent, welded to the MULE’s frame</div>';
-    const rows=[
-     ['bat','Battery cell +'+MECH_BAT_STEP+'s','cap '+mechBatMax().toFixed(0)+'s → '+(mechBatMax()+MECH_BAT_STEP).toFixed(0)+'s',mechUpgCost('bat',e),(player.mechBatUpg||{})[e],false,batIcon(30)],
-     ['boost','Coil capacity +'+MECH_BOOST_STEP.toFixed(1)+'s','how long you can hold \u2191 \u00b7 '+mechBoostMax().toFixed(1)+'s \u2192 '+(mechBoostMax()+MECH_BOOST_STEP).toFixed(1)+'s',mechUpgCost('boost',e),(player.mechBoostUpg||{})[e],false,machIcon('thruster',30)],
-     ['regen','Coil recharge +'+MECH_REGEN_STEP.toFixed(2)+'/s','how fast it winds back \u00b7 '+mechBoostRegen().toFixed(2)+'/s \u2192 '+(mechBoostRegen()+MECH_REGEN_STEP).toFixed(2)+'/s \u00b7 burnout '+mechBoostRebuild().toFixed(1)+'s \u2192 '+(mechBoostMax()*MECH_BOOST_RESET/(mechBoostRegen()+MECH_REGEN_STEP)).toFixed(1)+'s',mechUpgCost('regen',e),(player.mechRegenUpg||{})[e],false,scrapIcon('coil',30)],
-     ['hook','Hook drum +'+MECH_HOOK_STEP+'u','reach '+mechHookReach()+'u → '+Math.min(MECH_HOOK_MAX,mechHookReach()+MECH_HOOK_STEP)+'u',mechUpgCost('hook',e),(player.mechHookUpg||{})[e],mechHookReach()>=MECH_HOOK_MAX,ropeIcon(30)]];
-    for(const[kind,nm,sub,cost,fitted,maxed,icon]of rows){
-     const ok=!fitted&&!maxed&&coins>=cost;
-     h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+icon+'<span class="nm">'+nm+' <span style="color:#5b8095;font-size:9px">'+(maxed?'MAXED':fitted?'fitted this environment':sub+' · '+cost+' coin')+'</span></span></div><button class="cbtn '+(ok?'go':'')+'" data-craft="mup:'+kind+'"'+(ok?'':' disabled')+'>'+(fitted||maxed?'✓':'Fit')+'</button></div>';}
-   }
-  }
-  else if(div==='exch'){
-   for(let T=0;T<4;T++){const id='t'+(T+1)+'ra',price=5+T*4,ok=coins>=price;
-    h+='<div class="recipe '+(ok?'rok':'')+'"><div class="rout">'+iconSVG(id,30)+'<span class="nm">'+RES[id].name+' <span style="color:#5b8095;font-size:9px">have '+invGet(id)+' \u00b7 '+price+' coin</span></span></div><button class="cbtn '+(ok?'go':'')+'" data-craft="buyres:'+T+'"'+(ok?'':' disabled')+'>Buy</button></div>';}
-  }
- }
- return '<div class="dback" data-craft="divback">\u25c2 '+(DIVTITLE[div]||'')+'</div>'+relevantResPanel(tab,div,T0)+h;
-}
+  // a still frame as SVG, for screens that can't run the deck's animation loop (the base briefing)
+  function svg(k,col,size){const S=size,{X,Y}=project(get(k),S,.62);let d='';
+    for(const [a,b] of get(k).e)d+='M'+X[a].toFixed(1)+' '+Y[a].toFixed(1)+'L'+X[b].toFixed(1)+' '+Y[b].toFixed(1);
+    return '<svg class="ico" width="'+S+'" height="'+S+'" viewBox="0 0 '+S+' '+S+'" fill="none" stroke="'+col+'" stroke-linecap="round">'
+      +'<path d="'+d+'" stroke-width="2.6" opacity=".28"/><path d="'+d+'" stroke-width="1"/></svg>';}
+  // ---- the deck's animation loop: runs only while the base menu is open ----
+  let list=[],hotEl=null,raf=0,last=0;
+  const still=()=>window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function phase(k){let h=7;for(let i=0;i<k.length;i++)h=(h*31+k.charCodeAt(i))|0;return (h%628)/100;}
+  function scan(root){const old=new Map(list.map(o=>[o.cv.dataset.w+'|'+o.i,o.a]));
+    list=Array.prototype.map.call(root.querySelectorAll('canvas.cy-wire'),(cv,i)=>{const k=cv.dataset.w;return {cv,k,i,col:cv.dataset.col||'#19f0ff',a:old.get(k+'|'+i)!=null?old.get(k+'|'+i):phase(k)+i*.7};});
+    if(still()){for(const o of list)draw(o.cv,o.k,o.col,o.a,hotEl&&hotEl.contains(o.cv));return;}
+    if(!raf){last=0;raf=requestAnimationFrame(tick);}}
+  function hot(el){hotEl=el;if(still())for(const o of list)draw(o.cv,o.k,o.col,o.a,!!(el&&el.contains(o.cv)));}
+  function tick(ts){raf=0;if(state.mode!=='craft'||craftEl.classList.contains('hidden')){list=[];return;}
+    const dt=last?Math.min(.05,(ts-last)/1000):0;last=ts;
+    const vr=cbodyEl.getBoundingClientRect();
+    for(const o of list){const h=!!(hotEl&&hotEl.contains(o.cv));o.a+=dt*(h?1.7:.45);
+      const r=o.cv.getBoundingClientRect();if(r.bottom<vr.top-4||r.top>vr.bottom+4||!r.width)continue;
+      draw(o.cv,o.k,o.col,o.a,h);}
+    raf=requestAnimationFrame(tick);}
+  return {get,draw,svg,scan,hot,DEF};
+})();
+
+// ---- light cycles: two bikes race round the panel, each dragging its fading wall -------------
+// The track is the panel's chamfered outline, a few px in (rebuilt on resize). Each trail layer is
+// one dash `0 (1000-L) L 0` on a pathLength-1000 copy of it, so every layer's leading edge sits on
+// the same point; the bike glyph rides that point with animateMotion. Trails and bikes share one
+// SMIL timeline, so a bike can never drift off the head of its own wall.
+const CYFRAME=(()=>{
+  let host=null,svg=null,W=0,H=0;
+  const CUT1=16,CUT2=6,LAP=9;   // chamfers (top-left & bottom-right, top-right & bottom-left; match .cy) · s per lap
+  const TR=[[210,7,.08],[200,2.2,.16],[125,2.6,.32],[66,3,.6],[30,3.4,.95]];   // [length of 1000, width px, opacity]
+  function outline(w,h,i){const x0=i,y0=i,x1=w-i,y1=h-i,a=CUT1+i-1.5,b=CUT2+i-1.5;
+    return 'M'+(x0+a)+' '+y0+'H'+(x1-b)+'L'+x1+' '+(y0+b)+'V'+(y1-a)+'L'+(x1-a)+' '+y1+'H'+(x0+b)+'L'+x0+' '+(y1-b)+'V'+(y0+a)+'Z';}
+  function brackets(w,h){const i=1.5,x0=i,y0=i,x1=w-i,y1=h-i,a=CUT1,b=CUT2,n=14;
+    return 'M'+x0+' '+(y0+a+n)+'V'+(y0+a)+'L'+(x0+a)+' '+y0+'H'+(x0+a+n)
+      +'M'+(x1-b-n)+' '+y0+'H'+(x1-b)+'L'+x1+' '+(y0+b)+'V'+(y0+b+n)
+      +'M'+x1+' '+(y1-a-n)+'V'+(y1-a)+'L'+(x1-a)+' '+y1+'H'+(x1-a-n)
+      +'M'+(x0+b+n)+' '+y1+'H'+(x0+b)+'L'+x0+' '+(y1-b)+'V'+(y1-b-n);}
+  function build(){
+    let s='<path class="wallg"/><path class="wall"/><path class="trk" id="cyTrack"/>';
+    for(const [cls,col,core,beg] of[['c1','#19f0ff','#effffe','0s'],['c2','#ff9f1c','#fff4de','-'+LAP/2+'s']]){
+      s+='<g class="'+cls+'">';
+      for(const [L,w,o] of TR)s+='<path class="tr" pathLength="1000" stroke="'+col+'" stroke-width="'+w+'" opacity="'+o+'" stroke-dasharray="0 '+(1000-L)+' '+L+' 0">'
+        +'<animate attributeName="stroke-dashoffset" from="0" to="-1000" dur="'+LAP+'s" begin="'+beg+'" repeatCount="indefinite"/></path>';
+      // top-down light cycle: glow, dark hull with a white-hot rim, canopy stripe in its colour, headlight
+      s+='<g class="bike"><ellipse rx="14" ry="6.5" fill="'+col+'" opacity=".3"/>'
+        +'<path d="M-11 -3.2H3Q9.5 -3.2 11 0Q9.5 3.2 3 3.2H-11Z" fill="#02070c" stroke="'+core+'" stroke-width="1.4"/>'
+        +'<path d="M-6 -1.3H4Q6.5 0 4 1.3H-6Z" fill="'+col+'"/><circle cx="10.2" r="1.5" fill="#fff"/>'
+        +'<animateMotion dur="'+LAP+'s" begin="'+beg+'" repeatCount="indefinite" rotate="auto"><mpath href="#cyTrack" xlink:href="#cyTrack"/></animateMotion></g></g>';}
+    svg.innerHTML=s+'<path class="brk"/>';
+    if(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches&&svg.pauseAnimations)svg.pauseAnimations();}
+  function size(){if(!host)return;const w=host.clientWidth,h=host.clientHeight;if(!w||!h||(w===W&&h===H))return;W=w;H=h;
+    svg.setAttribute('viewBox','0 0 '+w+' '+h);const edge=outline(w,h,1.5),track=outline(w,h,4.5),brk=brackets(w,h);
+    svg.querySelectorAll('.wall,.wallg').forEach(p=>p.setAttribute('d',edge));
+    svg.querySelectorAll('.trk,.tr').forEach(p=>p.setAttribute('d',track));
+    svg.querySelector('.brk').setAttribute('d',brk);}
+  function mount(el){if(host===el){size();return;}host=el;svg=document.getElementById('cyFrame');if(!svg)return;build();W=H=0;
+    if(window.ResizeObserver)new ResizeObserver(size).observe(el);size();}
+  return {mount};
+})();
+
+// ---- icons ---------------------------------------------------------------------------------
+// The resource icons are pixel grids (crispEdges). At a fractional scale some sprite pixels
+// would print one device pixel wider than their neighbours, so the size is snapped to a whole
+// number of device pixels per sprite pixel. Refined goods are vector art and scale freely.
+function crispPx(svg,target){const m=/viewBox="[-\d.]+ [-\d.]+ ([\d.]+) [\d.]+"/.exec(svg);if(!m)return svg;
+  const d=window.devicePixelRatio||1,side=+m[1],r=target*d/side,k=r<1?r:Math.round(r),z=(k*side/d).toFixed(3);
+  return svg.replace(/width="[\d.]+" height="[\d.]+"/,'width="'+z+'" height="'+z+'"');}
+function iconPX(id,target){const s=iconSVG(id,target);return RES[id].kind==='ref'?s:crispPx(s,target);}
+
+// ---- rows ----------------------------------------------------------------------------------
+const CYC={cyan:'25,240,255',lime:'125,255,90',gold:'255,210,60',org:'255,159,28',mag:'255,43,214',red:'255,77,109',
+  blue:'80,170,255',teal:'95,227,200',amber:'232,176,74',steel:'190,206,220',tox:'140,255,74'};
+const cyHex=c=>'#'+(CYC[c]||c).split(',').map(n=>(+n).toString(16).padStart(2,'0')).join('');
+const CYSEC={
+  hold:{w:'cargo',c:'cyan',t:'Cargo',d:'your inventory'},
+  res:{w:'flask',c:'lime',t:'Resources',d:'craft advanced materials'},
+  fab:{w:'helmet',c:'gold',t:'Fab Bay',d:'upgrade your suit'},
+  equip:{w:'gear',c:'blue',t:'Equipment',d:'air line, O₂ gear, seals &amp; lens'},
+  o2:{w:'tank',c:'cyan',t:'O₂ Gear',d:'upgrades for your oxygen gear'},
+  seals:{w:'oring',c:'tox',t:'Seals',d:'upgrades for toxic environment protection'},
+  mech:{w:'mech',c:'org',t:'Mech',d:'build and upgrade mechs'},
+  dealer:{w:'coins',c:'gold',t:'Dealer',d:'sell salvage for coin'},
+  parts:{w:'nut',c:'steel',t:'Parts',d:'buy machine parts'},
+  machine:{w:'drone',c:'cyan',t:'Machines',d:'build helper machines from parts'},
+  outfit:{w:'dish',c:'teal',t:'Outfit',d:'filter cartridges &amp; sector-nav unit'},
+  exch:{w:'gem',c:'mag',t:'Exchange',d:'buy raw ore with coin'},
+};
+const WPART={bolt:'bolt',frame:'frame',core:'core'}, WMACH={robot:'drone',floodlight:'flood',thruster:'thruster',mech:'mech'};
+function cyRow(o){
+  const ico=o.w?'<span class="cy-ico"><canvas class="cy-wire" data-w="'+o.w+'" data-col="'+cyHex(o.c)+'"></canvas></span>'
+                :'<span class="cy-ico px">'+o.px+'</span>';
+  return '<div class="cy-row'+(o.cls?' '+o.cls:'')+'" role="button" data-craft="'+o.act+'" style="--c:'+(CYC[o.c]||o.c)+'"><i class="cy-sw"></i>'+ico
+    +'<span class="cy-main"><span class="cy-t">'+o.t+'</span>'+(o.d?'<span class="cy-d">'+o.d+'</span>':'')+(o.cost||'')+'</span>'
+    +'<span class="cy-side">'+(o.badge||'')+(o.side||'')+'</span></div>';}
+const cyChev='<span class="cy-chev">›</span>';
+const cyBadge=(t,cls)=>'<span class="cy-bdg'+(cls?' '+cls:'')+'">'+t+'</span>';
+const cyAct=(t,cls)=>'<span class="cy-act '+cls+'">'+t+'</span>';
+const cyGrp=t=>'<div class="cy-grp">'+t+'</div>';
+const cyNote=t=>'<div class="cy-note">'+t+'</div>';
+const cyEmpty=t=>'<div class="cy-empty">'+t+'</div>';
+function cySec(k,o){const s=CYSEC[k];return cyRow(Object.assign({act:'go:'+k,w:s.w,c:s.c,t:s.t,d:s.d,side:cyChev},o||{}));}
+// what a leaf's tap will do: build it now, or track (stop tracking) what the hold is short of
+function cyLeaf(cost,verb){if(canPay(cost))return cyAct(verb,'go');
+  const t=player.track;let on=false;for(const id in cost)if(t&&(t.id===id||t.from===id))on=true;
+  return cyAct(on?'◈ Tracking':'◈ Track','trk'+(on?' on':''));}
+// cost chips: the resource's own sprite, its name and have/need; a chip is a tracker button too
+// (five or more kinds, e.g. a battery cell: sprite + count only, so the row stays short; Cargo has the names)
+function cyCost(m){let h='';const brief=Object.keys(m).length>=5;for(const id in m){if(!RES[id])continue;const nd=m[id],hv=invGet(id);
+  h+='<span class="cy-chip '+(hv>=nd?'ok':'no')+'" role="button" title="'+RES[id].name+'"'+trkAttr(id,nd)+'><span class="cy-pxi">'+iconPX(id,16)+'</span>'+(brief?'':'<span class="cy-cn">'+RES[id].name+'</span>')+'<span class="cy-cq">'+hv+'/'+nd+'</span></span>';}
+  return '<span class="cy-cost">'+h+'</span>';}
+const cyCoinCost=n=>'<span class="cy-cost"><span class="cy-chip coin '+(coins>=n?'ok':'no')+'"><span class="cy-cq">◎ '+n+'</span></span></span>';
+function cyPartCost(c){let h='';for(const k in c){const hv=partsInv[k]||0;
+  h+='<span class="cy-chip '+(hv>=c[k]?'ok':'no')+'"><span class="cy-pxi">'+partIcon(k,16)+'</span><span class="cy-cn">'+PARTBYID[k].name+'</span><span class="cy-cq">'+hv+'/'+c[k]+'</span></span>';}
+  return '<span class="cy-cost">'+h+'</span>';}
+const cyCoinSide=n=>coins>=n?cyAct('Buy','go'):cyAct('◎ short','no');
+function cyLayer(T0){const d=SCHED[T0];return d?d.layerInEnv:T0%4;}
+function cyBuilt(id){return !!((id==='robot'&&companion)||(id==='floodlight'&&player.builtFloodlight)||(id==='thruster'&&player.builtThruster)||(id==='mech'&&mech));}
+
+// ---- pages ---------------------------------------------------------------------------------
+// the suit line exists only on the last layer of an environment (where the control unit stands)
+function cyFab(T0){const g=TIERS[T0]&&TIERS[T0].gear;return {on:!!g,built:!!g&&gearLevel>T0};}
+function cyWorkRoot(T0){
+  let h='';const nb=bases[T0+1];
+  if(nb&&!nb.active){const aid='t'+nb.tier+'fb',ok=invGet(aid)>=1,c={[aid]:1};
+    h+=cyRow({act:ok?'info':'track:'+aid+':1',px:iconPX(aid,32),c:ok?'lime':'org',cls:'cy-nb',t:'Next base',
+      d:ok?'haul it down &amp; power the dead base below':'powers the dead base below',cost:cyCost(c),side:ok?cyAct('Ready','done'):cyLeaf(c,'')});}
+  let held=0;for(const id in inv)if(RES[id]&&invGet(id)>0)held+=invGet(id);
+  h+=cySec('hold',{badge:cyBadge(held+'')});
+  let mixable=0;const li=cyLayer(T0);for(let t=T0-li;t<=T0;t++)for(const rid of TIERS[t].ref)if(canPay(RES[rid].in))mixable++;
+  h+=cySec('res',{badge:mixable?cyBadge(mixable+' ready','go'):''});
+  const fs=cyFab(T0);
+  if(!fs.on)h+=cyRow({act:'fab:off',w:'helmet',c:'red',cls:'off',t:'Fab Bay',d:'upgrade your suit · '+(li===3?'no suit line on this layer':'online at layer 4'),side:cyBadge('Offline','off')});
+  else h+=cySec('fab',{badge:fs.built?cyBadge('✓ fitted','done'):canPay(TIERS[T0].gear.in)?cyBadge('Ready','go'):cyBadge('Online','on')});
+  const er=cyEquipReady(T0);
+  h+=cySec('equip',{badge:er?cyBadge(er+' ready','go'):''});
+  const mc={['t'+(T0+1)+'ra']:1,['t'+(T0+1)+'ma']:1},kits=player.medkits||0,full=kits>=5;
+  h+=cyRow({act:'medkit',w:'medkit',c:'red',cls:full?'done':'',t:'Patch',d:'heals 2 · '+kits+'/5 aboard',cost:full?'':cyCost(mc),side:full?cyAct('Full','done'):cyLeaf(mc,'Make')});
+  h+=cySec('mech',{badge:mech?cyBadge('MULE '+(mech.battery>0?Math.round(100*mech.battery/mechBatMax())+'%':'dead'),mech.battery>0?'on':'off'):cyBadge('none')});
+  return h;}
+// leaf upgrades in Equipment the hold can pay for right now (the section's "N ready" badge)
+function cyEquipReady(T0){let n=0;const e=envOfTier(T0),b=bases[T0];
+  if(b&&b.ropeLen<ROPE_MAX&&canPay(ropeCost(T0)))n++;
+  const tk=progFlags(player,'o2tank',e),rg=progFlags(player,'o2reg',e);
+  for(let v=0;v<4;v++){if(!tk[v]&&(v===0||tk[v-1])&&RES['t'+(envTier(e,v)+1)+'ma']&&canPay(o2TankCost(e,v)))n++;
+    if(!rg[v]&&(v===0||rg[v-1])&&RES['t'+(envTier(e,v)+1)+'ra']&&canPay(o2RegCost(e,v)))n++;}
+  if(e>=1&&!(player.seals&&player.seals[T0])&&canPay(sealCost(T0)))n++;
+  const lf=progFlags(player,'lensUpg',e);let lv=0;while(lv<4&&lf[lv])lv++;
+  if(lv<4&&RES['t'+(envTier(e,lv)+1)+'fb']&&canPay(lensCost(e,lv)))n++;
+  return n;}
+function cyHold(){
+  let h='';const groups=[['raw','Raw ore'],['mix','Floating'],['ref','Refined']];
+  for(const [k,lbl] of groups){const ids=Object.keys(RES).filter(id=>RES[id].kind===k&&invGet(id)>0);if(!ids.length)continue;
+    h+=cyGrp(lbl);
+    for(const id of ids){const t=player.track,on=t&&(t.id===id||t.from===id);   // tap a row to track more of it
+      h+=cyRow({act:'track:'+id+':0',px:iconPX(id,32),c:'cyan',t:RES[id].name,d:(k==='ref'?'composite':k==='mix'?'floating':'ore')+' · layer '+idTier(id),side:'<span class="cy-qty">'+invGet(id)+'</span>'+(on?cyAct('◈ Tracking','trk on'):'')});}}
+  const sv=SCRAP.filter(s=>(scrapInv[s.id]||0)>0);
+  if(sv.length){h+=cyGrp('Salvage');for(const s of sv)h+=cyRow({act:'info',px:crispPx(scrapIcon(s.id,32),32),c:'gold',t:s.name,d:s.coin+' coin each at the dealer',side:'<span class="cy-qty">'+scrapInv[s.id]+'</span>'});}
+  const pt=PARTS.filter(p=>(partsInv[p.id]||0)>0);
+  if(pt.length){h+=cyGrp('Parts');for(const p of pt)h+=cyRow({act:'info',w:WPART[p.id],c:'steel',t:p.name,d:'machine part',side:'<span class="cy-qty">'+partsInv[p.id]+'</span>'});}
+  if((player.medkits||0)>0||(player.mechBattery||0)>0){h+=cyGrp('Gear');
+    if(player.medkits>0)h+=cyRow({act:'info',w:'medkit',c:'red',t:'Patch kit',d:'heals 2 · Q uses one',side:'<span class="cy-qty">'+player.medkits+'</span>'});
+    if(player.mechBattery>0)h+=cyRow({act:'info',w:'battery',c:'gold',t:'Battery cell',d:'stowed for the MULE',side:'<span class="cy-qty">1</span>'});}
+  return h||cyEmpty('hold’s empty — crack some outcrops and snag floating canisters');}
+const CYROLE={a:'#1 · bulkheads, seals, exit',b:'#2 · base power, lens, seals',c:'#3 · the suit'};
+function cyRes(T0){let h='';const li=cyLayer(T0);
+  for(let t=T0;t>=T0-li&&t>=0;t--){h+=cyGrp('Layer '+(cyLayer(t)+1)+(t===T0?' · here':''));
+    for(const rid of TIERS[t].ref){const r=RES[rid],n=invGet(rid);
+      h+=cyRow({act:'refine:'+rid,px:iconPX(rid,32),c:'lime',t:r.name,d:CYROLE[idSlot(rid)]||'',cost:cyCost(r.in),badge:n?cyBadge('×'+n):'',side:cyLeaf(r.in,'Mix')});}}
+  return h;}
+function cyFabPage(T0){const fs=cyFab(T0);
+  if(!fs.on)return cyEmpty('fab bay offline — it powers up on layer 4 of each environment, where the control unit demands a new suit');
+  if(fs.built)return cyRow({act:'info',w:'helmet',c:'gold',cls:'done',t:TIERS[T0].gear.name,d:'fitted — the control unit will let you through',side:cyAct('✓','done')});
+  const gi=nextGearTier(),g=gi>=0&&TIERS[gi].gear;if(!g)return cyEmpty('no suit line to fabricate right now');
+  const s=g.stats||{};
+  return cyRow({act:'gear:'+gi,w:'helmet',c:'gold',t:g.name,d:'O₂ '+s.oxy+' · HP '+s.hp+' · speed '+s.mv+' · light '+s.lr,cost:cyCost(g.in),side:cyLeaf(g.in,'Build')})
+    +cyNote('the top (#3) composite from each of this environment’s 4 layers — the control unit at the last bulkhead demands this suit');}
+function cyEquip(T0){let h='';const e=envOfTier(T0),b=bases[T0];
+  if(!b)h+=cyRow({act:'info',w:'hose',c:'amber',cls:'done',t:'Air line',d:'no base on this layer'});
+  else if(b.ropeLen>=ROPE_MAX)h+=cyRow({act:'rope',w:'hose',c:'amber',cls:'done',t:'Air line',d:'fully extended · '+b.ropeLen+'u',side:cyAct('Max','done')});
+  else{const rc=ropeCost(T0);h+=cyRow({act:'rope',w:'hose',c:'amber',t:'Air line',d:'extend +'+ROPE_STEP+'u · '+b.ropeLen+'→'+Math.min(ROPE_MAX,b.ropeLen+ROPE_STEP)+'u',cost:cyCost(rc),side:cyLeaf(rc,'Extend')});}
+  const tk=progFlags(player,'o2tank',e),rg=progFlags(player,'o2reg',e);let fit=0;for(let v=0;v<4;v++)fit+=(tk[v]?1:0)+(rg[v]?1:0);
+  h+=cySec('o2',{badge:cyBadge(fit+'/8',fit===8?'done':'')});
+  if(e<1)h+=cySec('seals',{badge:cyBadge('clean')});
+  else{let sf=0;for(let v=0;v<4;v++)if(player.seals&&player.seals[envTier(e,v)])sf++;h+=cySec('seals',{badge:cyBadge(sf+'/4',sf===4?'done':'')});}
+  const lf=progFlags(player,'lensUpg',e),LL=player.lanternLevel||0;let lv=0;while(lv<4&&lf[lv])lv++;
+  if(lv>=4)h+=cyRow({act:'lens',w:'lens',c:'gold',cls:'done',t:'Lens',d:'fully focused for this environment · beam +'+(LL*10)+'%',side:cyAct('Max','done')});
+  else{const rid='t'+(envTier(e,lv)+1)+'fb';
+    if(!RES[rid])h+=cyRow({act:'lens',w:'lens',c:'gold',cls:'locked',t:'Lens',d:'V'+(lv+1)+' · reach layer '+(lv+1)+' of this environment to spec it',side:cyAct('Locked','no')});
+    else{const lc=lensCost(e,lv);h+=cyRow({act:'lens',w:'lens',c:'gold',t:'Lens',d:'beam +10% · '+(LL*10)+'→'+((LL+1)*10)+'% · V'+(lv+1),cost:cyCost(lc),side:cyLeaf(lc,'Grind')});}}
+  return h;}
+function cyO2Row(kind,v,fl,w,t,eff,cost,rid){const act=kind+':'+v;
+  if(fl[v])return cyRow({act,w,c:'cyan',cls:'done',t,d:eff+' · fitted',side:cyAct('✓','done')});
+  if(!RES[rid])return cyRow({act,w,c:'cyan',cls:'locked',t,d:'reach layer '+(v+1)+' of this environment to spec it',side:cyAct('Locked','no')});
+  if(v>0&&!fl[v-1])return cyRow({act,w,c:'cyan',cls:'locked',t,d:eff+' · fit V'+v+' first',cost:cyCost(cost),side:cyAct('Locked','no')});
+  return cyRow({act,w,c:'cyan',t,d:eff+' · from layer '+(v+1),cost:cyCost(cost),side:cyLeaf(cost,'Fit')});}
+function cyO2(T0){const e=envOfTier(T0),tk=progFlags(player,'o2tank',e),rg=progFlags(player,'o2reg',e);
+  let h=cyGrp('Tanks');for(let v=0;v<4;v++)h+=cyO2Row('o2tank',v,tk,'tank','O₂ tank V'+(v+1),'+'+TANK_STEP+' max air',o2TankCost(e,v),'t'+(envTier(e,v)+1)+'ma');
+  h+=cyGrp('Regulators');for(let v=0;v<4;v++)h+=cyO2Row('o2reg',v,rg,'gauge','O₂ regulator V'+(v+1),'−5% air drain',o2RegCost(e,v),'t'+(envTier(e,v)+1)+'ra');
+  return h;}
+function cySeals(T0){const e=envOfTier(T0);
+  if(e<1)return cyEmpty('this environment runs clean — pollution, and the seals that counter it, start one environment down');
+  let h='';
+  for(let v=0;v<4;v++){const t=envTier(e,v),nm='Hazard seal V'+(v+1);
+    if(player.seals&&player.seals[t])h+=cyRow({act:'info',w:'oring',c:'tox',cls:'done',t:nm,d:'layer '+(v+1)+' · pollution cut',side:cyAct('✓','done')});
+    else if(t===T0){const sc=sealCost(T0);h+=cyRow({act:'seal',w:'oring',c:'tox',t:nm,d:'big cut to this layer’s pollution',cost:cyCost(sc),side:cyLeaf(sc,'Fit')});}
+    else h+=cyRow({act:'info',w:'oring',c:'tox',cls:'locked',t:nm,d:'fit it at layer '+(v+1)+'’s base',side:cyAct('L'+(v+1),'no')});}
+  return h;}
+function cyMech(T0){
+  if(!mech){const m=MACHBYID.mech,ok=canPayParts(m.cost);
+    return cyRow({act:'machine:mech',w:'mech',c:'org',t:'DV-8 “MULE”',d:'pilotable heavy frame — insta-drill, kill-saw, boost &amp; hook',cost:cyPartCost(m.cost),side:ok?cyAct('Build','go'):cyAct('Get parts','trk')})
+      +cyNote('parts come from the SHOP · PARTS shelf');}
+  let h=cyRow({act:'info',w:'mech',c:'org',t:'MULE status',d:'battery '+(mech.battery>0?Math.round(100*mech.battery/mechBatMax())+'%':'DEAD')+' · cap '+mechBatMax().toFixed(0)+'s · coil '+mechBoostMax().toFixed(1)+'s · hook '+mechHookReach()+'u'+(mech.off?' · left behind, call it':'')});
+  const bc=mechBatteryCost(T0),stowed=(player.mechBattery||0)>=1;
+  h+=cyRow({act:'mbat',w:'battery',c:'gold',cls:stowed?'done':'',t:'Battery cell',d:'4× each of this layer’s ores &amp; floats · carry 1',cost:stowed?'':cyCost(bc),side:stowed?cyAct('Stowed','done'):cyLeaf(bc,'Make')});
+  const cc=mechCallCost(T0);
+  if(cc)h+=cyRow({act:'mcall',w:'beacon',c:'org',t:'Call the MULE',d:'arrives as you left it · 10× one floating kind',cost:cyCost(cc),side:cyLeaf(cc,'Call')});
+  h+=cyNote('the cell drains only while the MULE works: drill '+MECH_DRILL_COST.toFixed(0)+'s a vein, saw '+MECH_SAW_COST.toFixed(1)+'s a kill, hook '+MECH_HOOK_COST.toFixed(1)+'s a shot, boost 1s/s. Walking is free. The coil refills whenever it isn’t firing; burn it empty and the thruster cuts out for '+mechBoostRebuild().toFixed(1)+'s');
+  h+=cyGrp('Upgrades · one each per environment');
+  const e=mechUpgEnv(T0);
+  const rows=[
+    ['bat','battery','Battery cap','+'+MECH_BAT_STEP+'s · cap '+mechBatMax().toFixed(0)+'s → '+(mechBatMax()+MECH_BAT_STEP).toFixed(0)+'s',player.mechBatUpg,false],
+    ['boost','thruster','Coil capacity','+'+MECH_BOOST_STEP.toFixed(1)+'s boost · '+mechBoostMax().toFixed(1)+'s → '+(mechBoostMax()+MECH_BOOST_STEP).toFixed(1)+'s',player.mechBoostUpg,false],
+    ['regen','coil','Coil recharge','+'+MECH_REGEN_STEP.toFixed(2)+'/s · '+mechBoostRegen().toFixed(2)+'/s → '+(mechBoostRegen()+MECH_REGEN_STEP).toFixed(2)+'/s',player.mechRegenUpg,false],
+    ['hook','hook','Hook drum','+'+MECH_HOOK_STEP+'u reach · '+mechHookReach()+'u → '+Math.min(MECH_HOOK_MAX,mechHookReach()+MECH_HOOK_STEP)+'u',player.mechHookUpg,mechHookReach()>=MECH_HOOK_MAX]];
+  for(const [kind,w,nm,sub,fl,maxed] of rows){const fitted=!!(fl||{})[e],cost=mechUpgCost(kind,e);
+    h+=cyRow({act:'mup:'+kind,w,c:'org',cls:fitted||maxed?'done':'',t:nm,d:maxed?'maxed':fitted?'fitted for this environment':sub,cost:fitted||maxed?'':cyCoinCost(cost),side:fitted||maxed?cyAct('✓','done'):cyCoinSide(cost)});}
+  return h;}
+function cyShopRoot(){let tot=0;for(const s of SCRAP)tot+=(scrapInv[s.id]||0)*s.coin;
+  let parts=0;for(const p of PARTS)parts+=partsInv[p.id]||0;
+  const built=MACHINES.filter(m=>m.id!=='mech'&&cyBuilt(m.id)).length;
+  return cySec('dealer',{badge:tot?cyBadge('+'+tot+' ◎','go'):cyBadge('empty')})
+    +cySec('parts',{badge:cyBadge(parts+' aboard')})
+    +cySec('machine',{badge:cyBadge(built+'/3',built===3?'done':'')})
+    +cySec('outfit')
+    +cySec('exch');}
+function cyDealer(){const sv=SCRAP.filter(s=>(scrapInv[s.id]||0)>0);
+  if(!sv.length)return cyEmpty('no salvage aboard — grab the glinting scrap out in the dark');
+  let tot=0;for(const s of sv)tot+=scrapInv[s.id]*s.coin;
+  let h=cyRow({act:'sellall',w:'coins',c:'gold',t:'Sell everything',d:'cash in all the salvage aboard',side:cyAct('+'+tot+' ◎','go')});
+  for(const s of sv)h+=cyRow({act:'sell:'+s.id,px:crispPx(scrapIcon(s.id,32),32),c:'gold',t:s.name,d:s.coin+' coin each',badge:cyBadge('×'+scrapInv[s.id]),side:cyAct('Sell','go')});
+  return h;}
+function cyParts(){let h='';for(const p of PARTS)h+=cyRow({act:'buypart:'+p.id,w:WPART[p.id],c:'steel',t:p.name,d:'have '+(partsInv[p.id]||0),cost:cyCoinCost(p.coin),side:cyCoinSide(p.coin)});return h;}
+function cyMachines(){let h='';
+  for(const m of MACHINES){if(m.id==='mech')continue;
+    const built=cyBuilt(m.id),ok=!built&&canPayParts(m.cost);
+    h+=cyRow({act:'machine:'+m.id,w:WMACH[m.id],c:'cyan',cls:built?'done':'',t:m.name,d:m.desc,cost:built?'':cyPartCost(m.cost),side:built?cyAct('✓ Built','done'):ok?cyAct('Build','go'):cyAct('Get parts','trk')});}
+  return h+cyNote('the DV-8 “MULE” is built in CRAFT · MECH');}
+function cyOutfit(T0){let h='';
+  if(envOfTier(T0)<1)h+=cyRow({act:'info',w:'filter',c:'tox',cls:'done',t:'Filter cartridge',d:'no pollution in this environment — cartridges matter from the next one down'});
+  else{const fb=player.filterBonus||0,fc=Math.round(fb/FILT_STEP),cost=14+fc*9,max=fb>=FILT_MAX-1e-6;
+    h+=cyRow({act:'buy:filter',w:'filter',c:'tox',cls:max?'done':'',t:'Filter cartridge',d:'cuts pollution'+(max?' · maxed':' · '+fc+' fitted'),cost:max?'':cyCoinCost(cost),side:max?cyAct('Max','done'):cyCoinSide(cost)});}
+  const own=!!player.hasMap;
+  h+=cyRow({act:own?'info':'buy:map',w:'navunit',c:'teal',cls:own?'done':'',t:'Sector-nav unit',d:own?'installed · live HUD map':'a live minimap on your HUD',cost:own?'':cyCoinCost(MAP_COST),side:own?cyAct('✓','done'):cyCoinSide(MAP_COST)});
+  return h;}
+function cyExch(){let h='';for(let T=0;T<4;T++){const id='t'+(T+1)+'ra',price=5+T*4;if(!RES[id])continue;
+  h+=cyRow({act:'buyres:'+T,px:iconPX(id,32),c:'mag',t:RES[id].name,d:'raw ore · layer '+(T+1)+' · have '+invGet(id),cost:cyCoinCost(price),side:cyCoinSide(price)});}
+  return h;}
+const CYPAGE={hold:cyHold,res:cyRes,fab:cyFabPage,equip:cyEquip,o2:cyO2,seals:cySeals,mech:cyMech,
+  dealer:cyDealer,parts:cyParts,machine:cyMachines,outfit:cyOutfit,exch:cyExch};
+function cyBackBar(){const pg=mPath[mPath.length-1],trail=[craftTab==='shop'?'Shop':'Craft'].concat(mPath.slice(0,-1).map(k=>CYSEC[k].t));
+  return '<div class="cy-back" role="button" data-craft="back"><span class="cy-bk">◂</span><span class="cy-crumb">'+trail.join(' / ')+' /</span><span class="cy-here">'+CYSEC[pg].t+'</span></div>'
+    +'<div class="cy-pg">'+CYSEC[pg].d+'</div>';}
 
 function buildCraft(){
- const T0=tAt(player.y);
- chTitle.textContent=craftTab==='shop'?'SCRAP SHOP':'WORKSHOP';
- chSub.textContent=CITY_NAME+' \u00b7 CITY '+CITY+' \u00b7 DEPTH '+depthM(player.y)+'M \u00b7 '+TIERS[T0].name+' \u00b7 '+((gearLevel&&TIERS[gearLevel-1]&&TIERS[gearLevel-1].gear)?TIERS[gearLevel-1].gear.name:'NO SUIT');
+ const T0=tAt(player.y),li=cyLayer(T0);
  if(ctabsEl)ctabsEl.innerHTML=
-   '<button class="ctab'+(craftTab==='work'?' on':'')+'" data-craft="tab:work">'+TABICON.craft+'<span>CRAFT</span></button>'+
-   '<button class="ctab'+(craftTab==='shop'?' on':'')+'" data-craft="tab:shop">'+TABICON.shop+'<span>SHOP \u00b7 '+coins+'</span></button>';
- let h='';
- if(mDiv==null){
-  h+='<div class="dgrid">';
-  for(const d of DIVS[craftTab])h+='<button class="dcell" data-craft="div:'+d.k+'">'+d.fn()+'<span class="dcl">'+d.label+'</span></button>';
-  h+='</div>';
-  cbodyEl.innerHTML=nextBasePanel(T0)+h+'<div class="vspace" data-spacer="bot"></div>';
-  const vs=cbodyEl.querySelectorAll('.vspace');for(const s of vs)s.style.height='10px';
- } else {
-  h+=divContent(craftTab,mDiv,T0);
-  cbodyEl.innerHTML=h+'<div class="vspace" data-spacer="bot"></div>';
-  const vs=cbodyEl.querySelectorAll('.vspace');for(const s of vs)s.style.height='10px';
- }
+   '<button class="cy-tab'+(craftTab==='work'?' on':'')+'" data-craft="tab:work"><span>'+TABICON.craft+'Craft</span></button>'+
+   '<button class="cy-tab shop'+(craftTab==='shop'?' on':'')+'" data-craft="tab:shop"><span>'+TABICON.shop+'Shop</span></button>';
+ if(cyCoinEl)cyCoinEl.textContent='◎ '+coins;
+ chSub.innerHTML='<b>Layer '+(li+1)+'/4</b> · '+depthM(player.y)+'m · '+TIERS[T0].name;
+ const pg=mPath[mPath.length-1];
+ const h=(pg&&CYPAGE[pg])?cyBackBar()+CYPAGE[pg](T0):(craftTab==='shop'?cyShopRoot(T0):cyWorkRoot(T0));
+ cbodyEl.innerHTML=h+'<div class="vspace" data-spacer="bot" style="height:6px"></div>';
  craftFocus();
+ WIRE.scan(cbodyEl);
+ if(cyPanel)CYFRAME.mount(cyPanel);
 }
-
+function cyListEls(){return Array.prototype.slice.call(cbodyEl.querySelectorAll('.cy-row[data-craft],.cy-back[data-craft]'));}
 function craftEls(){
  if(mZone==='tab')return Array.prototype.slice.call(ctabsEl.querySelectorAll('[data-craft]'));
- if(mZone==='grid')return Array.prototype.slice.call(cbodyEl.querySelectorAll('.dcell[data-craft]'));
- return Array.prototype.slice.call(cbodyEl.querySelectorAll('[data-craft]'));
+ return cyListEls();
 }
 function craftFocus(){
  ctabsEl.querySelectorAll('.tabfocus').forEach(e=>e.classList.remove('tabfocus'));
- cbodyEl.querySelectorAll('.mfocus,.mpop,.dfocus').forEach(e=>e.classList.remove('mfocus','mpop','dfocus'));
- const els=craftEls();if(!els.length)return;
+ cbodyEl.querySelectorAll('.mfocus,.mpop').forEach(e=>e.classList.remove('mfocus','mpop'));
+ let els=craftEls();
+ if(!els.length&&mZone==='list'){mZone='tab';mIdx=(craftTab==='shop'?1:0);els=craftEls();}
+ if(!els.length){WIRE.hot(null);return;}
  mIdx=clamp(mIdx,0,els.length-1);
  const el=els[mIdx];
- if(mZone==='tab'){el.classList.add('tabfocus');cbodyEl.scrollTop=0;}
- else if(mZone==='grid'){el.classList.add('dfocus');centerFocused(el);void el.offsetWidth;el.classList.add('mpop');}
- else{el.classList.add('mfocus');centerFocused(el);void el.offsetWidth;el.classList.add('mpop');}
+ if(mZone==='tab'){el.classList.add('tabfocus');WIRE.hot(null);}
+ else{el.classList.add('mfocus');centerFocused(el);void el.offsetWidth;el.classList.add('mpop');WIRE.hot(el);}
 }
-function openDivision(k){mGridIdx=mIdx;mDiv=k;mZone='opt';mIdx=0;sfx.uiopen();buildCraft();}
-function menuBackToGrid(){mDiv=null;mZone='grid';mIdx=clamp(mGridIdx,0,99);sfx.back();buildCraft();}
+// pages: open a section (cursor lands on its first row, under the back bar) / step back up
+function cyOpen(k){if(!CYPAGE[k])return;mIdxStack.push(mIdx);mPath.push(k);mZone='list';mIdx=1;sfx.uiopen();cbodyEl.scrollTop=0;buildCraft();}
+function cyUp(){if(!mPath.length)return false;mPath.pop();mIdx=mIdxStack.length?mIdxStack.pop():0;mZone='list';sfx.back();buildCraft();return true;}
+function cyTab(t){if(craftTab!==t){craftTab=t;mPath=[];mIdxStack=[];}mZone='tab';mIdx=(t==='shop'?1:0);sfx.pop();buildCraft();cbodyEl.scrollTop=0;}
+// short of parts: parts are bought, not found, so instead of tracking the tap walks you to the parts shelf
+function cyGoParts(){craftTab='shop';mPath=['parts'];mIdxStack=[1];mZone='list';mIdx=1;sfx.uiopen();cbodyEl.scrollTop=0;buildCraft();cyLog('◈ BUY PARTS HERE');}
 function craftMove(dir){
- const COLS=3;
  if(mZone==='tab'){
-  if(dir==='right'&&craftTab==='work'){craftTab='shop';mDiv=null;mGridIdx=0;mIdx=1;buildCraft();}
-  else if(dir==='left'&&craftTab==='shop'){craftTab='work';mDiv=null;mGridIdx=0;mIdx=0;buildCraft();}
-  else if(dir==='down'){mZone='grid';mIdx=clamp(mGridIdx,0,craftEls().length-1);sfx.nav();craftFocus();}
-  else sfx.nav();
-  return;
- }
- if(mZone==='grid'){
-  const n=craftEls().length;
-  if(dir==='up'){if(mIdx<COLS){mZone='tab';mIdx=(craftTab==='shop'?1:0);sfx.nav();craftFocus();return;}mIdx-=COLS;}
-  else if(dir==='down')mIdx=Math.min(n-1,mIdx+COLS);
-  else if(dir==='left')mIdx=Math.max(0,mIdx-1);
-  else if(dir==='right')mIdx=Math.min(n-1,mIdx+1);
-  mGridIdx=mIdx;sfx.nav();craftFocus();return;
+  if(dir==='right'&&craftTab==='work'){cyTab('shop');return;}
+  if(dir==='left'&&craftTab==='shop'){cyTab('work');return;}
+  if(dir==='down'&&cyListEls().length){mZone='list';mIdx=0;sfx.nav();craftFocus();return;}
+  sfx.nav();return;
  }
  const n=craftEls().length;
- if(dir==='up'){if(mIdx<=0){menuBackToGrid();return;}mIdx--;}
+ if(dir==='up'){if(mIdx<=0){mZone='tab';mIdx=(craftTab==='shop'?1:0);sfx.nav();craftFocus();return;}mIdx--;}
  else if(dir==='down')mIdx=Math.min(n-1,mIdx+1);
- else{sfx.nav();return;}
+ else if(dir==='left'){if(!cyUp())sfx.nav();return;}
+ else if(dir==='right'){const el=craftEls()[mIdx];if(el&&/^go:/.test(el.dataset.craft||'')){el.click();return;}sfx.nav();return;}
  sfx.nav();craftFocus();
 }
 function craftConfirm(){const els=craftEls();if(!els.length)return;mIdx=clamp(mIdx,0,els.length-1);els[mIdx].click();}
@@ -3417,7 +3601,7 @@ function menuBack(){
  if(state.mode==='crank'){closeCrank();return;}
  if(state.mode==='flame'){closeFlame();return;}
  if(state.mode==='hack'){closeHack();return;}
- if(state.mode==='craft'){if(mZone==='opt'){menuBackToGrid();return;}toggleCraft(false);return;}
+ if(state.mode==='craft'){if(cyUp())return;toggleCraft(false);return;}
 }
 
 // ====== INVENTORY (carried resources, salvage + usable gear) ======
@@ -3543,62 +3727,78 @@ function menuConfirm(){
   els[idx].click();   // reuse the existing tap handlers (disabled buttons swallow the click)
 }
 function menuResetFocus(){menuFocusKey=null;menuFocusIdx=0;}
-// denied action → buzz + rebuild + wiggle whatever card the cursor is on
-function craftDeny(){sfx.deny();buildCraft();const c=document.querySelector('.mfocus');const card=c?(c.closest('.recipe')||c):null;if(card){card.classList.remove('denyx');void card.offsetWidth;card.classList.add('denyx');}}
+// denied action → buzz (+ a toast saying why) + rebuild + wiggle whatever row the cursor is on
+function craftDeny(msg){sfx.deny();if(msg)showMsg(msg);buildCraft();const c=cbodyEl.querySelector('.mfocus');if(c){c.classList.remove('denyx');void c.offsetWidth;c.classList.add('denyx');}}
+// a leaf the hold can't pay for tracks the first resource it's short of, instead of just buzzing
+function cyShort(cost){for(const id in cost)if(invGet(id)<cost[id]){if(!RES[id]){craftDeny('✕ DESCEND TO SPEC IT');return;}trackRes(id,cost[id]);buildCraft();return;}craftDeny();}
 craftEl.addEventListener('click',e=>{const b=e.target.closest('[data-craft]');if(!b)return;const v=b.dataset.craft;
   if(v==='close'){toggleCraft(false);return;}
   if(craftBusy)return;
+  const row=b.closest('.cy-row,.cy-back');if(row){const i=cyListEls().indexOf(row);if(i>=0){mZone='list';mIdx=i;}}   // a tap moves the cursor too
   const p=v.split(':');
-  if(p[0]==='div'){openDivision(p[1]);return;}
+  if(p[0]==='go'){cyOpen(p[1]);return;}
+  if(v==='back'){cyUp();return;}
+  if(v==='info'){sfx.nav();craftFocus();return;}
+  if(v==='fab:off'){craftDeny(cyLayer(tAt(player.y))===3?'✕ NO SUIT LINE HERE':'✕ FAB BAY: LAYER 4 ONLY');return;}
   if(p[0]==='track'){trackRes(p[1],+p[2]||0);buildCraft();return;}
-  if(v==='divback'){menuBackToGrid();return;}
-  if(p[0]==='refine'){const id=p[1],r=RES[id];if(!canPay(r.in)){craftDeny();return;}
+  if(p[0]==='tab'){cyTab(p[1]);return;}
+  if(p[0]==='refine'){const id=p[1],r=RES[id];if(!canPay(r.in)){cyShort(r.in);return;}
     const ins=expandInputs(r.in);pay(r.in);addInv(id,1);sfx.mix();craftBusy=true;buildCraft();
     playCraftAnim(ins,iconSVG(id,60),r.name,false,()=>{craftBusy=false;buildCraft();});}
-  else if(p[0]==='gear'){const idx=+p[1];if(idx!==nextGearTier())return;const g=TIERS[idx].gear;if(!canPay(g.in)){craftDeny();return;}
+  else if(p[0]==='gear'){const idx=+p[1];if(idx!==nextGearTier()||!cyFab(tAt(player.y)).on){craftDeny();return;}
+    const g=TIERS[idx].gear;if(!canPay(g.in)){cyShort(g.in);return;}
     const ins=expandInputs(g.in);pay(g.in);craftBusy=true;
-    playCraftAnim(ins,gearIcon(60),g.name,true,()=>{applyGear(idx);craftBusy=false;buildCraft();});}
-  else if(v==='rope'){const bb=bases[tAt(player.y)];if(!bb||bb.ropeLen>=ROPE_MAX){craftDeny();return;}
-    const rc=ropeCost(tAt(player.y));if(!canPay(rc)){craftDeny();return;}
+    playCraftAnim(ins,WIRE.svg('helmet','#ffd23c',60),g.name,true,()=>{applyGear(idx);craftBusy=false;buildCraft();});}
+  else if(v==='rope'){const T0=tAt(player.y),bb=bases[T0];if(!bb){craftDeny();return;}if(bb.ropeLen>=ROPE_MAX){craftDeny('✕ AIR LINE MAXED');return;}
+    const rc=ropeCost(T0);if(!canPay(rc)){cyShort(rc);return;}
     pay(rc);bb.ropeLen=Math.min(ROPE_MAX,bb.ropeLen+ROPE_STEP);sfx.build();
     burst(player.x+4,player.y+4,14,120,0.6,'#c9a14a');
     buildCraft();}
   else if(p[0]==='sell'){const id=p[1];if((scrapInv[id]||0)>0){scrapInv[id]--;coins+=SCRAPBYID[id].coin;sfx.pop();buildCraft();}}
   else if(v==='sellall'){let got=0;for(const id in scrapInv){got+=(scrapInv[id]||0)*SCRAPBYID[id].coin;scrapInv[id]=0;}if(got>0){coins+=got;sfx.build();}buildCraft();}
-  else if(p[0]==='buy'){buyUpgrade(p[1]);buildCraft();}
-  else if(p[0]==='o2tank'){const vv=+p[1],e=envOfTier(tAt(player.y)),tk=progFlags(player,'o2tank',e);
-    if(tk[vv]||(vv>0&&!tk[vv-1])||!canPay(o2TankCost(e,vv))){craftDeny();return;}
-    pay(o2TankCost(e,vv));tk[vv]=true;player.tankBonus=(player.tankBonus||0)+TANK_STEP;player.maxOxygen+=TANK_STEP;player.oxygen=player.maxOxygen;
+  else if(p[0]==='buy'){const c0=coins;buyUpgrade(p[1]);
+    if(coins===c0){const fc=Math.round((player.filterBonus||0)/FILT_STEP),cost=p[1]==='map'?MAP_COST:14+fc*9;craftDeny(coins<cost?'✕ NOT ENOUGH COIN':'');return;}
+    buildCraft();}
+  else if(p[0]==='o2tank'||p[0]==='o2reg'){const vv=+p[1],e=envOfTier(tAt(player.y)),tank=p[0]==='o2tank',fl=progFlags(player,p[0],e),c=tank?o2TankCost(e,vv):o2RegCost(e,vv);
+    if(fl[vv]){craftDeny();return;}
+    if(!canPay(c)){cyShort(c);return;}
+    if(vv>0&&!fl[vv-1]){craftDeny('✕ FIT V'+vv+' FIRST');return;}
+    pay(c);fl[vv]=true;
+    if(tank){player.tankBonus=(player.tankBonus||0)+TANK_STEP;player.maxOxygen+=TANK_STEP;player.oxygen=player.maxOxygen;}
+    else recalcOxyDrain();
     sfx.build();
     burst(player.x+4,player.y+4,16,110,0.6,'#46d0ff');buildCraft();}
-  else if(p[0]==='o2reg'){const vv=+p[1],e=envOfTier(tAt(player.y)),rg=progFlags(player,'o2reg',e);
-    if(rg[vv]||(vv>0&&!rg[vv-1])||!canPay(o2RegCost(e,vv))){craftDeny();return;}
-    pay(o2RegCost(e,vv));rg[vv]=true;recalcOxyDrain();
-    sfx.build();
-    burst(player.x+4,player.y+4,16,110,0.6,'#46d0ff');buildCraft();}
-  else if(p[0]==='buyres'){const T=+p[1],id='t'+(T+1)+'ra',price=5+T*4;if(coins<price){craftDeny();return;}
+  else if(p[0]==='buyres'){const T=+p[1],id='t'+(T+1)+'ra',price=5+T*4;if(coins<price){craftDeny('✕ NOT ENOUGH COIN');return;}
     coins-=price;addInv(id,1);sfx.pop();buildCraft();}
-  else if(p[0]==='tab'){if(craftTab!==p[1]){craftTab=p[1];mDiv=null;mGridIdx=0;}mZone='tab';mIdx=(craftTab==='shop'?1:0);sfx.pop();buildCraft();}
   else if(v==='lens'){const e=envOfTier(tAt(player.y)),lf=progFlags(player,'lensUpg',e);
     let lv=0;while(lv<4&&lf[lv])lv++;
-    if(lv>=4){buildCraft();return;}
-    const lc=lensCost(e,lv);if(!RES['t'+(envTier(e,lv)+1)+'fb']){craftDeny();return;}
-    if(canPay(lc)){pay(lc);lf[lv]=true;player.lanternLevel=(player.lanternLevel||0)+1;sfx.build();
-      burst(player.x+4,player.y+4,14,120,0.5,'#ffe27a');}buildCraft();}
-  else if(v==='seal'){const T0=tAt(player.y);if(envOfTier(T0)<1||(player.seals&&player.seals[T0])){buildCraft();return;}
-    const sc=sealCost(T0);
-    if(canPay(sc)){pay(sc);player.seals[T0]=true;sfx.build();
-      burst(player.x+4,player.y+4,16,110,0.6,'#7dff4a');}buildCraft();}
+    if(lv>=4){craftDeny('✕ LENS FULLY FOCUSED');return;}
+    if(!RES['t'+(envTier(e,lv)+1)+'fb']){craftDeny('✕ DESCEND TO SPEC IT');return;}
+    const lc=lensCost(e,lv);if(!canPay(lc)){cyShort(lc);return;}
+    pay(lc);lf[lv]=true;player.lanternLevel=(player.lanternLevel||0)+1;sfx.build();
+    burst(player.x+4,player.y+4,14,120,0.5,'#ffe27a');buildCraft();}
+  else if(v==='seal'){const T0=tAt(player.y);if(envOfTier(T0)<1||(player.seals&&player.seals[T0])){craftDeny();return;}
+    const sc=sealCost(T0);if(!canPay(sc)){cyShort(sc);return;}
+    pay(sc);player.seals[T0]=true;sfx.build();
+    burst(player.x+4,player.y+4,16,110,0.6,'#7dff4a');buildCraft();}
   else if(v==='medkit'){const T0=tAt(player.y);const mc={};mc['t'+(T0+1)+'ra']=1;mc['t'+(T0+1)+'ma']=1;
-    if((player.medkits||0)<5&&canPay(mc)){pay(mc);player.medkits=(player.medkits||0)+1;sfx.build();}buildCraft();}
-  else if(p[0]==='buypart'){buyPart(p[1]);buildCraft();}
-  else if(p[0]==='machine'){buildMachine(p[1]);buildCraft();}
+    if((player.medkits||0)>=5){craftDeny('✕ PATCH KITS FULL');return;}
+    if(!canPay(mc)){cyShort(mc);return;}
+    pay(mc);player.medkits=(player.medkits||0)+1;sfx.build();buildCraft();}
+  else if(p[0]==='buypart'){const pt=PARTBYID[p[1]];if(!pt)return;if(coins<pt.coin){craftDeny('✕ NOT ENOUGH COIN');return;}buyPart(p[1]);buildCraft();}
+  else if(p[0]==='machine'){const m=MACHBYID[p[1]];if(!m)return;
+    if(cyBuilt(m.id)){craftDeny();return;}
+    if(!canPayParts(m.cost)){cyGoParts();return;}
+    buildMachine(p[1]);buildCraft();}
   else if(v==='mbat'){const t=tAt(player.y),bc=mechBatteryCost(t);
-    if(!mech||(player.mechBattery||0)>=1||!canPay(bc)){craftDeny();return;}
+    if(!mech){craftDeny();return;}
+    if((player.mechBattery||0)>=1){craftDeny('✕ A CELL IS STOWED');return;}
+    if(!canPay(bc)){cyShort(bc);return;}
     const ins=expandInputs(bc);pay(bc);player.mechBattery=1;craftBusy=true;buildCraft();
-    playCraftAnim(ins,batIcon(60),'Battery cell',true,()=>{craftBusy=false;buildCraft();});}
+    playCraftAnim(ins,WIRE.svg('battery','#ffd23c',60),'Battery cell',true,()=>{craftBusy=false;buildCraft();});}
   else if(v==='mcall'){const t=tAt(player.y),cc=mechCallCost(t);
-    if(!mech||!cc||!canPay(cc)){craftDeny();return;}
+    if(!mech||!cc){craftDeny();return;}
+    if(!canPay(cc)){cyShort(cc);return;}
     pay(cc);mechCallTo(bases[t]);buildCraft();}
   else if(p[0]==='mup'){const kind=p[1],e=mechUpgEnv(tAt(player.y));
     if(!mech){craftDeny();return;}
@@ -3606,7 +3806,7 @@ craftEl.addEventListener('click',e=>{const b=e.target.closest('[data-craft]');if
     player[key]=player[key]||{};
     if(player[key][e]||(kind==='hook'&&mechHookReach()>=MECH_HOOK_MAX)){craftDeny();return;}
     const cost=mechUpgCost(kind,e);
-    if(coins<cost){craftDeny();return;}
+    if(coins<cost){craftDeny('✕ NOT ENOUGH COIN');return;}
     coins-=cost;player[key][e]=true;
     if(kind==='bat'&&mech.battery>0)mech.battery=Math.min(mech.battery+MECH_BAT_STEP,mechBatMax());  // a bigger cell tops up a live one
     sfx.build();burst(player.x+4,player.y+4,16,110,0.6,'#7fe6ff');
@@ -3634,7 +3834,7 @@ function showReward(resId,count){
   rewardTimer=setTimeout(()=>{rewardEl.classList.remove('show');rewardEl.classList.add('out');
     setTimeout(()=>{rewardEl.classList.add('hidden');rewardEl.classList.remove('out');},340);},1050);
 }
-function _openCraft(){setMode('craft');craftEl.classList.remove('hidden');mDiv=null;mZone='tab';mIdx=(craftTab==='shop'?1:0);mGridIdx=0;buildCraft();sfx.uiopen();}
+function _openCraft(){setMode('craft');craftEl.classList.remove('hidden');mPath=[];mIdxStack=[];mZone='list';mIdx=0;cbodyEl.scrollTop=0;buildCraft();sfx.uiopen();}
 function toggleCraft(open){if(open){if(tutorialsOn&&!baseIntroSeen){baseIntroSeen=true;startBaseIntro(_openCraft);return;}_openCraft();}else{setMode('play');sfx.back();}}
 
 // ============ DAMAGE ============
@@ -3680,7 +3880,7 @@ const TITLE_HTML=`
       <li><b>THE CITY UPDATE:</b> each city is a stack of environments, every environment with its own suit line. At the bottom of the final layer waits the <b>transit gate</b> — swim in, pick your next city on the <b>grid map</b>, and dive again, one environment deeper each time.</li>
       <li><b>SECTOR OBJECTIVES</b> gate the last level of every environment. The pink readout under your depth names the current task and its machine, all worked with <b>F</b>: <b>HACK</b> glowing wall terminals (an octagon ICE puzzle — steer the cursor to each shining side to fold a glyph, then find it in the 3-row grid and input; break 3 glyphs), <b>STRIKE</b> pulsing spore pods (hit, dodge the toxin cloud, hit again), <b>CRANK</b> pressure valves (tap F while the gauge reads green — the vents scald). Clear the chain, then throw the <b>AIRLOCK</b> lever beside the sealed bulkhead — or ride the transit gate on a city's finale.</li>
       <li><b>The dark deceives.</b> Eels coil on ledges, anglers and fungus fake the glow of treasure and ore, and "stranded divers" aren't. Craft <b>patch kits</b> (auto-saves you once if you'd die, or <b>Q</b> to top up), and in the <b>SHOP</b> tab sell salvage for coin to buy parts and build machines — even a <b>scrappy robot</b> that grabs loot for you.</li>
-      <li><b>THE MECH UPDATE:</b> assemble the <b>DV-8 "MULE"</b> in the shop's machine bay — a pilotable heavy frame with an <b>insta-drill</b> (no minigame, no gas), a <b>kill-saw</b> that removes eels and deceivers <b>permanently</b> (deceivers can spill valuable salvage), a <b>boost jump</b> and a <b>grappling hook</b> that hangs from ceilings. It runs on crafted <b>battery cells</b> (4× each of the layer's ores &amp; floats, one carried, drains <b>only while it works</b>). The cockpit is <b>sealed</b>: piloting costs <b>no oxygen at all</b> — your tank simply holds until you climb out. A dead MULE seizes in place until you bring another cell, and a base can <b>call</b> it over for 10× one floating kind. The thruster coil <b>recharges the moment you stop holding ↑</b> — in the air, on the hook, anywhere — but run it flat and the thruster <b>shuts down</b> until the coil has rebuilt in full, so watch the strip and pace your climbs. Mech Lab upgrades, one of each per environment: <b>+2s cell</b>, <b>+0.2s coil capacity</b>, <b>+0.15/s coil recharge</b> (two separate thruster branches — fly longer, or recover faster), <b>+hook reach</b>. Some layers are <b>INFESTED</b> — swarms the saw was made for.</li>
+      <li><b>THE MECH UPDATE:</b> assemble the <b>DV-8 "MULE"</b> in the workshop's <b>MECH</b> bay (parts from the shop) — a pilotable heavy frame with an <b>insta-drill</b> (no minigame, no gas), a <b>kill-saw</b> that removes eels and deceivers <b>permanently</b> (deceivers can spill valuable salvage), a <b>boost jump</b> and a <b>grappling hook</b> that hangs from ceilings. It runs on crafted <b>battery cells</b> (4× each of the layer's ores &amp; floats, one carried, drains <b>only while it works</b>). The cockpit is <b>sealed</b>: piloting costs <b>no oxygen at all</b> — your tank simply holds until you climb out. A dead MULE seizes in place until you bring another cell, and a base can <b>call</b> it over for 10× one floating kind. The thruster coil <b>recharges the moment you stop holding ↑</b> — in the air, on the hook, anywhere — but run it flat and the thruster <b>shuts down</b> until the coil has rebuilt in full, so watch the strip and pace your climbs. Mech Lab upgrades, one of each per environment: <b>+2s cell</b>, <b>+0.2s coil capacity</b>, <b>+0.15/s coil recharge</b> (two separate thruster branches — fly longer, or recover faster), <b>+hook reach</b>. Some layers are <b>INFESTED</b> — swarms the saw was made for.</li>
     </ul>
     <div class="legend"><span><b>JOYSTICK</b> swim · aim</span><span><b>F</b> mine · <b>X</b> clip / power base · <b>I</b> pack</span><span><b>E</b> ⚙ workshop (at base)</span></div>
   </div>
@@ -4569,18 +4769,12 @@ function drawRope(b,ex,ey,held){
     const near=Math.hypot(player.x+4-bx,player.y+4-by)<=GRAB_R;
     gl(bx,by,near?13:9,'255,210,60',near?0.6:0.3+Math.sin(state.tick*0.16)*0.2);}
 }
-function ropeIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><circle cx="8" cy="3.2" r="2" fill="none" stroke="#c9a14a" stroke-width="1.5"/><path d="M8 5.2 V13" stroke="#c9a14a" stroke-width="1.5"/><path d="M2.6 9 a5.4 5.4 0 0 0 10.8 0" fill="none" stroke="#c9a14a" stroke-width="1.5"/><path d="M1.4 9 H4 M12 9 H14.6" stroke="#c9a14a" stroke-width="1.5"/></svg>';}
 // salvage icon = the nugget drawScrap paints in the water, pixel for pixel
 const _scrapSvg={};
 function scrapIcon(id,sz){
   if(!_scrapSvg[id]){const cv=document.createElement('canvas');cv.width=cv.height=8;scrapBody(cv.getContext('2d'),4,3,SCRAPBYID[id].col);_scrapSvg[id]=canvasRects(cv);}
   return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 8 8" shape-rendering="crispEdges">'+_scrapSvg[id]+'</svg>';}
-function coinIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#ffd23c" stroke="#a9791a" stroke-width="1.2"/><circle cx="8" cy="8" r="3.4" fill="none" stroke="#a9791a" stroke-width="1"/><path d="M6 4.5 L10 11.5" stroke="#fff4c2" stroke-width="0.8" opacity="0.7"/></svg>';}
-function tankIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><rect x="5" y="3" width="6" height="11" rx="3" fill="#2c8fae" stroke="#16586e" stroke-width="1"/><rect x="6.5" y="1.5" width="3" height="2" fill="#9fe8ff"/><rect x="6" y="5" width="2" height="6" fill="#9fe8ff" opacity="0.7"/></svg>';}
-function filterIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#1f5f2a" stroke="#0e3a18" stroke-width="1"/><path d="M5 8 h6 M8 5 v6" stroke="#7dff4a" stroke-width="1.2"/><circle cx="8" cy="8" r="2.4" fill="none" stroke="#7dff4a" stroke-width="0.9"/></svg>';}
 function medIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><rect x="2" y="4" width="12" height="9" rx="1.5" fill="#e8eef2" stroke="#9aa6b2" stroke-width="1"/><rect x="6.5" y="6" width="3" height="5" fill="#ff4d5e"/><rect x="5" y="7.5" width="6" height="2" fill="#ff4d5e"/></svg>';}
-function sealIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><path d="M8 1.5 L13.5 4 V8 C13.5 11.5 11 13.5 8 14.5 C5 13.5 2.5 11.5 2.5 8 V4 Z" fill="#2a5a3a" stroke="#7dff4a" stroke-width="1.1"/><path d="M5.5 8 L7.2 9.8 L10.5 6" fill="none" stroke="#7dff4a" stroke-width="1.4"/></svg>';}
-function lensIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><defs><radialGradient id="lg"><stop offset="0" stop-color="#fff7d6"/><stop offset="1" stop-color="#ffcf4a"/></radialGradient></defs><ellipse cx="8" cy="8" rx="3.4" ry="5.6" fill="url(#lg)" stroke="#b8862a" stroke-width="1"/><path d="M8 2.6 V13.4" stroke="#b8862a" stroke-width=".8" opacity=".6"/><path d="M2 8 L0.6 5 M2 8 L0.6 11 M14 8 L15.4 5 M14 8 L15.4 11" stroke="#ffe27a" stroke-width="1.2"/></svg>';}
 function buyUpgrade(kind){
   // spare tank left the shop — O2 tanks are crafted in the workshop's O2 GEAR division now
   if(kind==='filter'){if(envOfTier(tAt(player.y))<1){return;}
@@ -4595,18 +4789,10 @@ function buyUpgrade(kind){
     burst(player.x+4,player.y+4,18,120,0.6,'#46d0ff');
     sfx.build();}
 }
-function mapIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><rect x="2.5" y="2" width="11" height="12" rx="1.5" fill="#0c2230" stroke="#2c6f8c" stroke-width="1"/><path d="M5 3 V13 M11 3 V13" stroke="#1d4456" stroke-width="0.8"/><path d="M3 5.5 H13 M3 10.5 H13" stroke="#1d4456" stroke-width="0.8"/><rect x="7" y="6.5" width="2.4" height="2.4" fill="none" stroke="#46d0ff" stroke-width="1"/><circle cx="8.2" cy="7.7" r="0.7" fill="#7dffc0"/><circle cx="5" cy="4" r="0.8" fill="#5fe6ff"/><circle cx="11" cy="12" r="0.8" fill="#ffd23c"/></svg>';}
 function partIcon(id,sz){
   if(id==='core')return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" fill="#0e3a4a" stroke="#46d0ff" stroke-width="1.2"/><circle cx="8" cy="8" r="2.2" fill="#9fe8ff"/><path d="M8 2.5V5 M8 11V13.5 M2.5 8H5 M11 8H13.5" stroke="#46d0ff" stroke-width="1"/></svg>';
   if(id==='frame')return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" fill="none" stroke="#9aa6b2" stroke-width="2"/><rect x="6" y="6" width="4" height="4" fill="none" stroke="#6f7d89" stroke-width="1"/></svg>';
   return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><rect x="6.5" y="4" width="3" height="9" fill="#b8c2cc"/><path d="M5 4 L8 1.5 L11 4 Z" fill="#cdd6df"/><rect x="5.5" y="12" width="5" height="2" fill="#8a96a2"/></svg>';
-}
-function batIcon(sz){return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><rect x="4" y="3" width="8" height="11" rx="1.5" fill="#3a300c" stroke="#a9791a" stroke-width="1"/><rect x="6.5" y="1.5" width="3" height="2" fill="#a9791a"/><rect x="5" y="6" width="6" height="7" fill="#ffd23c"/><path d="M8.6 6.5 L6.8 9.6 H8.2 L7.4 12.4 L9.6 8.9 H8.1 Z" fill="#3a300c"/></svg>';}
-function machIcon(id,sz){
-  if(id==='robot')return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><rect x="3" y="5" width="10" height="7" rx="2" fill="#566a78" stroke="#2a3742" stroke-width="1"/><circle cx="6.5" cy="8.5" r="1.4" fill="#46d0ff"/><circle cx="10" cy="8.5" r="1" fill="#ffd23c"/><path d="M8 5V2 M8 2h2" stroke="#8a96a2" stroke-width="1"/></svg>';
-  if(id==='mech')return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><rect x="3" y="4" width="10" height="7" rx="1.5" fill="#566a78" stroke="#2a3742" stroke-width="1"/><rect x="5" y="5" width="5" height="3" rx="1" fill="#0e3a4a"/><circle cx="7" cy="6.5" r="1" fill="#7fe6ff"/><rect x="3" y="11" width="3" height="3" fill="#2a3742"/><rect x="10" y="11" width="3" height="3" fill="#2a3742"/><circle cx="14" cy="9" r="1.8" fill="none" stroke="#cdd6de" stroke-width="1"/><rect x="12.5" y="4.5" width="3" height="1.6" fill="#8a96a2"/></svg>';
-  if(id==='floodlight')return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><path d="M5 3 H11 L13 6 H3 Z" fill="#3a4a57"/><rect x="5" y="6" width="6" height="2" fill="#ffe27a"/><path d="M4 9 L8 14 L12 9 Z" fill="#ffe27a" opacity="0.4"/></svg>';
-  return '<svg class="ico" width="'+sz+'" height="'+sz+'" viewBox="0 0 16 16"><rect x="5" y="3" width="6" height="7" rx="2" fill="#566a78"/><path d="M6 10 L8 15 L10 10 Z" fill="#ff9a3c"/><path d="M7 10 L8 13 L9 10 Z" fill="#ffe27a"/></svg>';
 }
 function canPayParts(c){for(const id in c)if((partsInv[id]||0)<c[id])return false;return true;}
 function payParts(c){for(const id in c)partsInv[id]=(partsInv[id]||0)-c[id];}
@@ -7634,22 +7820,22 @@ function startBaseIntro(onDone){
   setMode('craft');                                            // pause the diver; CRT scanlines on
   const ctl=document.getElementById('controls'); if(ctl)ctl.style.visibility='hidden';
 
-  // category rows reuse the real workshop/shop icon art
+  // category rows: the base terminal's own sections, with stills of its wireframe icons
+  const wi=(k,c)=>WIRE.svg(k,cyHex(c),26);
   const WORK=[
-    [DIVICON.crate,'Cargo','raw & refined materials in your hold'],
-    [DIVICON.flask,'Mixer','combine raw materials into refined goods'],
-    [gearIcon(26),'Fab Bay','build dive suits to reach deeper levels'],
-    [ropeIcon(26),'Air Line','extend your base\u2019s air rope'],
-    [sealIcon(26),'Seals','fit hazard seals to cut pollution'],
-    [lensIcon(26),'Lens','grind your lantern for a wider beam'],
-    [medIcon(26),'Patch','craft patch kits that heal you']
+    [wi('cargo','cyan'),'Cargo','your inventory'],
+    [wi('flask','lime'),'Resources','craft advanced materials'],
+    [wi('helmet','gold'),'Fab Bay','upgrade your suit \u2014 online on layer 4'],
+    [wi('gear','blue'),'Equipment','air line, O\u2082 gear, seals & lens'],
+    [wi('medkit','red'),'Patch','craft patch kits that heal you'],
+    [wi('mech','org'),'Mech','build and upgrade mechs']
   ];
   const SHOP=[
-    [coinIcon(26),'Dealer','sell salvaged scrap for coins'],
-    [partIcon('bolt',26),'Parts','buy machine parts with coins'],
-    [machIcon('robot',26),'Machines','build helpful machines from parts'],
-    [DIVICON.wrench,'Outfit','upgrade tanks, filters, O\u2082 & nav'],
-    [DIVICON.swap,'Exchange','buy raw resources with coins']
+    [wi('coins','gold'),'Dealer','sell salvaged scrap for coins'],
+    [wi('nut','steel'),'Parts','buy machine parts with coins'],
+    [wi('drone','cyan'),'Machines','build helpful machines from parts'],
+    [wi('dish','teal'),'Outfit','filter cartridges & sector-nav unit'],
+    [wi('gem','mag'),'Exchange','buy raw resources with coins']
   ];
   function rows(list){return list.map(function(r){return '<div class="bi-row"><span class="bi-ico">'+r[0]+'</span><div class="bi-rtext"><span class="bi-rname">'+r[1]+'</span><span class="bi-rdesc">'+r[2]+'</span></div></div>';}).join('');}
 

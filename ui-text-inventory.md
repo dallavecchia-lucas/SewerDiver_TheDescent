@@ -222,28 +222,29 @@ only needs to show **state**, not instructions.
 Here "the immediate situation" is **the choice being made**: what it is, what it costs,
 whether you can afford it, and what it does. Everything else goes behind focus or a tap.
 
-### Workshop and shop (`#craft`)
+### Workshop and shop (`#craft`): the cyber deck
 
-| Text | Size | Verdict | Treatment |
-|---|---|---|---|
-| `WORKSHOP` / `SCRAP SHOP` header | 13px | **CUT** | The tabs below already say `CRAFT` / `SHOP`. |
-| `OLD MIRE · CITY 1 · DEPTH 120M · <layer> · <suit>` | 9px | **CUT** | Not part of any choice here. It's on pause. |
-| Tabs `CRAFT`, `SHOP · 120` (with icons) | 10px | **KEEP** | `◎` instead of the bare number. |
-| Division labels under the icons: `Cargo`, `Mixer`, `Fab Bay`, `Air Line`, `O₂ Gear`, `Seals`, `Lens`, `Patch`, `Mech` / `Dealer`, `Parts`, `Machines`, `Outfit`, `Mech Lab`, `Exchange` | 10px | **REWORK** | Icons only in the grid. The focused cell's name goes in one caption line, at the floor. |
-| `◂ <division title>` back row | 11px | **SYMBOL** | `◂` + the division icon. |
-| `resources · in stock`, `parts aboard` panel headers | 9px | **CUT** | The chips (icon + have/need) explain themselves. |
-| Resource chips: icon + have / need | 9px | **KEEP** | Already symbol + numbers. Raise them to the floor. Tap one to track it (yellow ring). Mineral, float and salvage icons are renders of the in-world sprite. |
-| Next-base panel: `next base · power-on` + `haul 1× <item> — this layer's #2 composite — down to the dead base below to power it on` | 9–10px | **SYMBOL** | A symbol sentence: `[item 0/1] ▼ [dead base]`, then ✓ when it's powered. |
-| Card name (`O₂ tank V2`, `Battery cell`, …) | 12px | **KEEP** | This is the choice. |
-| Card detail in grey (`+20 max air`, `−5% air drain`, `heals 2 · max 5 · 3 aboard`, `have 2 · 15 coin`) | 9px | **SYMBOL** where it's an effect (`+20 [tank]`, `✚2`), otherwise **REWORK** | Show it on the focused card only, like the pack's detail dock. |
-| Cost chips: icon + **name** + have/need + `◂` | 10px | **SYMBOL** | Drop the name; it's in the focused-card detail. `◂` (carried down from above) becomes a small up-arrow pip. |
-| Card buttons: `Mix`, `Fit`, `Build`, `Grind`, `Make`, `Cell`, `Call`, `Buy`, `Sell`, `Extend`, `Cash in` | 11px | **REWORK** | The on-device confirm button already acts on the focused card. The card shows its state (affordable glow / ✓ / locked) instead of a verb. |
-| `FITTED`, `BUILT`, `OWNED`, `STOWED 1/1`, `MAXED`, `✓` | 9px | **SYMBOL** | ✓ (and `1/1` pips). |
-| Locked rows: `◂ O₂ tank V3 — descend to this environment's layer 3 to spec it` | 10px | **SYMBOL** | Padlock + layer pip `3`. |
-| Explanations (`gearnote`): `each version draws on one layer of this environment — V1 …`, `the top (#3) composite from each of this environment's 4 layers — …`, the MULE status paragraph and its long rules paragraph, `one of each fitting per environment — …` | 10px | **CUT** | Behind a `?` on the division, or into the base-terminal deck. The MULE status numbers (battery %, cap, coil, hook) become the focused card's detail. |
-| Empty states: `hold's empty — go crack some outcrops and snag mixer canisters`, `no salvage aboard — grab the glinting scrap out in the dark`, `no mech aboard — build the DV-8 "MULE" in the SHOP's machine bay`, `no base on this level`, `no suit line to fabricate right now — …` | 11px | **SYMBOL** | Ghosted icon of what's missing + where to get it (pick / scrap glyph). |
-| "Maxed" lines: `air line maxed · 160u`, `patch kits full (5)`, `seal V2 fitted for this layer ✓`, `lens fully focused … · beam +40%` | 12px | **SYMBOL** | ✓ MAX on the card. |
-| Footer `◀▲▼▶ move · ⛏/F select · ⚙ back` | 8px | **CUT** on touch | The on-screen pad and the confirm/back buttons are the legend. Keep it in PC mode. |
+Rebuilt on 10 Oct 2026 as one column of stacked rows (`CYBER DECK` in the build): each row is
+an icon, a name and one line saying what it is for. Sections open a page; leaf rows act on a
+tap, building if the hold can pay and otherwise tracking the first missing resource. This
+replaces the icon grid triaged here before. Every text is at least 12px in the deck's monospace
+stack, whose caps are 0.70 em or more, so the 8px cap floor holds
+([ui-legibility-floor.md](ui-legibility-floor.md)).
+
+| Text | Size | Notes |
+|---|---|---|
+| Tabs `CRAFT` / `SHOP` and `◎ 120` | 13px bold | The tabs are the title. |
+| Status line `LAYER 2/4 · 142M · <layer name>` | 12px | Shows where the Fab Bay stands (online on layer 4). Hidden on screens under 640px tall. |
+| Row names: `CARGO`, `RESOURCES`, `FAB BAY`, `EQUIPMENT`, `PATCH`, `MECH`; in the shop `DEALER`, `PARTS`, `MACHINES`, `OUTFIT`, `EXCHANGE`; item names on the pages | 14px bold | `RESOURCES` was `Mixer`. Mech Lab moved from the shop into `MECH`. |
+| Row lines: `your inventory`, `craft advanced materials`, `upgrade your suit`, `air line, O₂ gear, seals & lens`, `upgrades for your oxygen gear`, `upgrades for toxic environment protection`, `build and upgrade mechs`; effects such as `+18 max air · from layer 1` | 12px | |
+| Cost chips: the resource's sprite, name and have/need | 12px | The row shows what it costs and in what. Five or more kinds (battery cell) drop the names. Tap a chip to track it. |
+| Badges: `3 READY`, `ONLINE`, `OFFLINE`, `0/8`, `×2`, `MULE 80%` | 12px bold | |
+| Action labels: `EXTEND`, `MIX`, `FIT`, `BUILD`, `◈ TRACK`, `◈ TRACKING`, `GET PARTS`, `✓`, `MAX`, `LOCKED` | 12px bold | Say what a tap on the row does. |
+| Back bar `◂ CRAFT / EQUIPMENT / O₂ GEAR` and the page's line | 13px / 12px | |
+| Group labels: `TANKS`, `LAYER 2 · HERE`, `UPGRADES · ONE EACH PER ENVIRONMENT` | 12px bold | |
+| Notes: the suit recipe rule, the MULE rules | 12px | |
+| Message line: copies of the toasts raised while the deck is open (`◈ TRACKING …`, `✕ FAB BAY: LAYER 4 ONLY`, `✕ NOT ENOUGH COIN`) | 12px bold | The OSD toast is under the panel, so the deck prints its own. |
+| Footer `▲▼ move · ⛏ select · ◀ ⚙ back` | 12px | Hidden on screens under 640px tall. |
 
 ### Pack (`#inv`)
 
@@ -394,14 +395,14 @@ space where it matters: the live HUD shrinks while its type gets bigger.
      unfinished machine of the current step, then the airlock / transit gate), sliding along it
      in real time, and hovers over the task once it is in view. A small arrow orbits the
      clipboard, always pointing at the task. It hides while that task's own prompt is up.
-   - **Resource tracker**: tap a required resource's chip in a base menu (mixer, fab bay, any
-     cost chip or the in-stock panel) and a **yellow** stack of three ingots (end-on, one on two)
+   - **Resource tracker**: tap a cost chip in a base menu, or a row the hold can't pay for
+     (air line, lens, patch, any upgrade), and a **yellow** stack of three ingots (end-on, one on two)
      points to the nearest one in the water, with the same edge-riding and orbiting arrow as the
      compass. The tracked chip is ringed in yellow; tap it again to stop. It clears itself when
      the hold has what the recipe asked for. A refined item tracks its first missing ingredient.
-     Toasts: `◈ TRACKING <name>`, `◆ GOT <name>`, `✕ NO <name> LEFT`, `✕ MIX IT · MIXER`.
+     Toasts: `◈ TRACKING <name>`, `◆ GOT <name>`, `✕ NO <name> LEFT`, `✕ MIX IT · RESOURCES`.
 3. **Keyboard words on touch** (`press space`, menu footers, map hints). Mostly CSS
    `.pconly` toggles, which already exist.
 4. **Minigame state words → symbols**, and first-attempt-only hints.
-5. **Menu focus-detail rework** (workshop cards, dry dock). The largest change, so do it
-   last.
+5. **Menu focus-detail rework** (dry dock). The largest change, so do it last. The workshop
+   and shop were rebuilt as the cyber deck instead (section 5).

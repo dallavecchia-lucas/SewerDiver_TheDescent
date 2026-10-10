@@ -15,6 +15,12 @@ const FLOOR_CAP_CSS = 8;          // px, cap height, non-negotiable
 const COURIER_CAP = 1170 / 2048;  // Courier New cap height / em (0.571)
 const FONT3_ROWS = 5;             // FONT3 glyphs are 5 font pixels tall
 const MIN_CSS_FONT = Math.ceil(FLOOR_CAP_CSS / COURIER_CAP - 0.05);   // 14px for Courier New (7.998 rounds up)
+// The base terminal (.cy, the CRAFT/SHOP "cyber deck") is set in a system monospace stack whose
+// fonts all have caps of 0.70 em or more on phones (SF Mono, Menlo, Roboto Mono, Droid Sans
+// Mono, DejaVu Sans Mono), so its floor is 12px.
+const CY_CAP = 0.70;
+const MIN_CY_FONT = Math.ceil(FLOOR_CAP_CSS / CY_CAP - 0.05);         // 12px
+const isCy = (sel) => /^\.cy(?:$|[-\s.:>\[])/.test(sel);
 
 // In-browser viewports (CSS px) with the browser's own bars showing: the space we really get.
 const VIEWPORTS = [
@@ -31,7 +37,7 @@ const src = process.argv[2] ? process.argv[2] : here('../../sewerdiverdescentcit
 let failed = 0;
 
 // ---- 1. on-device scale of the world canvas (and so of FONT3) ----------------------------
-console.log(`Floor: cap height >= ${FLOOR_CAP_CSS} CSS px  (FONT3 needs >= ${(FLOOR_CAP_CSS / FONT3_ROWS).toFixed(1)} CSS px per font pixel; Courier New needs >= ${MIN_CSS_FONT}px)\n`);
+console.log(`Floor: cap height >= ${FLOOR_CAP_CSS} CSS px  (FONT3 needs >= ${(FLOOR_CAP_CSS / FONT3_ROWS).toFixed(1)} CSS px per font pixel; Courier New needs >= ${MIN_CSS_FONT}px; the .cy deck's monospace stack >= ${MIN_CY_FONT}px)\n`);
 console.log('viewport                    canvas css   view wpx   css/wpx   FONT3 cap @1x   FONT3 scale needed');
 const browser = await chromium.launch(process.env.PLAYWRIGHT_BROWSERS_PATH ? { executablePath: process.env.PLAYWRIGHT_BROWSERS_PATH + '/chromium' } : {});
 for (const [name, w, h, dpr] of VIEWPORTS) {
@@ -60,7 +66,7 @@ for (const m of html.matchAll(/([.#][\w\s.#>:,-]*?)\{([^{}]*?font(?:-size)?:[^;{
   const sizes = [...decl.matchAll(/([\d.]+)px/g)].map((x) => +x[1]);
   if (!sizes.length) continue;
   const min = Math.min(...sizes);                    // clamp(): the low end is what small phones get
-  if (min >= 6 && min < MIN_CSS_FONT && !exempt(sel)) rules.push([min, sel]);
+  if (min >= 6 && min < (isCy(sel) ? MIN_CY_FONT : MIN_CSS_FONT) && !exempt(sel)) rules.push([min, sel]);
 }
 const inline = [...html.matchAll(/style="[^"]*font(?:-size)?:[^";]*?([\d.]+)px/g)].map((m) => +m[1]).filter((n) => n >= 6 && n < MIN_CSS_FONT);
 const canvasFonts = [...html.matchAll(/\.font='[^']*?([\d.]+)px/g)].map((m) => +m[1]);

@@ -37,6 +37,7 @@ decoration.
 | `FONT3` pixel font (`pxText`, `pxTextC`, glyphs 5 px tall) | **≥ 1.6 CSS px per font pixel** | The stroke is one font pixel, so the stroke rule passes automatically. |
 | `pxTextXL` | same: `scale × 5 × css-per-world-px ≥ 8` | Already large in practice. |
 | Courier New (HTML, cap = 0.571 em) | **`font-size` ≥ 14px**, and `clamp()` lower bounds ≥ 14px | Regular-weight strokes are hairlines (well under 1 CSS px at 14px), so small text must be **bold**. Android has no Courier New and falls back to another monospace font, so check there by eye. |
+| The base terminal's monospace stack (`.cy`: SF Mono, Menlo, Roboto Mono, Droid Sans Mono, DejaVu Sans Mono; caps ≥ 0.70 em) | **`font-size` ≥ 12px** | Used only inside the CRAFT/SHOP deck. 12px gives a cap of 8.4px or more on phones. Windows falls back to Consolas (0.64 em), but desktop screens are not the floor's target. `npm run legibility` checks `.cy` rules against 12px. |
 | `ctx.font` on the world canvas | not allowed for informational text | It scales with the world canvas, so its real size changes on every device. |
 
 ## Where we stand (audit, 4 Oct 2026)
