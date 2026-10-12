@@ -3294,12 +3294,30 @@ const WIRE=(()=>{
   function hot(el){hotEl=el;if(still())for(const o of list)draw(o.cv,o.k,o.col,o.a,!!(el&&el.contains(o.cv)));}
   function tick(ts){raf=0;if(state.mode!=='craft'||craftEl.classList.contains('hidden')){list=[];return;}
     const dt=last?Math.min(.05,(ts-last)/1000):0;last=ts;
+    SILT.step(dt);
     const vr=cbodyEl.getBoundingClientRect();
     for(const o of list){const h=!!(hotEl&&hotEl.contains(o.cv));o.a+=dt*(h?1.7:.45);
       const r=o.cv.getBoundingClientRect();if(r.bottom<vr.top-4||r.top>vr.bottom+4||!r.width)continue;
       draw(o.cv,o.k,o.col,o.a,h);}
     raf=requestAnimationFrame(tick);}
   return {get,draw,svg,scan,hot,DEF};
+})();
+
+// ---- silt: the specks the minigames show drifting in the flooded bulb, over the terminal -----
+// Pale motes on a slow swirling current, nearer ones bigger, brighter and faster. Soft and few,
+// so they read as water in front of the screen and never as noise on the text.
+const SILT=(()=>{
+  const cv=document.getElementById('cySilt'),g=cv&&cv.getContext('2d'),P=[];let W=0,H=0,t=0;
+  function size(){const d=Math.min(1.5,window.devicePixelRatio||1),w=Math.round(cv.clientWidth*d),h=Math.round(cv.clientHeight*d);
+    if(w&&h&&(w!==W||h!==H)){W=cv.width=w;H=cv.height=h;}return d;}
+  function seed(){for(let i=0;i<70;i++){const z=Math.random();P.push({x:Math.random(),y:Math.random(),z,a:.18+z*.42,r:.5+z*1.3,p:Math.random()*6.28});}}
+  function step(dt){if(!g)return;const d=size();if(!W)return;if(!P.length)seed();t+=dt;g.clearRect(0,0,W,H);
+    for(const q of P){const k=.006+q.z*.016;   // current: a slow swirl plus a lazy rise
+      q.x+=(Math.sin(q.y*6+t*.35+q.p)*k-.002)*dt*3;q.y+=(Math.cos(q.x*5-t*.3)*k-.006*(.5+q.z))*dt*3;
+      if(q.y<-.02)q.y=1.02;if(q.y>1.02)q.y=-.02;if(q.x<-.02)q.x=1.02;if(q.x>1.02)q.x=-.02;
+      g.globalAlpha=q.a*(.75+.25*Math.sin(t*1.7+q.p));g.fillStyle='#cfe9ec';g.beginPath();g.arc(q.x*W,q.y*H,q.r*d,0,6.2832);g.fill();}
+    g.globalAlpha=1;}
+  return {step};
 })();
 
 // ---- light cycle: one bike races round the panel, dragging its fading wall -------------------
@@ -3340,16 +3358,6 @@ const CYFRAME=(()=>{
     if(window.ResizeObserver)new ResizeObserver(size).observe(el);size();}
   return {mount};
 })();
-
-// ---- caustics: the light net a rippling surface throws on things under water ----------------
-// Bright where two Voronoi cells meet (a tileable 128px texture, made once), crawled across the
-// glass by two CSS layers at different scales and speeds.
-(function(){const N=128,cv=document.createElement('canvas');cv.width=cv.height=N;const g=cv.getContext('2d'),im=g.createImageData(N,N);
-  const pts=[];let seed=11;const rnd=()=>(seed=(seed*16807)%2147483647)/2147483647;for(let i=0;i<14;i++)pts.push([rnd()*N,rnd()*N]);
-  for(let y=0;y<N;y++)for(let x=0;x<N;x++){let d1=1e9,d2=1e9;
-    for(const [px,py] of pts)for(let ox=-N;ox<=N;ox+=N)for(let oy=-N;oy<=N;oy+=N){const d=Math.hypot(x-px-ox,y-py-oy);if(d<d1){d2=d1;d1=d;}else if(d<d2)d2=d;}
-    const v=Math.exp(-(d2-d1)*0.55),i=(y*N+x)*4;im.data[i]=170;im.data[i+1]=245;im.data[i+2]=255;im.data[i+3]=Math.round(255*v);}
-  g.putImageData(im,0,0);const el=document.querySelector('.cy-flood');if(el)el.style.setProperty('--cau','url('+cv.toDataURL()+')');})();
 
 // ---- icons ---------------------------------------------------------------------------------
 // The resource icons are pixel grids (crispEdges). At a fractional scale some sprite pixels
