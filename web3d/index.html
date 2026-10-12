@@ -1145,12 +1145,12 @@
      8px cap floor of ui-legibility-floor.md (Courier New would need 14px).
      Resource icons get no filter, tint or glow: they stay the in-world sprite.
      ============================================================ */
-  #craft{padding:11px;background:radial-gradient(130% 90% at 50% 0%,rgba(4,14,24,.2),rgba(1,4,9,.42) 75%);}
+  #craft{padding:11px;background:#010407;}
   .cy{--cyf:ui-monospace,'SF Mono',SFMono-Regular,Menlo,'Roboto Mono','Droid Sans Mono','DejaVu Sans Mono',Consolas,'Liberation Mono',monospace;
-    --cyan:#19f0ff;--mag:#ff2bd6;--lime:#7dff5a;--red:#ff4d6d;--gold:#ffd23c;--ink:#e2f9ff;--ink2:#9cc4d2;--ink3:#6c93a3;
+    --cyan:#19f0ff;--mag:#ff2bd6;--lime:#7dff5a;--red:#ff4d6d;--gold:#ffd23c;--ink:#ffdf5c;--ink2:#f7e7a6;--ink3:#d6bf78;
     position:relative;isolation:isolate;width:100%;height:100%;display:flex;flex-direction:column;overflow:hidden;
     font-family:var(--cyf);color:var(--ink);image-rendering:auto;
-    background:radial-gradient(120% 60% at 50% 0%,rgba(25,240,255,.08),transparent 60%),linear-gradient(180deg,rgba(3,10,18,.46) 0%,rgba(2,6,11,.36) 55%,rgba(6,3,14,.5) 100%);
+    background:radial-gradient(120% 60% at 50% 0%,rgba(25,240,255,.08),transparent 60%),linear-gradient(180deg,#04100f 0%,#020a0a 55%,#05070c 100%);
     clip-path:polygon(16px 0,calc(100% - 6px) 0,100% 6px,100% calc(100% - 16px),calc(100% - 16px) 100%,6px 100%,0 calc(100% - 6px),0 16px);}
   .cy button{font-family:inherit;appearance:none;-webkit-appearance:none;}
   /* grid floor racing toward you under the list (transform-only animation: it stays on the compositor) */
@@ -1190,7 +1190,7 @@
   .cy-nav b{color:var(--cyan);font-weight:700;}
   /* rows: dark glass with a neon accent bar, a lit corner tick and the row's own colour (--c, an r,g,b triplet) */
   .cy-row{--c:25,240,255;position:relative;display:flex;align-items:center;gap:10px;min-height:58px;margin:0 0 7px;padding:7px 9px 7px 10px;cursor:pointer;
-    background:linear-gradient(90deg,rgba(7,24,38,.8),rgba(3,11,20,.68));border:1px solid rgba(var(--c),.3);
+    background:linear-gradient(90deg,#08171a,#040c0e);border:1px solid rgba(var(--c),.45);
     transition:border-color .12s,background .12s,box-shadow .12s;}
   .cy-row::before{content:"";position:absolute;left:-1px;top:-1px;bottom:-1px;width:3px;background:rgb(var(--c));box-shadow:0 0 8px rgba(var(--c),.8);}
   .cy-row::after{content:"";position:absolute;right:-1px;top:-1px;width:9px;height:9px;background:linear-gradient(225deg,rgb(var(--c)) 0 50%,transparent 50%);opacity:.85;}
@@ -1211,9 +1211,9 @@
   .cy-ico.px{background:#04090e;box-shadow:inset 0 0 0 1px rgba(var(--c),.35),inset 0 0 10px #000;}
   .cy-ico.px svg{display:block;flex:none;}
   .cy-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;}
-  .cy-t{font-size:14px;font-weight:700;line-height:1.15;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink);
-    text-shadow:0 0 7px rgba(var(--c),.5);overflow-wrap:anywhere;}
-  .cy-d{font-size:12px;line-height:1.3;color:var(--ink2);overflow-wrap:anywhere;}
+  .cy-t{font-size:15px;font-weight:700;line-height:1.15;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink);
+    text-shadow:0 0 6px rgba(255,200,40,.45);overflow-wrap:anywhere;}
+  .cy-d{font-size:13px;font-weight:600;line-height:1.3;color:var(--ink2);overflow-wrap:anywhere;}
   .cy-side{flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:6px;}
   .cy-chev{font-size:22px;font-weight:700;line-height:.8;color:rgb(var(--c));text-shadow:0 0 8px rgba(var(--c),.9);}
   .cy-qty{font-size:16px;font-weight:700;color:var(--gold);text-shadow:0 0 8px rgba(255,210,60,.45);}
@@ -1266,13 +1266,27 @@
     -webkit-mask-image:linear-gradient(180deg,#000 10%,transparent);mask-image:linear-gradient(180deg,#000 10%,transparent);
     animation:cy-rays 8s ease-in-out infinite alternate;}
   @keyframes cy-rays{from{transform:skewX(-7deg) translateX(-16px);}to{transform:skewX(7deg) translateX(16px);}}
-  .cy-bubbles{position:absolute;inset:0;z-index:3;overflow:hidden;pointer-events:none;}
+  .cy-bubbles{position:absolute;inset:0;z-index:5;overflow:hidden;pointer-events:none;}
   .cy-bubbles b{position:absolute;left:var(--x);top:100%;width:12px;height:100%;animation:cy-rise var(--d) linear infinite;animation-delay:var(--dl);}
   .cy-bubbles i{position:absolute;left:0;top:0;width:var(--s);height:var(--s);border-radius:50%;
-    border:1px solid rgba(200,248,255,.55);background:radial-gradient(circle at 35% 30%,rgba(255,255,255,.6),rgba(170,240,255,.08) 60%,transparent 72%);
+    border:1.5px solid rgba(210,250,255,.75);background:radial-gradient(circle at 35% 30%,rgba(255,255,255,.75),rgba(170,240,255,.08) 60%,transparent 72%);
     animation:cy-wob 1.9s ease-in-out infinite alternate;}
   @keyframes cy-rise{0%{transform:translateY(0);opacity:0;}10%{opacity:.85;}88%{opacity:.7;}100%{transform:translateY(-112%);opacity:0;}}
   @keyframes cy-wob{from{transform:translateX(-3px);}to{transform:translateX(4px);}}
+  /* the console's screen is flooded: water on the glass in front of the terminal. A green-blue
+     tint, caustic light crawling over everything, an air pocket at the top whose surface sloshes,
+     bubbles rising. All low-alpha, transform-only, never over-bright enough to cost the text. */
+  .cy-flood{position:absolute;inset:0;z-index:4;pointer-events:none;overflow:hidden;
+    background:radial-gradient(130% 90% at 50% 40%,transparent 55%,rgba(0,60,80,.28)),linear-gradient(180deg,rgba(40,160,170,.06),rgba(0,40,60,.1));}
+  .cy-flood .cau{position:absolute;left:-40%;top:-40%;width:180%;height:180%;background-image:var(--cau);background-size:200px 200px;
+    opacity:.24;mix-blend-mode:screen;animation:cy-cau 14s linear infinite;}
+  .cy-flood .cau.b{background-size:290px 290px;opacity:.15;animation:cy-cau2 19s linear infinite;}
+  @keyframes cy-cau{from{transform:translate(0,0);}to{transform:translate(-200px,-200px);}}
+  @keyframes cy-cau2{from{transform:translate(-290px,0);}to{transform:translate(0,-290px);}}
+  .cy-flood .surf{position:absolute;left:-10%;right:-10%;top:-6px;height:14px;border-bottom:2px solid rgba(190,250,255,.55);
+    background:linear-gradient(180deg,rgba(220,250,255,.12),rgba(160,240,255,.05));box-shadow:0 2px 10px rgba(120,230,255,.35);
+    border-radius:0 0 50% 40%/0 0 60% 50%;animation:cy-slosh 3.6s ease-in-out infinite alternate;}
+  @keyframes cy-slosh{from{transform:translateY(0) rotate(-1.4deg);}to{transform:translateY(3px) rotate(1.4deg);}}
   /* message line: toasts raised inside the terminal print here (the OSD toast is under the panel) */
   .cy-msg{position:absolute;left:10px;right:10px;bottom:9px;z-index:4;display:none;padding:7px 10px;font-size:12px;font-weight:700;line-height:1.2;
     letter-spacing:1.5px;color:var(--cyan);background:rgba(1,7,12,.96);border:1px solid currentColor;box-shadow:0 0 14px rgba(0,0,0,.8),0 0 10px rgba(25,240,255,.25);
@@ -1294,7 +1308,7 @@
   .cy-frame .c1 .bike{color:#19f0ff;}
   @media (max-height:640px){.cy-stat,.cy-nav{display:none;}.cy-top{padding-top:7px;padding-bottom:6px;}
     .cy-row{min-height:52px;padding-top:5px;padding-bottom:5px;}.cy-ico,.cy-ico canvas{width:42px;height:42px;}}
-  @media (prefers-reduced-motion:reduce){.cy-frame .tr,.cy-frame .bike,.cy-bubbles{display:none;}.cy-rays{animation:none;}.cy-floor i{animation:none;transform:rotateX(70deg);}
+  @media (prefers-reduced-motion:reduce){.cy-frame .tr,.cy-frame .bike,.cy-bubbles{display:none;}.cy-rays,.cy-flood i{animation:none;}.cy-floor i{animation:none;transform:rotateX(70deg);}
     .cy-sw{display:none!important;}.cy .cy-row.mpop{animation:none;}}
 </style>
 </head>
@@ -1327,7 +1341,8 @@
       <div class="cbody" id="cbody"></div>
       <div class="cy-nav"><b>▲▼</b> move · <b>⛏</b> select · <b>◀ ⚙</b> back</div>
       <div class="cy-msg" id="cyMsg" role="status" aria-live="polite"></div>
-      <div class="cy-bubbles" aria-hidden="true"><b style="--x:9%;--d:7.5s;--dl:-1s"><i style="--s:5px"></i></b><b style="--x:23%;--d:10s;--dl:-6s"><i style="--s:3px"></i></b><b style="--x:38%;--d:8.5s;--dl:-3.5s"><i style="--s:7px"></i></b><b style="--x:52%;--d:12s;--dl:-9s"><i style="--s:4px"></i></b><b style="--x:66%;--d:9s;--dl:-2.5s"><i style="--s:6px"></i></b><b style="--x:79%;--d:11s;--dl:-7.5s"><i style="--s:3px"></i></b><b style="--x:91%;--d:8s;--dl:-5s"><i style="--s:5px"></i></b><b style="--x:31%;--d:13s;--dl:-11s"><i style="--s:9px"></i></b><b style="--x:72%;--d:10.5s;--dl:-4s"><i style="--s:4px"></i></b></div>
+      <div class="cy-bubbles" aria-hidden="true"><b style="--x:9%;--d:7.5s;--dl:-1s"><i style="--s:7px"></i></b><b style="--x:23%;--d:10s;--dl:-6s"><i style="--s:5px"></i></b><b style="--x:38%;--d:8.5s;--dl:-3.5s"><i style="--s:7px"></i></b><b style="--x:52%;--d:12s;--dl:-9s"><i style="--s:4px"></i></b><b style="--x:66%;--d:9s;--dl:-2.5s"><i style="--s:6px"></i></b><b style="--x:79%;--d:11s;--dl:-7.5s"><i style="--s:5px"></i></b><b style="--x:91%;--d:8s;--dl:-5s"><i style="--s:7px"></i></b><b style="--x:31%;--d:13s;--dl:-11s"><i style="--s:12px"></i></b><b style="--x:72%;--d:10.5s;--dl:-4s"><i style="--s:4px"></i></b></div>
+      <div class="cy-flood" aria-hidden="true"><i class="cau"></i><i class="cau b"></i><i class="surf"></i></div>
       <svg class="cy-frame" id="cyFrame" aria-hidden="true"></svg>
     </div></div>
     <div id="mine" class="hidden">

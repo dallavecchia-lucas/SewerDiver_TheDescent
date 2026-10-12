@@ -3341,6 +3341,16 @@ const CYFRAME=(()=>{
   return {mount};
 })();
 
+// ---- caustics: the light net a rippling surface throws on things under water ----------------
+// Bright where two Voronoi cells meet (a tileable 128px texture, made once), crawled across the
+// glass by two CSS layers at different scales and speeds.
+(function(){const N=128,cv=document.createElement('canvas');cv.width=cv.height=N;const g=cv.getContext('2d'),im=g.createImageData(N,N);
+  const pts=[];let seed=11;const rnd=()=>(seed=(seed*16807)%2147483647)/2147483647;for(let i=0;i<14;i++)pts.push([rnd()*N,rnd()*N]);
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){let d1=1e9,d2=1e9;
+    for(const [px,py] of pts)for(let ox=-N;ox<=N;ox+=N)for(let oy=-N;oy<=N;oy+=N){const d=Math.hypot(x-px-ox,y-py-oy);if(d<d1){d2=d1;d1=d;}else if(d<d2)d2=d;}
+    const v=Math.exp(-(d2-d1)*0.55),i=(y*N+x)*4;im.data[i]=170;im.data[i+1]=245;im.data[i+2]=255;im.data[i+3]=Math.round(255*v);}
+  g.putImageData(im,0,0);const el=document.querySelector('.cy-flood');if(el)el.style.setProperty('--cau','url('+cv.toDataURL()+')');})();
+
 // ---- icons ---------------------------------------------------------------------------------
 // The resource icons are pixel grids (crispEdges). At a fractional scale some sprite pixels
 // would print one device pixel wider than their neighbours, so the size is snapped to a whole
